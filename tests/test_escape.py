@@ -48,9 +48,13 @@ def _sealed_after(d, xp):
 
 
 def test_spec_defaults():
-    s = study_from_dict(TUBE)
+    # an ideal solid on purpose: no process limits, no drains
+    s = study_from_dict({**TUBE, "process": "none"})
     assert s.min_member is None and s.length_scale == DEFAULT_MIN_MEMBER
     assert s.min_hole is None and s.drains is None
+    # naming none, the study is made the way its material is (pa12: sls)
+    s = study_from_dict(TUBE)
+    assert s.process.kind == "sls" and s.process.inferred and s.drains is not None
     s = study_from_dict({**TUBE, "process": "sls"})
     assert s.min_member == 1.6 and s.min_hole == 2.0
     assert s.drains.diameter == 6.0 and s.drains.count == 2 and s.drains.max_path == 60.0

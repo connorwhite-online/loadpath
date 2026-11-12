@@ -341,10 +341,14 @@ def test_zone_seam_plates_are_solid_and_read_as_skin():
     assert np.allclose(plates, np.abs(P[:, 0]) - 0.5)
 
 
-def test_zones_turn_each_arm_of_an_l_bracket_its_own_way():
-    """BCCz is stiff along z only: an L-bracket's arm along x wants z on x,
-    its arm up z wants it left alone; zones get the bracket stronger than
-    the cells as laid."""
+def test_zones_keep_the_bare_arm_of_an_l_bracket_cut_square():
+    """BCCz is stiff along z only, so turning the L-bracket's arm along x
+    would lay its stiff struts along the arm. But that arm is bare-faced
+    lattice, and turned its faces cut the bending cells on the bias, which
+    loses more than the turn gains (homogenized.FACE_CUT, fitted on
+    full-resolution solves; the turned bracket was refuted at full
+    resolution, docs/fields.md). So the zones keep the arm along x as laid,
+    and the part comes out no weaker than the cells as laid."""
     sys.path.insert(0, str(ROOT / "bench"))
     from lattice_zones_mass import case
 
@@ -353,10 +357,10 @@ def test_zones_turn_each_arm_of_an_l_bracket_its_own_way():
 
     doc, sd, _ = case("l-bracket")
     r = optimize_zones(doc, study_from_dict(sd), zones=2, cells=5000, rounds=1, alternatives=1, confirm="none")
-    assert r["best"]["safetyFactor"] > 1.5 * r["unrotated"]["safetyFactor"]
+    assert r["best"]["safetyFactor"] >= 0.99 * r["unrotated"]["safetyFactor"], r["best"]
     zones = r["doc"]["nodes"]["lat"]["orient"]["zones"]
     arm_x = min(zones, key=lambda z: z["at"][2])           # the lower zone: the arm along x
-    assert abs(_rotation(arm_x["rotate"])[0, 2]) > 0.7      # its cells' z laid along x
+    assert np.allclose(_rotation(arm_x["rotate"]), np.eye(3), atol=0.05), arm_x   # cut square
 
 
 def test_graded_lattice_meets_the_target_lighter():

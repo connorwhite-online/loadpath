@@ -125,8 +125,12 @@ def test_editor_server_tunes_and_hands_back_the_values():
 # a skin-and-gyroid bar under the same kind of cantilever load, for the
 # homogenized check: fully resolved (meshed at 0.12 mm, verified on 150k,
 # 400k and 0.9M voxels) it deflects 0.95-1.00 mm and weighs 6.86 g at the
-# old PETG card's E = 2000 MPa (linear: deflection scales with 1/E)
-LATTICE_STUDY = {**STUDY, "preserve": [{"id": "root", "shape": {"type": "box", "min": [0, -6, -6], "max": [4, 6, 6]}},
+# old PETG card's E = 2000 MPa (linear: deflection scales with 1/E). That
+# reference is the designed geometry, an ideal solid, so the study names
+# "process": "none"; with the material's own process (fdm) the lattice also
+# takes the printed-lattice knockdown (homogenized._print_factor) and reads
+# softer, which test_homogenized_lattice_matches_the_resolved_one checks.
+LATTICE_STUDY = {**STUDY, "process": "none", "preserve": [{"id": "root", "shape": {"type": "box", "min": [0, -6, -6], "max": [4, 6, 6]}},
                                        {"id": "tip", "shape": {"type": "box", "min": [56, -6, -6], "max": [60, 6, 6]}}],
                  "designSpace": [{"type": "box", "min": [0, -6, -6], "max": [60, 6, 6]}],
                  "loadCases": [{"name": "bend", "loads": [{"region": "tip", "force": [0, 0, -40]}]}],
@@ -156,6 +160,12 @@ def test_homogenized_lattice_matches_the_resolved_one():
     ref = 0.975 * 2000 / st.material.E
     assert -0.05 < d / ref - 1 < 0.2 and abs(r["mass"] / 6.86 - 1) < 0.03, r
     assert r["lattice"] == "core" and r["bodies"] == 1 and r["cases"][0]["inLattice"] in (True, False)
+    # printed in PETG filament (the material's process): the published
+    # printed-lattice tests make it softer than designed, never stiffer
+    fdm = study_from_dict({k: v for k, v in LATTICE_STUDY.items() if k != "process"})
+    assert fdm.process is not None and fdm.process.kind == "fdm"
+    r_fdm = homogenized_check(LATTICE_BAR, fdm, cells=8000)
+    assert r_fdm["cases"][0]["deflection"] > 1.02 * d and r_fdm["latticePrint"]["factor"] is not None, r_fdm
     thick = json.loads(json.dumps(LATTICE_BAR))
     thick["nodes"]["core"]["thickness"] = 1.6
     r2 = homogenized_check(thick, st, cells=8000)

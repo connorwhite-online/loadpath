@@ -104,7 +104,11 @@ def test_in_plane_direction_becomes_eight_cases():
     assert check_study(s)["ok"]
     plain = copy.deepcopy(LINK)
     plain["loadCases"][0]["loads"][0].update(direction="xy")
-    assert len(study_from_dict(plain).load_cases) == 8          # symmetric: half a circle
+    # pla is printed in layers (fdm, taken from the material), and the
+    # layers fail in tension, not compression: the full circle
+    assert len(study_from_dict(plain).load_cases) == 16
+    plain["process"] = "none"
+    assert len(study_from_dict(plain).load_cases) == 8          # an ideal solid: half a circle
     plain["loadCases"][0]["loads"][0]["distribution"] = "bearing"
     names = [c.name for c in study_from_dict(plain).load_cases]
     assert len(names) == 16 and names[-1] == "p@337.5", names    # one side of the bore: all of it
@@ -161,19 +165,33 @@ def test_deliver_gathers_the_best_outcome_and_its_warnings():
 
 
 def test_verify_any_stl():
+    """An STL from anywhere is checked against the study. pla is printed in
+    layers (fdm, taken from the material), and an fdm bore prints under its
+    drawn size, so the keep-out for a 6 mm pin is the bore to draw (fits:
+    `designed`, 6.275 mm): a bar drilled to it passes, one drilled to the
+    pin's 6.0 mm leaves material in the pin's way."""
     import trimesh
 
-    with tempfile.TemporaryDirectory() as d:
+    designed = study_from_dict(LINK).fits[0]["designed"]
+    assert 6.1 < designed < 6.5, designed
+
+    def bar_with_holes(d, dia):
         bar = trimesh.creation.box(extents=(120, 20, 10))
         bar.apply_translation((50, 0, 0))
         for c in ((0, 0, 0), (100, 0, 0)):
-            hole = trimesh.creation.cylinder(radius=3.0 / np.cos(np.pi / 128), height=12, sections=128)
+            hole = trimesh.creation.cylinder(radius=dia / 2 / np.cos(np.pi / 128), height=12, sections=128)
             hole.apply_translation(c)
             bar = bar.difference(hole)
-        path = os.path.join(d, "bar.stl")
+        path = os.path.join(d, f"bar-{dia:g}.stl")
         bar.export(path)
-        r = verify_mesh(LINK, path, max_cells=8000)
+        return path
+
+    with tempfile.TemporaryDirectory() as d:
+        r = verify_mesh(LINK, bar_with_holes(d, designed), max_cells=8000)
         assert r["ok"] and r["bodies"] == 1 and r["passes"] and r["safetyFactor"] > 2, r
+        assert not r["keepOutIntrusion"], r
+        r = verify_mesh(LINK, bar_with_holes(d, 6.0), max_cells=8000)
+        assert r["keepOutIntrusion"] > 1.0 and not r["passes"], r
         assert not verify_mesh(LINK, os.path.join(d, "none.stl"))["ok"]
 
 

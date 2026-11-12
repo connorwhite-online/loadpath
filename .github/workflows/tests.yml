@@ -49,6 +49,43 @@ jobs:
               tests/test_reconstruct_fragments.py tests/test_study_limits.py tests/test_rotor_blockage.py
               tests/test_face_bridge.py tests/test_reconstruct_slits.py tests/test_bundle.py
               tests/test_stress_read.py
+          # the groups below (2026-11-12) hold files that were in no group,
+          # so CI never ran them; tests/test_ci_groups.py now fails on any
+          # tests/ file left out. Times from a 4-core cloud box, 3 at once.
+          - group: evals           # test_evals ~30 min there
+            files: tests/test_evals.py
+          - group: buckling        # ~30 min there
+            pytest: tests/test_buckling_check.py
+          - group: lattice         # ~20 min there (lattice_tensors 19)
+            files: tests/test_brief_kinds_lattice.py tests/test_lattice3mf.py
+            pytest: >-
+              tests/test_lattice_tensors.py tests/test_lattice_print.py tests/test_struts.py tests/test_cores.py
+              tests/test_hex8_im.py
+          - group: study           # ~22 min there
+            files: >-
+              tests/test_ci_groups.py tests/test_recall.py tests/test_escape.py tests/test_contact.py
+              tests/test_fields.py tests/test_directions.py tests/test_agent_path.py
+              tests/test_brief_kinds_multimat.py tests/test_fits.py tests/test_process.py tests/test_narrowband.py
+              tests/test_multimat_fixes.py tests/test_coopt.py tests/test_assembly.py tests/test_benchmarks.py
+            pytest: >-
+              tests/test_tune.py tests/test_brief_kinds_heatx.py tests/test_sizing.py tests/test_tetsizing.py
+              tests/test_dfm_reference.py
+          - group: making          # ~17 min there
+            files: >-
+              tests/test_flowtopo.py tests/test_conjugate.py tests/test_heatx_fixes.py tests/test_buildsim.py
+              tests/test_manufacture.py tests/test_thermal.py tests/test_mg.py tests/test_mesh_block.py
+              tests/test_slicer.py tests/test_crease.py
+            pytest: >-
+              tests/test_flow.py tests/test_heatx_rating.py tests/test_printsetup.py tests/test_metal.py
+              tests/test_amgfast.py tests/test_selfsupport.py tests/test_cutcell.py tests/test_explore.py
+              tests/test_porous.py tests/test_meshops.py tests/test_massfill.py tests/test_femops.py
+              tests/test_stability.py tests/test_fieldtorch.py
+          # OpenCascade (the step extra) and build123d only here; without
+          # them these files skip or fail to import
+          - group: step            # ~10 min there
+            extras: ",step"
+            pip: build123d
+            files: tests/test_cadimport.py tests/test_latticestep.py tests/test_sharp.py tests/test_fit.py
           # NeuralFoil (the aero extra) only here: the propeller's polars
           - group: aero            # ~3 min
             extras: ",aero"
@@ -71,7 +108,7 @@ jobs:
           cache: pip
       # gmsh needs libGLU; CalculiX for the cross-check's second solver
       - run: sudo apt-get update -q && sudo apt-get install -y -q libglu1-mesa calculix-ccx
-      - run: pip install -e ".[render,crosscheck${{ matrix.extras }}]" pytest lxml
+      - run: pip install -e ".[render,crosscheck${{ matrix.extras }}]" pytest lxml ${{ matrix.pip }}
       - name: plain-python test files
         if: matrix.files
         env:

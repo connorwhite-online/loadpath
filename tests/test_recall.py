@@ -101,7 +101,7 @@ def test_search_starts_at_the_predicted_fraction():
         safety_factor, max_deflection = 2.0, None
 
     class St:
-        material, goal, durability = Mat, Goal, None
+        material, goal, durability, load_cases, thermal = Mat, Goal, None, [], None
 
     m = recall.Recall.__new__(recall.Recall)
     m.study, m.scale, m.keys = St, 1.0, {"loads": "L", "model": "M"}

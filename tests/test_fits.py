@@ -104,7 +104,7 @@ def test_resizes_the_ring_round_the_bore_and_parses_once():
 
 def test_no_process_leaves_plain_bores_alone():
     d = copy.deepcopy(LUG)
-    d.pop("process")
+    d["process"] = "none"     # an ideal solid: no process to print the bore under size
     d["keepOut"][0].pop("fit")
     st = study_from_dict(d)
     assert st.keep_out[0].shape.r == 4 and not st.fits
