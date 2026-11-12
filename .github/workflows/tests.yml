@@ -69,7 +69,7 @@ jobs:
               tests/test_multimat_fixes.py tests/test_coopt.py tests/test_assembly.py tests/test_benchmarks.py
             pytest: >-
               tests/test_tune.py tests/test_brief_kinds_heatx.py tests/test_sizing.py tests/test_tetsizing.py
-              tests/test_dfm_reference.py
+              tests/test_dfm_reference.py tests/test_seats.py
           - group: making          # ~17 min there
             files: >-
               tests/test_flowtopo.py tests/test_conjugate.py tests/test_heatx_fixes.py tests/test_buildsim.py
