@@ -208,8 +208,10 @@ def bay_with_pipe(pipe_d: float = 25.0, boss_d: float = 16.0, boss_h: float = 12
     return trimesh_from_manifold(m), truth
 
 
-def write_ply(path, points, normals=None):
-    """A binary point-cloud PLY (x y z [nx ny nz], float32)."""
+def write_ply(path, points, normals=None, sensors=None):
+    """A binary point-cloud PLY (x y z [nx ny nz] [sx sy sz], float32):
+    sensors, each point's sensor position (simulate's meta["viewpoints"]),
+    the Imprint format's columns."""
     P = np.asarray(points, np.float32)
     cols = [("x", "f4"), ("y", "f4"), ("z", "f4")]
     data = [P[:, 0], P[:, 1], P[:, 2]]
@@ -217,6 +219,10 @@ def write_ply(path, points, normals=None):
         Nn = np.asarray(normals, np.float32)
         cols += [("nx", "f4"), ("ny", "f4"), ("nz", "f4")]
         data += [Nn[:, 0], Nn[:, 1], Nn[:, 2]]
+    if sensors is not None:
+        S = np.asarray(sensors, np.float32)
+        cols += [("sx", "f4"), ("sy", "f4"), ("sz", "f4")]
+        data += [S[:, 0], S[:, 1], S[:, 2]]
     arr = np.empty(len(P), dtype=cols)
     for (k, _), v in zip(cols, data):
         arr[k] = v

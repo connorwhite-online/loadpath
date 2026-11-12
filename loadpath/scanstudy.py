@@ -189,7 +189,7 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
                  material: str = "pa12", process: str | None = "sls", grow: float = 15.0, pad: float = 2.0,
                  bar_fit: str = "slip", known=None, safety_factor: float = 2.0, mesh_info=None,
                  space=None, keep_object: bool = True, clamp: str | None = None, carry: dict | None = None,
-                 mu: float | None = None, bolt: bool = True, grip=None) -> dict:
+                 mu: float | None = None, bolt: bool = True, grip=None, free_pitch: float | None = None) -> dict:
     """Write a study that builds a part around the scanned object (see the
     module docstring) into out_dir and return {"study", "clearance", "todo"}.
 
@@ -208,7 +208,12 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
       into it (a `fasteners` entry: ISO 273 clearance hole, head and driver
       path kept clear, seat and face rings, preload). grip: the part's
       thickness under the head (mm, or {hole id: mm}); default the screw's
-      diameter, at least the two rings fasteners.py draws (a choice)."""
+      diameter, at least the two rings fasteners.py draws (a choice).
+      A scan with each point's sensor position (Scan.sensors) keeps out
+      everything its rays did not see empty instead of the reconstructed
+      object (freespace.py; free_pitch its grid, default the spacing, at
+      least 0.5 mm): right for a space seen from inside, which no
+      reconstruction closes."""
     import trimesh
     from .cadimport import ring_wall
     from .shapes import manifold_from_trimesh, trimesh_from_manifold, Cylinder
@@ -434,8 +439,64 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
                         f"clearance hole's {slack:.2f} mm slack: rescan it closer, or give fit='loose'")
         todo.append(f"{hid}-bolt: {size} socket head screw through the part into {hid} "
                     f"(grip {g:g} mm of part above {pid}: a choice, give grip= to change it)")
+    # ---- what the scan did not see empty, kept out (from the rays)
+    free_report = None
+    if keep_object and scan.sensors is not None and mesh_info is None:
+        from .freespace import carve, keepout_mesh
+        fs = carve(scan, lo - 2.0, hi + 2.0, pitch=free_pitch)
+        free_report = fs["report"]
+        m = manifold_from_trimesh(keepout_mesh(fs))
+        margin = fs["pitch"] + 0.5 * float(np.median(scan.spacing))
+        for fid in bar_ids:
+            # the bar's fit (fits.py, with its measured band) decides the
+            # clearance round it, and the ring round it needs room: the
+            # space the ring takes is cut out of what the rays left unseen,
+            # and how much of it nobody saw is said
+            f = byid[fid]
+            # only over the stretch the ring is drawn: there the fit cuts the
+            # hole for every bar the band allows; past it, the bar is kept out
+            # as the rays left it (its fitted diameter alone sits inside the band)
+            q0, q1 = (np.asarray(f["p0"], float) + spans[fid][i] * np.asarray(f["axis"], float) for i in (0, 1))
+            ring = Cylinder(q0, q1, f["r"] + ring_wall(f["r"]) + margin, 0.0).to_manifold()
+            # over the stretch the ring is drawn, outside the bar's band
+            # (past the clearance every node needs, which is not unseen)
+            need = float(free_report["clearance"]["median"] or 0.0)
+            shell = Cylinder(q0, q1, f["r"] + ring_wall(f["r"]), 0.0).to_manifold() - \
+                Cylinder(q0, q1, f["r"] + f["rBand"] + need + margin, 0.0).to_manifold()
+            unseen, ring_vol = (shell ^ m).volume(), shell.volume()
+            m = m - ring
+            if ring_vol > 0 and unseen > 0.05 * ring_vol:
+                todo.append(f"{fid}: {100 * unseen / ring_vol:.0f}% of the ring round it is space the scan never "
+                            "saw empty (behind or under the bar): something may be there; rescan round the bar")
+        for k in sup:
+            f = byid[k]
+            if f["type"] != "plane":
+                continue
+            # the face the part bears on: its own pad and band decide there
+            n = np.asarray(f["normal"], float)
+            c = np.asarray(f["center"], float)
+            e1, e2 = (np.asarray(a) for a in f["axes"])
+            (u0, v0), (u1, v1) = f["extent"]
+            t = f.get("_off", 0.0) + pad + 2 * margin
+            ctr = c + e1 * 0.5 * (u0 + u1) + e2 * 0.5 * (v0 + v1) + n * (0.5 * t - 0.05)
+            R = np.stack([e1, e2, n], 1)
+            box = trimesh.creation.box(extents=[u1 - u0, v1 - v0, t])
+            T = np.eye(4)
+            T[:3, :3] = R
+            T[:3, 3] = ctr
+            box.apply_transform(T)
+            m = m - manifold_from_trimesh(box)
+        obj = _closed(trimesh_from_manifold(m))
+        if len(obj.faces):
+            path = os.path.join(out_dir, f"{stem}-unseen.stl")
+            obj.export(path)
+            keep_out.append({"id": "unseen", "bore": False, "shape": {"type": "mesh", "path": os.path.basename(path)}})
+        clearance = {"method": "free space from the sensor's rays (freespace.py)", **free_report}
+        todo.append(f"kept out: everything the scan's rays did not see empty ({100 * (1 - free_report['freeShare']):.0f}"
+                    f"% of the box), at least {free_report['clearance']['median']:.2f} mm (median) off what it "
+                    "measured; rescan where the part needs room it does not have")
     # ---- the object itself, moved out by its clearance
-    if keep_object:
+    elif keep_object:
         if mesh_info is None:
             mesh, info = reconstruct(scan)
         else:

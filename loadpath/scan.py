@@ -145,6 +145,7 @@ class Scan:
     datum: np.ndarray | None = None       # where the scale is exact (a reference's centre)
     confidence: float = 0.95
     viewpoint: np.ndarray | None = None
+    sensors: np.ndarray | None = None     # (N, 3) mm, each point's sensor position (its ray), when known
     report: dict = field(default_factory=dict)
     path: str | None = None
 
@@ -209,6 +210,7 @@ class Scan:
         out.scale_sigma = s_sigma
         out.datum = None if datum is None else np.asarray(datum, float) * s
         out.viewpoint = None if self.viewpoint is None else self.viewpoint * s
+        out.sensors = None if self.sensors is None else self.sensors * s
         out._tree = None
         out.report = dict(self.report)
         return out
@@ -355,7 +357,14 @@ def _voxel_down(P, pitch, extras):
         out = np.zeros((m,) + a.shape[1:])
         np.add.at(out, inv, a)
         return out / cnt.reshape((-1,) + (1,) * (a.ndim - 1))
-    return avg(P), {k: (None if v is None else avg(v)) for k, v in extras.items()}, cnt
+
+    def first(a):
+        # positions that do not average (sensor positions): one member's
+        out = np.zeros((m,) + a.shape[1:])
+        out[inv[::-1]] = a[::-1]
+        return out
+    return avg(P), {k: (None if v is None else first(v) if k == "viewpoints" else avg(v))
+                    for k, v in extras.items()}, cnt
 
 
 def load_scan(src, *, device=None, units: str | None = None, scale: float | None = None, up: str | None = None,
@@ -456,17 +465,16 @@ def load_scan(src, *, device=None, units: str | None = None, scale: float | None
         h0 = float(np.median(d0))
         pitch = h0 * math.sqrt(len(P) / max_points) * 1.05
         for _ in range(6):
-            P2, ex2, cnt = _voxel_down(P, pitch, {k2: v for k2, v in extras.items() if k2 != "viewpoints"})
+            P2, ex2, cnt = _voxel_down(P, pitch, extras)
             if len(P2) <= max_points * 1.05:
                 break
             pitch *= 1.2
         rep["voxelAveraged"] = {"pitch": round(pitch, 4), "points": int(len(P2)),
                                 "meanPerVoxel": round(float(cnt.mean()), 2)}
         P = P2
-        vps = None
-        if extras["viewpoints"] is not None:
-            vps = None                      # per-point sensor positions do not survive averaging
-        extras = {**ex2, "viewpoints": vps}
+        # a voxel keeps one member's sensor: the ray from it to the voxel's
+        # mean passes within a pitch of that member's own ray
+        extras = ex2
         if extras["normals"] is not None:
             nn = np.linalg.norm(extras["normals"], axis=1, keepdims=True)
             extras["normals"] = extras["normals"] / np.maximum(nn, 1e-12)
@@ -533,6 +541,7 @@ def load_scan(src, *, device=None, units: str | None = None, scale: float | None
     keff, corr = _k_eff(resid, idx, noise)
     s = Scan(points=P, normals=N, spacing=spacing, noise=noise, rho=rho, k_eff=keff,
              extra=extras["thick"], colors=extras["colors"], device=spec, viewpoint=vp,
+             sensors=None if extras.get("viewpoints") is None else np.asarray(extras["viewpoints"], float),
              confidence=confidence, path=os.fspath(src), scale=fac)
     if u is not None:
         # metric units (a lidar, a structured-light scanner): the scale is

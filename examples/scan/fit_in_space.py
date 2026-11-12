@@ -27,13 +27,13 @@ From that scan alone:
 
     python examples/scan/fit_in_space.py --out out/fit-in-space [--quick] [--time-limit 10]
 
-What it shows today (seed 1, --quick): the bolts, the seating and the
-pipe pass on the true scene; the overlap check misses by 0.37 mm (about
-4 mm^3, on the bosses' front edges). The cause is the bay kept out as a
-reconstructed surface: a winding-number reconstruction of an open scene
-seen from inside is not a closed object, and part of the bay falls outside
-the keep-out. The fix is to keep out everything the sensor's rays did not
-see empty (free space from the rays), the next step in docs/SCAN.md.
+What it shows today (seed 1, --quick): every check passes on the true
+scene. The bay is kept out as everything the sensor's rays did not see
+empty (loadpath.freespace, from each point's sensor position in the PLY),
+not as a reconstructed surface: a reconstruction of an open scene seen from
+inside isn't a closed object, and that version reached 0.37 mm into a boss
+edge. The draft says 42% of the ring round the pipe is space the rays never
+reached (behind and under it), the honest rescan prompt.
 
 The load is the brief, not the scan: 75 N down on the pipe (a 1.5 kg
 section at 5 g of shock, a choice for the example).
@@ -61,7 +61,9 @@ def scan_bay(out, seed=1):
     prof, dev = DEVICE_PROFILES["artec-eva"], DEVICES["artec-eva"]
     P, N, meta = simulate(mesh, views, spacing=prof["spacing"], sigma_noise=prof["noise"], sigma_sys=dev["sigma"],
                           scale=dev["scale"], seed=seed)
-    path = write_ply(os.path.join(out, "bay.ply"), P, N)
+    # each point with the sensor position it was measured from (the Imprint
+    # format's rays): what the scan saw empty is then kept apart from what it did not
+    path = write_ply(os.path.join(out, "bay.ply"), P, N, meta["viewpoints"])
     print(f"scanned {len(P)} points; the scan's true range bias {meta['biases'][0]:+.3f} mm, "
           f"scale error {meta['scaleError']:+.5f}")
     return mesh, truth, path

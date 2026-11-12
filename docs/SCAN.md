@@ -218,7 +218,16 @@ weighted least squares. Nothing in it is a set tolerance:
 `draft_around` (and `loadpath scan --support ... --load ...`) writes:
 
 - **the object, kept out** by its reconstructed surface moved out vertex by
-  vertex by U. The process's scatter is added in quadrature (half the
+  vertex by U. When the points carry their sensor positions, everything the
+  rays did not see empty is kept out instead (`loadpath.freespace`): a grid
+  node is free when the rays crossed every node within two steps of it (a
+  grazing ray can cross a node up to 0.87 pitch inside a surface it didn't
+  measure; two steps in, that is 1.13 pitch out) and it sits U + pitch +
+  spacing/2 off the nearest measured point. The kept-out nodes become a
+  closed mesh (`-unseen.stl`). Round a bar the ring's stretch and the pads
+  on bearing faces are cut out of it (their fits and bands decide there),
+  and the share of the ring the rays never reached is reported: behind or
+  under a pipe there may be something. The process's scatter is added in quadrature (half the
   `fits.HOLES` band as a sigma), plus its inward wall bias (powder and FDM
   walls grow in). The report gives the split: an Artec-class scan for SLS
   comes to 0.45 mm (device 0.1, SLS scatter 0.19, SLS wall bias 0.09).
@@ -355,12 +364,14 @@ Pass it back as `device={"base": "iphone-lidar", "sigma": cal["sigma"]}`.
   a splat trainer's frame may not be, so give `--up`, or `gravity` in the
   brief.
 
-- An **open scene seen from inside** (a bay, a cavity) isn't a closed
-  object, and the winding-number reconstruction doesn't close it well: on
-  the bay stand-in part of the true bay falls outside the object keep-out
-  and the part reaches 0.37 mm into a boss edge. Keeping out everything
-  the sensor's rays did not see empty (free space from the rays; the
-  points need their sensor positions) is the fix, not done yet.
+- **Free space needs the rays.** Inside an open scene (a bay, a cavity)
+  the part is kept to the space the sensor's rays crossed (freespace.py),
+  which needs each point's sensor position (PLY `sx sy sz`, E57 poses, an
+  `.imprint`'s rays). A scan without them falls back to the reconstructed
+  surface, which doesn't close an open scene: on the bay stand-in that
+  version reached 0.37 mm into a boss edge. Something smaller than about
+  two pitches that no ray hit and no point measured (a wire seen edge on)
+  can't be known from the rays: scan it or give it as a keep-out.
 - Planes and cylinders only. Cones, spheres and tori (a tapered bar, a ball
   joint) are kept out by the reconstructed surface but aren't fitted as
   mounts yet.

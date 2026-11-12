@@ -358,7 +358,45 @@ def test_a_part_bolts_to_tapped_holes_in_a_scanned_bay():
     assert chk["ok"], chk
 
 
-TESTS = [test_calibrate_device_bounds_the_bias, test_lzf_decoders_agree, test_readers_round_trip, test_units_are_required,
+def test_free_space_from_rays_stays_off_the_true_scene():
+    """The bay scanned from the front and top, each point with its sensor
+    position: every free node is outside the true scene by at least a
+    spacing, the space behind the pipe (no ray reached it) is not free, the
+    open bay above the bosses is, and the keep-out mesh is closed and holds
+    every node that is not free."""
+    import trimesh
+    from loadpath.freespace import carve, keepout_mesh
+    from loadpath.scansim import bay_with_pipe
+    mesh, truth = bay_with_pipe()
+    views = ring_views([0, -10, 20], 350, 8, elevations=(20.0, 45.0, 70.0))
+    views = views[views[:, 1] < 30]
+    P, N, meta = simulate(mesh, views, spacing=1.0, sigma_noise=0.05, sigma_sys=0.1, scale=0.0003, seed=2)
+    path = write_ply(os.path.join(TMP, "bay-rays.ply"), P, N, meta["viewpoints"])
+    s = load_scan(path, device="artec-eva", units="mm")
+    assert s.sensors is not None and s.sensors.shape == s.points.shape
+    lo, hi = (np.asarray(x, float) for x in truth["region"])
+    fs = carve(s, lo, hi, pitch=1.5)
+    p = fs["pitch"]
+    idx = np.argwhere(fs["free"])
+    X = lo + idx * p
+    # outside the true solid, clear of its surface
+    d = trimesh.proximity.signed_distance(mesh, X[::7])     # > 0 inside
+    assert d.max() < -0.5, d.max()
+    def node(x):
+        return tuple(np.round((np.asarray(x, float) - lo) / p).astype(int))
+    pipe = np.asarray(truth["pipe"]["point"], float)
+    r = 0.5 * truth["pipe"]["diameter"]
+    assert not fs["free"][node(pipe + [0, r + 4, -r - 4])]  # behind and under the pipe: never seen
+    assert fs["free"][node([35, 0, 30])]                    # above a boss, open to the sensor
+    k = keepout_mesh(fs)
+    assert k.is_watertight and k.volume > 0
+    nf = np.argwhere(~fs["free"])
+    sample = lo + nf[np.random.default_rng(0).choice(len(nf), 2000)] * p
+    assert k.contains(sample).all()
+    assert k.contains(X[np.random.default_rng(1).choice(len(X), 2000)]).mean() < 0.01
+
+
+TESTS = [test_calibrate_device_bounds_the_bias, test_free_space_from_rays_stays_off_the_true_scene, test_lzf_decoders_agree, test_readers_round_trip, test_units_are_required,
          test_fits_recover_known_geometry_within_their_bands, test_reconstruction_matches_and_covers_the_truth,
          test_splat_needs_and_takes_a_reference, test_fit_with_a_measured_mate, test_draft_round_the_object_checks,
          test_iphone_scan_says_it_cannot_size_a_bar, test_snap_to_standard_sizes, test_a_card_in_the_frame_sets_the_scale,
