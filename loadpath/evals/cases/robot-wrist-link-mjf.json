@@ -1,6 +1,6 @@
 {
   "name": "robot-wrist-link-mjf",
-  "description": "The arm's v0.3 wrist link (J5 to J6, examples/robot-arm/studies/wrist_link.json at fa8119c) printed in HP MJF PA12 instead of SLS PA12-GF, built along +z. Exercises the powder-bed process checks on the delivered part: walls at least MJF's 0.8 mm, no powder trapped in a cavity or behind an exit under 5 mm, and no thin flat panel long enough to warp, on top of the usual SF 2 and interfaces. Before fa8119c the J5 idler bearing pocket came out wrapped in a 5 mm shell with only narrow gaps out (1.7 cm^3 of trapped powder, no way to fit the bearing); this case is what caught it.",
+  "description": "The arm's v0.3 wrist link (J5 to J6, examples/robot-arm/studies/wrist_link.json at fa8119c) printed in HP MJF PA12 instead of SLS PA12-GF, built along +z. Exercises the powder-bed process checks on the delivered part: walls at least MJF's 0.8 mm, no powder trapped in a cavity or behind an exit under 5 mm, and no thin flat panel long enough to warp, on top of the usual SF 2 and interfaces. Before fa8119c the J5 idler bearing pocket came out wrapped in a 5 mm shell with only narrow gaps out (1.7 cm^3 of trapped powder, no way to fit the bearing); this case is what caught it. Stiffness: the J6 mount may move no more in any load case than it does on the v0.3 part it replaces, printed in the same MJF PA12 and read on the same 60k-cell grid (most any node of j6-mount travels: reaching 0.89 mm, J6 rated torque 3.08, lateral push 0.12). The tool sits about 97 mm past the mount (the reach moment over its force), so the mount's travel and tilt are the gripper's positioning error; without this the lightest SF-2 part (30.7 g) moved 2-8x more than the original.",
   "designSpace": [
     {
       "type": "box",
@@ -901,7 +901,33 @@
   "material": "pa12",
   "goal": {
     "safetyFactor": 2.0,
-    "volumeFraction": 0.12
+    "volumeFraction": 0.12,
+    "clearances": [
+      {
+        "name": "j6-mount-reach",
+        "region": "j6-mount",
+        "maxTravel": 0.89,
+        "cases": [
+          "reach"
+        ]
+      },
+      {
+        "name": "j6-mount-j6-rated-torque",
+        "region": "j6-mount",
+        "maxTravel": 3.08,
+        "cases": [
+          "j6-rated-torque"
+        ]
+      },
+      {
+        "name": "j6-mount-lateral",
+        "region": "j6-mount",
+        "maxTravel": 0.12,
+        "cases": [
+          "lateral"
+        ]
+      }
+    ]
   },
   "minMember": 3.0,
   "symmetry": [
@@ -917,6 +943,7 @@
   "expect": {
     "maxMass": 46.0,
     "minSafetyFactor": 2.0,
+    "maxClearanceUse": 1.0,
     "maxKeepOutIntrusion": 1.0,
     "maxPreserveMissing": 1.0,
     "bodies": 1,

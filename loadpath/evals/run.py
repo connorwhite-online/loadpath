@@ -12,6 +12,7 @@ variants must miss a limit: run_field_case):
       "minMassReduction": 0.5,    # vs the solid design space
       "minSafetyFactor": 3.0,     # every load case
       "maxDeflection": 1.0,       # mm at the loads, every case
+      "maxClearanceUse": 1.0,     # goal.clearances travel / maxTravel, every case
       "maxKeepOutIntrusion": 1.0, # mm^3 of part inside keep-outs
       "maxPreserveMissing": 1.0,  # mm^3 of preserved geometry lost
       "bodies": 1,
@@ -93,6 +94,10 @@ CHECKS = {
     "massReduction": ("minMassReduction", lambda o: o["massReduction"], ">="),
     "safetyFactor": ("minSafetyFactor", lambda o: o["safetyFactor"], ">="),
     "deflection": ("maxDeflection", lambda o: max(c["deflection"] for c in o["cases"]), "<="),
+    # goal.clearances: the most any clearance's region moves as a share of
+    # its maxTravel, over every case it applies in (cases[].clearances)
+    "clearanceUse": ("maxClearanceUse", lambda o: max(
+        (r["travel"] / r["maxTravel"] for c in o["cases"] for r in c.get("clearances") or []), default=None), "<="),
     "keepOutIntrusion": ("maxKeepOutIntrusion", lambda o: o["keepOutIntrusion"], "<="),
     "preserveMissing": ("maxPreserveMissing", lambda o: o["preserveMissing"], "<="),
     "bodies": ("bodies", lambda o: o["bodies"], "=="),
@@ -127,7 +132,7 @@ COARSE = {"maxElements": 6000, "maxIterations": 30, "searchRuns": 3, "confirmRun
 # checks the coarse grid cannot be held to (they resolve features finer than
 # its cells, or time a different run)
 COARSE_SKIP = {"member", "crease", "seconds", "processWall", "boundaryCut", "overhang", "warpSpan",
-               "maxMass", "mass", "massReduction", "deflection", "wallBetweenFluids", "internalFlatArea",
+               "maxMass", "mass", "massReduction", "deflection", "clearanceUse", "wallBetweenFluids", "internalFlatArea",
                "trappedVolume"}
 CRITIC = {"criticBlockers": ("maxCriticBlockers", "<="), "criticScore": ("maxCriticScore", "<=")}
 
