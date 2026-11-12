@@ -370,7 +370,33 @@ def _closed_bores(study: Study, mesh) -> list:
             # 4-5 s a verify on the wrist yoke for these few dozen points
             inside = _inside(mesh, probes, rng)
             if inside.mean() > 0.5:
-                out.append({"id": r.id, "end": end, "at": cap.round(2).tolist()})
+                hit = {"id": r.id, "end": end, "at": cap.round(2).tolist()}
+                filled = _filled_clearances(study, probes[inside])
+                if filled:
+                    hit["filledClearances"] = filled
+                out.append(hit)
+    return out
+
+
+def _filled_clearances(study: Study, pts) -> list:
+    """Why a bore end is closed, when the cause is in the study: the material
+    past it is drawn geometry standing in a keep-out that does not cut what
+    is drawn ("bore": false without cutsPreserve: a clearance zone, spec.
+    Region.cuts). Where a part sits in that space (a bearing in its pocket,
+    an insert, a screw, a cable) the keep-out has to cut the drawn shape, or
+    the drawn shape fills it: the wrist link's idler hub filled its bearing
+    pocket, closing the insert bore that runs into it. Lists each such
+    keep-out holding most of `pts` with the preserved shapes there."""
+    out = []
+    for k in study.keep_out:
+        if getattr(k, "cuts", True):
+            continue
+        ink = k.shape.sdf(pts) < 0
+        if ink.mean() <= 0.5:
+            continue
+        drawn = [p.id for p in study.preserve if (p.shape.sdf(pts[ink]) < 0).mean() > 0.5]
+        if drawn:
+            out.append({"keepOut": k.id, "drawn": drawn})
     return out
 
 

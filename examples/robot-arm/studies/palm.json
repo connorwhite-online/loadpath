@@ -1006,6 +1006,7 @@
   {
    "id": "cam-screw-1",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -1024,6 +1025,7 @@
   {
    "id": "cam-screw-2",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -1042,6 +1044,7 @@
   {
    "id": "cam-screw-3",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -1060,6 +1063,7 @@
   {
    "id": "cam-screw-4",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [

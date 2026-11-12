@@ -332,6 +332,7 @@
   {
    "id": "spring-cable",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [

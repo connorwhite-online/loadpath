@@ -477,12 +477,25 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
             "load it or drop it.")
     if report.get("closedBores"):
         o.passes = False
-        report.setdefault("warnings", []).append(
-            f"the part closes over {len(report['closedBores'])} bore end(s) "
-            f"({', '.join(b['id'] + ' ' + b['end'] for b in report['closedBores'])}): no fastener goes through, "
-            "so it does not pass. Extend the keep-out over the head and the driver's reach if this repeats.")
+        report.setdefault("warnings", []).append(closed_bore_warning(report["closedBores"]))
     return o
 
+
+
+def closed_bore_warning(closed: list) -> str:
+    """The warning for bore ends the part closes over (verify._closed_bores),
+    naming the study's cause when it is one: drawn geometry filling a
+    clearance keep-out past the end (verify._filled_clearances)."""
+    msg = (f"the part closes over {len(closed)} bore end(s) "
+           f"({', '.join(b['id'] + ' ' + b['end'] for b in closed)}): no fastener goes through, so it does not pass.")
+    filled = {(f["keepOut"], tuple(f["drawn"])) for b in closed for f in b.get("filledClearances", [])}
+    if filled:
+        return msg + " Past it, drawn geometry fills " + "; ".join(
+            f"keep-out {k} ({', '.join(d)})" for k, d in sorted(filled)) + (
+            ": a keep-out marked \"bore\": false is a clearance zone and does not cut what is drawn. Where a "
+            "part sits in that space (a bearing in its pocket, an insert, a screw, a cable), set "
+            "\"cutsPreserve\": true on it.")
+    return msg + " Extend the keep-out over the head and the driver's reach if this repeats."
 
 def _confirm_on_tets(study: Study, outcomes: list) -> bool:
     """goal.confirm says tet (or auto, and the cross-check covers it)."""
@@ -2093,10 +2106,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 "load it or drop it.")
         if report.get("closedBores"):
             o.passes = False
-            report.setdefault("warnings", []).append(
-                f"the part closes over {len(report['closedBores'])} bore end(s) "
-                f"({', '.join(b['id'] + ' ' + b['end'] for b in report['closedBores'])}): no fastener goes through, "
-                "so it does not pass. Extend the keep-out over the head and the driver's reach if this repeats.")
+            report.setdefault("warnings", []).append(closed_bore_warning(report["closedBores"]))
         return o
 
     def run_one(vf: float) -> Outcome:

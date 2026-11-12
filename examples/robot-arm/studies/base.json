@@ -159,6 +159,7 @@
   {
    "id": "foot-insert-0",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -177,6 +178,7 @@
   {
    "id": "foot-insert-1",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -195,6 +197,7 @@
   {
    "id": "foot-insert-2",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [

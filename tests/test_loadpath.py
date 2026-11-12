@@ -672,6 +672,32 @@ def test_closed_bore_is_flagged():
     assert _closed_bores(st, trimesh.boolean.difference([block, bore], engine="manifold")) == []
 
 
+
+def test_closed_bore_names_a_drawn_shape_filling_its_clearance():
+    """A bore running into a bearing pocket marked "bore": false is closed when
+    a drawn hub fills the pocket (a clearance keep-out does not cut what is
+    drawn); the check names the pocket and the hub, and the warning says to
+    set cutsPreserve (the wrist link's insert bore, closed by its idler hub)."""
+    from loadpath.study import closed_bore_warning
+    from loadpath.verify import _closed_bores
+
+    block = trimesh.creation.box(extents=(20, 20, 20))
+    st = study_from_dict({**BEAM, "designSpace": {"type": "box", "min": [-10, -10, -10], "max": [10, 10, 10]},
+                          "preserve": [{"id": "hub", "shape": {"type": "cylinder", "p0": [0, 0, 3],
+                                                               "p1": [0, 0, 9], "r": 6}}],
+                          "keepOut": [{"id": "insert", "shape": {"type": "cylinder", "p0": [0, 0, -12],
+                                                                 "p1": [0, 0, 4], "r": 2.5}},
+                                      {"id": "pocket", "bore": False,
+                                       "shape": {"type": "cylinder", "p0": [0, 0, 4], "p1": [0, 0, 8], "r": 4}}]})
+    bore = trimesh.creation.cylinder(radius=2.5, segment=[[0, 0, -12], [0, 0, 4]])
+    found = _closed_bores(st, trimesh.boolean.difference([block, bore], engine="manifold"))
+    assert found and found[0]["filledClearances"] == [{"keepOut": "pocket", "drawn": ["hub"]}], found
+    assert "cutsPreserve" in closed_bore_warning(found)
+    # a pocket cut out of the drawn hub leaves the bore open
+    pocket = trimesh.creation.cylinder(radius=4, segment=[[0, 0, 4], [0, 0, 8]])
+    open_part = trimesh.boolean.difference([block, bore, pocket], engine="manifold")
+    assert _closed_bores(st, open_part) == []
+
 def test_surface_thickness_reads_a_plate_without_a_grid():
     """A 2.05 mm plate reads 2.05 from the surface rays, at any grid."""
     from loadpath.verify import surface_thickness
@@ -1095,6 +1121,7 @@ TESTS = [
     test_process_layers_weaken_across_build_direction,
     test_crease_metric_finds_unfilleted_junctions,
     test_closed_bore_is_flagged,
+    test_closed_bore_names_a_drawn_shape_filling_its_clearance,
     test_surface_thickness_reads_a_plate_without_a_grid,
     test_surface_thickness_leaves_out_the_users_own_walls,
     test_snap_runs_the_body_flush_with_a_boss_face,

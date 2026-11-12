@@ -466,6 +466,7 @@
   {
    "id": "j5-idler-bearing",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -501,6 +502,7 @@
   {
    "id": "j5-idler-shaft",
    "bore": false,
+   "cutsPreserve": true,
    "shape": {
     "type": "cylinder",
     "p0": [
