@@ -912,64 +912,60 @@
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.056249999999999994,
-   "mass": 40.24248178493694,
-   "massReduction": 0.9479720624459551,
-   "safetyFactor": 7.1450308668927045,
-   "p5Member": 1.833360074363167,
-   "minMember": 1.833360074363167,
-   "creaseLength": 1.7167220023241374,
-   "p5Thickness": 3.2047305086212456,
-   "p1Thickness": 2.2722087432203075,
-   "deflection": 0.49024441115151607,
-   "iterations": 48,
-   "optimizerSeconds": 52.81417679786682,
-   "bucklingFactor": 13.358319202289072
+   "volumeFraction": 0.03366300784165278,
+   "mass": 30.747691593669163,
+   "massReduction": 0.960228330373222,
+   "safetyFactor": 2.1857266312746018,
+   "p5Member": 3.0246896764905986,
+   "minMember": 1.296295575638828,
+   "creaseLength": 17.91597826021748,
+   "p5Thickness": 2.793039212111272,
+   "p1Thickness": 1.8724938048790833,
+   "deflection": 2.398114004103253,
+   "iterations": 41,
+   "optimizerSeconds": 947.4103157520294,
+   "bucklingFactor": 7.630643823166
   },
   "pareto": {
-   "points": 7,
+   "points": 3,
    "front": [
     [
-     14.59796395074087,
-     1.3310055964203564e-06
+     30.747691593669163,
+     2.1857266312746018
     ],
     [
-     30.894916298898508,
-     0.7186424534050341
+     51.80471167785904,
+     3.7833718108581365
     ],
     [
-     40.24248178493694,
-     7.1450308668927045
-    ],
-    [
-     92.30326772966129,
-     22.239205085254238
+     56.08727374574313,
+     4.112694246665795
     ]
    ],
-   "solidMass": 773.478321010407,
+   "solidMass": 773.1053758167321,
    "target": 2.0,
-   "massAtTarget": 32.758727324184115,
-   "bracketed": true,
-   "hypervolume": 1.9002865730918872
+   "massAtTarget": 30.747691593669163,
+   "bracketed": false,
+   "hypervolume": 1.895149040560919
   },
   "checks": [
    {
     "check": "mass",
-    "value": 40.24248178493694,
+    "value": 30.747691593669163,
     "op": "<=",
     "limit": 46.0,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 7.1450308668927045,
+    "value": 2.1857266312746018,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": -1.0420691302974926e-12,
+    "value": -5.5168485746511994e-14,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -990,14 +986,14 @@
    },
    {
     "check": "member",
-    "value": 3.2047305086212456,
+    "value": 2.793039212111272,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    },
    {
     "check": "processWall",
-    "value": 2.80550479888916,
+    "value": 2.052271604537964,
     "op": ">=",
     "limit": 0.8,
     "pass": true
@@ -1018,13 +1014,35 @@
    },
    {
     "check": "buckling",
-    "value": 13.358319202289072,
+    "value": 7.630643823166,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    }
   ],
-  "seconds": 1631.9229679107666
+  "seconds": 9086.637646913528,
+  "methodChoice": {
+   "method": "constrained",
+   "stressUtilization": 0.18305478222200763,
+   "searchMass": 32.09432820900008,
+   "constrainedMass": 30.747691593669163,
+   "reason": "stress utilization 0.18: constrained 30.7 g against search 32.1 g"
+  },
+  "process": {
+   "type": "mjf",
+   "inferred": false,
+   "overhangControl": false,
+   "buildDirection": "+z",
+   "supports": [
+    {
+     "region": "j5-horn-hub"
+    },
+    {
+     "region": "j5-idler-bearing",
+     "fix": "pin"
+    }
+   ]
+  }
  },
  {
   "case": "robot-wrist-yoke",
