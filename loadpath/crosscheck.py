@@ -129,6 +129,8 @@ def unsupported(study: Study) -> str | None:
         return "no supports (a self-equilibrated part)"
     if study.gravity is not None:
         return "gravity loads"
+    if getattr(study, "stock", None):
+        return "bought stock members (the tet mesh is the printed part alone)"
     if any(ld.pressure for c in study.load_cases for ld in c.loads):
         return "pressure loads"
     return mesher_missing()

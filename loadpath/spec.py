@@ -843,6 +843,8 @@ class Study:
     # preload and head bearing area for the relaxation check
     durability: Any = None
     joints: list = field(default_factory=list)
+    # bought members the part is built round (stock.Member): tubes, rods, plates
+    stock: list = field(default_factory=list)
     # FDM: slicer.SlicerOptions (print time, filament, support per outcome;
     # graded infill); None for other processes
     slicer: Any = None
@@ -942,11 +944,21 @@ class Study:
 
     def bounds(self) -> tuple[np.ndarray, np.ndarray]:
         los, his = [], []
-        for s in self.design_space + [r.shape for r in self.preserve]:
+        # (a bought member is part of what is analysed: the grid reaches as far as it does)
+        for s in self.design_space + [r.shape for r in self.preserve] + [m.fe_shape() for m in self.stock]:
             lo, hi = s.bounds()
             los.append(lo)
             his.append(hi)
         return np.min(los, axis=0), np.max(his, axis=0)
+
+
+def _stock(d):
+    """The study's bought members (stock.Member), from the record
+    stock.expand_stock left in the raw."""
+    if not d.get("_stock"):
+        return []
+    from .stock import parse_stock
+    return parse_stock(d["_stock"], d.get("_stockPrinted", "pla"), None, float(d.get("_stockMember", 1.4)))
 
 
 def cuts_of(study, region) -> list:
@@ -1461,6 +1473,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     from .fasteners import expand_fasteners
     d = quick.study(d)
     d = _infer_process(d)
+    if d.get("stock"):
+        # bought members (stock.py): the bore each goes in, its sleeves, loads and supports onto it
+        from .stock import expand_stock
+        d = expand_stock(d, base_dir)
     d = expand_fasteners(d)
     d = _expand_planar(d)
     from .fits import expand_fits
@@ -1829,6 +1845,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         shells=shells,
         durability=durability,
         joints=joints,
+        stock=_stock(d),
         slicer=_slicer(d.get("slicer"), process, base_dir, goal),
         min_hole=float(min_hole) if min_hole is not None else None,
         drains=_drains(d.get("drains", "auto"), process),

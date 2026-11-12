@@ -104,6 +104,16 @@ buckling, printability) you can report to the user.
    holes across the layers) replaces the default. To measure it, the
    calibration kit's H-XY / H-Z coupons are a numbered hole ladder read
    go/no-go with a drill bit (no calipers); a calibrated card carries it.
+   A bought tube, rod or plate the part is built round (a carbon arm
+   between printed nodes, an aluminium rail in a printed bracket) goes in
+   `stock`: `{id, type, material, od, wall, from, to, joint}`. It is then
+   a body in the analysis with its own material, the printed part is
+   designed round it, and `stock` in the report checks the member and its
+   bond, clamp or pin (docs/STOCK.md; `loadpath materials --stock`). Do
+   not draw it as a keep-out: a keep-out carries nothing. Read the joint's
+   `limitedBy`: a bond on printed nylon holds a fifth of what it holds on
+   metal, so a failing joint wants a larger tube or a longer socket, not
+   more printed mass.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and

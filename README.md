@@ -131,6 +131,17 @@ Where it is strongest:
   result can go through `loadpath split` when it has to open. Topology
   optimization codes stop at a skeleton, and CAD covers carry no load.
   This is the layer between them, for the outside as well as the inside.
+- **Bought stock in a printed design**: a frame that spans a distance is
+  lighter as carbon tubes between printed nodes than printed whole, so a
+  study can hold `stock`: tubes, rods and plates (carbon laminates,
+  aluminium, steel) as bodies with their own orthotropic material in every
+  solve. The printed nodes and clamps are designed round them, and each
+  joint is checked from the forces the solved assembly puts on it: an
+  adhesive bond in shear and peel against its strength on that plastic, a
+  clamp against slipping, a pin in bearing, and the tube's wall against
+  crushing and buckling ([docs/STOCK.md](docs/STOCK.md)). Topology
+  optimization codes know one material and frame codes know nothing about
+  the lug. This is the layer between them.
 - **Any exterior in**: you or your agent draw the shape, loadpath makes
   everything inside it work. A designer's STEP, a mesh, an SDF function
   (numpy, the `sdf` package, libfive style), a build123d part, or a mesh
@@ -379,7 +390,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
-  [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md),
+  [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md), [bought stock](docs/STOCK.md),
   [KiCad boards](docs/KICAD.md), [antennas](docs/ANTENNA.md), [casting](docs/CASTING.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
   [results bundle](docs/BUNDLE.md).
 

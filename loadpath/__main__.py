@@ -574,6 +574,12 @@ def _materials(args):
     from .material_library import card_names, describe
     from .materials import MATERIALS, _ALIASES
 
+    if getattr(args, "stock", False):
+        # bought members' cards (study `stock`): laminates, their laminae, adhesives, with sources
+        from .stock import describe_cards
+
+        print(json.dumps(describe_cards(), indent=1))
+        return 0
     if args.name:
         key = args.name.strip().lower()
         out = describe(_ALIASES.get(key, key))
@@ -998,6 +1004,9 @@ def main(argv=None):
     sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
     mt = sub.add_parser("materials", help="list the material library, or print one card with its sources")
     mt.add_argument("name", nargs="?")
+    mt.add_argument("--stock", action="store_true",
+                    help="the cards for bought members (study `stock`): carbon tube, rod and plate laminates, "
+                         "and adhesives with their lap-shear strength on each plastic and metal")
     o = sub.add_parser("orient", help="rank build orientations of a mesh (support, bed, layer bond)")
     o.add_argument("mesh")
     o.add_argument("--study", help="the part's study: adds the interlayer reading under its loads")

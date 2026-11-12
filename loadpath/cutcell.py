@@ -330,7 +330,11 @@ class CutGrid:
         if len(self.cut_index):
             alpha[self.cut_index] = np.einsum("pij,pj->pi", self.r_cut, ue[self.cut_index])
         acc = np.zeros((m.n_nodes, 6))
-        wsum = np.bincount(m.enode.ravel(), weights=np.repeat(self.fill, 8), minlength=m.n_nodes)
+        # cells whose stress is the printed material's (a bought member's cells are not: stock.py); a node
+        # reads the cells of the part round it, never a member's
+        mask = getattr(self, "stress_mask", None)
+        fill = self.fill if mask is None else self.fill * mask
+        wsum = np.bincount(m.enode.ravel(), weights=np.repeat(fill, 8), minlength=m.n_nodes)
         corners = 2.0 * CORNERS - 1.0
         bu, ba = b_nodes(corners), b_bubbles(corners)
         for k in range(8):
@@ -340,7 +344,7 @@ class CutGrid:
             eps /= self.pitch
             if thermal is not None:
                 eps[:, :3] -= np.asarray(thermal, float)[:, None]
-            sk = (eps @ c.T) * (mod * self.fill)[:, None]
+            sk = (eps @ c.T) * (mod * fill)[:, None]
             for j in range(6):
                 acc[:, j] += np.bincount(m.enode[:, k], weights=sk[:, j], minlength=m.n_nodes)
         out = acc / np.maximum(wsum, 1e-30)[:, None]
@@ -349,6 +353,8 @@ class CutGrid:
         on_cut[m.enode[self.cut].ravel()] = True
         cnt = np.bincount(m.enode.ravel(), minlength=m.n_nodes)
         on_cut |= cnt < 8
+        if mask is not None:
+            on_cut &= wsum > 0
         cand = np.nonzero(on_cut)[0]
         if not len(cand):
             return out
@@ -365,7 +371,11 @@ class CutGrid:
             nn = np.zeros(m.n_nodes, bool)
             nn[m.enode[near_el].ravel()] = True
             near_el = nn[m.enode].any(axis=1)
+        if mask is not None:
+            near_el &= mask
         xyz, w, sig = self._samples(near_el, u, modulus, thermal)
+        if not len(xyz):
+            return out
         tree = cKDTree(xyz)
         k = min(FIT_POINTS, len(xyz))
         dist, idx = tree.query(p, k=k)

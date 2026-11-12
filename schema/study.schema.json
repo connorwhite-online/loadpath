@@ -47,6 +47,13 @@
         "$ref": "#/$defs/fastener"
       }
     },
+    "stock": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stockMember"
+      },
+      "description": "Bought members the printed part is built round (carbon or aluminium tubes, rods, plates): bodies in the analysis with their own material; the printed nodes and clamps are designed round them and every joint is checked (docs/STOCK.md)."
+    },
     "supports": {
       "type": "array",
       "items": {
@@ -5100,6 +5107,408 @@
         ]
       ],
       "additionalProperties": false
+    },
+    "stockMember": {
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "to"
+      ],
+      "additionalProperties": false,
+      "description": "A bought member the printed part is built round: a tube, rod or plate with its own material. It is a body in every analysis with its own (orthotropic) stiffness and mass, the optimizer designs the printed nodes round it, and the report's `stock` block checks the member (its stress, wall and column buckling) and each joint from what the solved assembly puts on them. A load or support whose region is the member's id acts on its free stretches.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "tube",
+            "rod",
+            "plate"
+          ],
+          "default": "tube"
+        },
+        "material": {
+          "$ref": "#/$defs/stockMaterial"
+        },
+        "from": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "one end of its axis, mm"
+        },
+        "to": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "the other end"
+        },
+        "od": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "tube, rod: outer diameter, mm"
+        },
+        "wall": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "tube: wall thickness, mm"
+        },
+        "innerDiameter": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "tube: inner diameter, mm (instead of wall)"
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "plate: width, mm"
+        },
+        "thickness": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "plate: thickness, mm"
+        },
+        "widthAxis": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "plate: the direction its width runs"
+        },
+        "clearance": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "air kept round the member where it is not joined, mm (default 2)"
+        },
+        "joint": {
+          "$ref": "#/$defs/stockJoint"
+        },
+        "joints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stockJoint"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "stockJoint": {
+      "description": "How the printed part holds the member. One joint object with no span stands for every stretch of the member that runs through the design space.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "bond",
+            "clamp",
+            "pin"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "bond",
+                "clamp",
+                "pin"
+              ],
+              "default": "bond",
+              "description": "bond: adhesive in a printed sleeve, checked in shear and peel against the adhesive's strength on these two materials. clamp: a split sleeve closed by screws, checked against slipping (friction x the clamp's grip). pin: a cross pin or bolt through the member, checked in bearing, shear-out and net section. Every kind also checks the member's wall under the pressure the joint puts on it."
+            },
+            "span": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[from, to] in mm along the member from its `from` end. Default: where the member runs through the design space. Required when a member lists several joints."
+            },
+            "adhesive": {
+              "description": "bond: 'epoxy' (default) or 'polyurethane', or your own with its lap-shear strength on these materials.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "base": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "strength": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "description": "lap-shear strength, MPa"
+                    },
+                    "tension": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "description": "strength pulling the surfaces apart, MPa (default the shear strength)"
+                    },
+                    "overlap": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "description": "the overlap the strength was measured over, mm (default 12.7)"
+                    },
+                    "gap": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "bond line, mm"
+                    }
+                  }
+                }
+              ]
+            },
+            "gap": {
+              "type": "number",
+              "minimum": 0,
+              "description": "radial clearance between the member and its seat, mm (default the adhesive's bond line; a clamp's slip fit)"
+            },
+            "sleeve": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "boolean"
+                }
+              ],
+              "description": "wall of the printed sleeve kept round the member over the joint, mm (default the thinnest member the study prints); false leaves it to the optimizer"
+            },
+            "friction": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1.5,
+              "description": "clamp: static friction of the printed clamp on the member (default 0.2)"
+            },
+            "fasteners": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ],
+              "description": "clamp: ids of the study's fasteners that close it; give the study a load case named 'preload' with their preloads and the grip is read from it"
+            },
+            "clampForce": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "clamp: normal force on the member, N, when no preload case gives it"
+            },
+            "diameter": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "pin: the pin's or bolt's diameter, mm"
+            },
+            "at": {
+              "type": "number",
+              "minimum": 0,
+              "description": "pin: mm along the member from its `from` end"
+            },
+            "direction": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "pin: the pin's axis (default across the member)"
+            }
+          }
+        }
+      ]
+    },
+    "stockMaterial": {
+      "description": "What the member is made of. A stock card (`loadpath materials --stock`: cfrp-pultruded, cfrp-roll-wrapped, cfrp-fabric, cfrp-quasi-isotropic), a library metal (6061-t6, 7075-t6, 304, ti64, ...), a card with its own layup, or measured constants. Direction 1 runs along the member; MPa and g/cm\u00b3.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "required": [
+            "base"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "base": {
+              "type": "string",
+              "description": "a stock card"
+            },
+            "lamina": {
+              "type": "string",
+              "description": "carbon-epoxy-ud, carbon-epoxy-fabric or carbon-pultruded (default the card's)"
+            },
+            "layup": {
+              "type": "array",
+              "minItems": 1,
+              "description": "[[angle from the member's axis in degrees, share of the wall], ...]; shares are normalized",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "E1",
+            "E2",
+            "G12",
+            "density",
+            "Xt",
+            "Yt",
+            "S"
+          ],
+          "additionalProperties": false,
+          "description": "An orthotropic material as measured: moduli, Poisson's ratios and strengths (Xt, Xc along the member in tension and compression; Yt, Yc across it; S in-plane shear; ILSS interlaminar shear; Zc through-thickness compression).",
+          "properties": {
+            "E1": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "E2": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "E3": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "G12": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "G13": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "G23": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "density": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "Xt": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "Xc": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "Yt": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "Yc": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "S": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "ILSS": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "Zc": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "nu12": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "nu13": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "nu23": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "name": {
+              "type": "string"
+            },
+            "family": {
+              "type": "string",
+              "description": "what an adhesive sees: composite, aluminum, steel, stainless"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "E",
+            "strength",
+            "density"
+          ],
+          "additionalProperties": false,
+          "description": "An isotropic material as measured.",
+          "properties": {
+            "E": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "nu": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 0.5
+            },
+            "strength": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "density": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "name": {
+              "type": "string"
+            },
+            "family": {
+              "type": "string"
+            }
+          }
+        }
+      ]
     }
   }
 }

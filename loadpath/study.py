@@ -232,6 +232,9 @@ class Outcome:
             "boundaryCutArea": r.get("boundaryCutArea"),
             **({"closedBores": r["closedBores"]} if r.get("closedBores") else {}),
             **({"fits": r["fits"]} if r.get("fits") else {}),
+            # bought members (stock.py): the members and joints as checked, and what the assembly weighs
+            **({"stock": r["stock"], "printedBodies": r.get("printedBodies"), "stockMass": r.get("stockMass"),
+                "assemblyMass": r.get("assemblyMass")} if "stock" in r else {}),
             **({"thermal": r["thermal"]} if "thermal" in r else {}),
             **({"durability": r["durability"]} if "durability" in r else {}),
             **({"serviceEnvelope": r["serviceEnvelope"]} if "serviceEnvelope" in r else {}),
@@ -305,6 +308,11 @@ def _margin(study: Study, report: dict) -> float | None:
             # a part that buckles under safetyFactor x its loads fails as one
             # that yields there does (verify._buckling)
             ms.append(report["bucklingFactor"] / g.safety_factor)
+        st = report.get("stock")
+        if st and st.get("margin") is not None:
+            # bought members and their joints hold the safety factor too (stock.assess): a tube that
+            # buckles, a bond that shears or a clamp that slips fails the assembly
+            ms.append(st["margin"])
     dur = report.get("durability") if _durability_drives(study) else None
     if g.max_deflection is not None:
         worst = max((c["deflection"] for c in report["cases"]), default=float("inf"))
@@ -1286,6 +1294,8 @@ def mesh_fidelity(domain, xphys, mesh) -> dict | None:
     from .voxels import mesh_solid
 
     solid = np.asarray(xphys) > 0.5
+    if getattr(domain, "stock", None) is not None:
+        solid = solid & ~domain.stock      # a bought member's cells are the member, not print (stock.py)
     if not solid.any() or mesh is None or len(getattr(mesh, "faces", ())) == 0:
         return None
     step = domain.pitch / 2.0

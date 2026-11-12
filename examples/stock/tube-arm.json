@@ -1,0 +1,28 @@
+{
+  "name": "tube-arm",
+  "description": "A drone arm as it is built: a bought pultruded carbon tube, a printed hub socket bonded on one end and a printed motor mount on the other. The tube is a body in the analysis with its own orthotropic stiffness; the optimizer designs the two printed nodes round it and the bond, the tube and its wall are checked from what the solved assembly puts on them.",
+  "material": "pa12",
+  "designSpace": [
+    {"type": "box", "min": [-32, -14, -9], "max": [22, 14, 9]},
+    {"type": "box", "min": [118, -16, -9], "max": [158, 16, 9]}
+  ],
+  "preserve": [
+    {"id": "hub-face", "shape": {"type": "box", "min": [-32, -14, -9], "max": [-29, 14, 9]}},
+    {"id": "motor-pad", "shape": {"type": "cylinder", "p0": [142, 0, 6], "p1": [142, 0, 9], "r": 13}}
+  ],
+  "keepOut": [
+    {"id": "motor-shaft", "shape": {"type": "cylinder", "p0": [142, 0, 3], "p1": [142, 0, 10], "r": 4}}
+  ],
+  "stock": [
+    {"id": "arm", "type": "tube", "material": "cfrp-pultruded", "od": 12, "wall": 1,
+     "from": [-24, 0, 0], "to": [136, 0, 0],
+     "joint": {"type": "bond", "adhesive": "polyurethane"}}
+  ],
+  "supports": [{"region": "hub-face"}],
+  "loadCases": [
+    {"name": "full-thrust", "loads": [{"region": "motor-pad", "force": [0, 0, 12], "moment": [0, 0, 180]}]},
+    {"name": "wall-hit", "loads": [{"region": "motor-pad", "force": [-60, 40, 0]}]}
+  ],
+  "goal": {"safetyFactor": 2.0},
+  "resolution": {"pitch": 1.0}
+}

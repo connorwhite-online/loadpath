@@ -218,11 +218,19 @@ def nodal_stress(stiff, u, modulus, thermal=None):
     mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,))[:, None]
     ue = u[mesh.edof]
     acc = np.zeros((mesh.n_nodes, 6))
+    # the cells whose stress is the printed material's: a bought member's are not (stock.py), and a node
+    # on the joint reads the printed cells round it alone
+    mask = getattr(stiff, "stress_mask", None)
+    if mask is not None:
+        mod = mod * mask[:, None]
     for k, (a, b, cc) in enumerate(2.0 * CORNERS - 1.0):
         strain = ue @ (hex8_b(a, b, cc, stiff.nu, element) / mesh.pitch).T
         if thermal is not None:
             strain[:, :3] -= np.asarray(thermal, float)[:, None]
         np.add.at(acc, mesh.enode[:, k], (strain @ c.T) * mod)
+    if mask is not None:
+        cnt = np.bincount(mesh.enode[mask].ravel(), minlength=mesh.n_nodes)
+        return acc / np.maximum(cnt, 1)[:, None]
     cnt = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)
     return acc / cnt[:, None]
 
@@ -348,8 +356,10 @@ def _closed_bores(study: Study, mesh) -> list:
 
     out = []
     rng = np.random.default_rng(0)
+    members = {m.id for m in getattr(study, "stock", None) or []}
     for r in study.keep_out:
-        if not r.bore:
+        # (a bought member's seat may end in the part: a socket's floor is its stop, stock.py)
+        if not r.bore or r.id in members:
             continue
         sh = r.shape
         if not isinstance(sh, Cylinder) or sh.r_inner > 0:
@@ -801,11 +811,18 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
 
     t0 = time.time()
     mat = study.material
+    if getattr(study, "stock", None):
+        # with its bought members (stock.py): their stiffness is in bc.springs; their own buckling
+        # (column, wall) is read in closed form from what they carry (stock.assess)
+        from .stock import assembly_mesh
+        mesh = assembly_mesh(study, mesh)
+        vol = float(mesh.volume)
     pb = max(pitch, (vol / BUCKLING_CELLS) ** (1.0 / 3.0))
     solid, origin = voxelize(mesh, pb)
     hm = HexMesh(np.argwhere(solid), pb, origin)
+    hm.stock_elastic = mat.nu
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pb)
-    if not bc.fixed.any() and bc.springs is None:
+    if not bc.fixed.any() and not bc.pinned:
         return None
     # Face connectivity, as the stress check has it: a piece that meets the
     # rest only at a cell's edge or corner hangs on a hinge the stiffness
@@ -818,6 +835,7 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
     keep_el = np.isin(lbl[tuple(ijk.T)], held_lbl)
     if not keep_el.all():
         hm = HexMesh(ijk[keep_el], pb, origin)
+        hm.stock_elastic = mat.nu
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pb)
     fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, bc.fixed) if bc.gravity is not None else None
     spreads = bc.spreads or [None] * len(study.load_cases)
@@ -835,7 +853,7 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
     springs = mat.E * bc.springs if bc.springs is not None else None
     # pieces no support holds would float: left out (a pin's springs hold)
     hold = bc.fixed.copy()
-    if springs is not None:
+    if springs is not None and bc.pinned and not getattr(study, "stock", None):
         hold |= np.asarray(abs(springs).sum(axis=1)).ravel() > 0
     sub, el, _, vecs = solid_submesh(hm, np.ones(hm.n_elem, bool), hold, [bc.fixed.astype(float)] + forces)
     fixed, forces = vecs[0] > 0.5, vecs[1:]
@@ -933,18 +951,30 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
         return None
     t0 = time.time()
     mat = study.material
+    stock = bool(getattr(study, "stock", None))
+    if stock:
+        # with its bought members (stock.py): their stiffness through bc.springs, their mass in the cells
+        from .stock import assembly_mesh
+        mesh, vol = assembly_mesh(study, mesh), None
     if vol is None:
         vol = float(manifold_from_trimesh(mesh).volume())
     pm = max(pitch or 0.0, (vol / MODAL_CELLS) ** (1.0 / 3.0))
+
+    def members_on(m):
+        if stock:
+            m.stock_fill = share[tuple(m.elem_ijk.T)]
+            m.stock_elastic = float(mat.nu)
+        return m
+
     # each cell at its filled share of stiffness and mass: whole cells
     # stair-step a 10 mm bar to 10.3-10.8 mm and read its bending
     # frequency 4-16% high
     share, origin = voxelize(mesh, pm, fractional=True)
     solid = share > 0.02
-    hm = HexMesh(np.argwhere(solid), pm, origin)
+    hm = members_on(HexMesh(np.argwhere(solid), pm, origin))
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pm)
     free = bool(study.inertia_relief)
-    if not free and not bc.fixed.any() and bc.springs is None:
+    if not free and not bc.fixed.any() and not bc.pinned:
         return None
     lbl, nb = ndimage.label(solid)
     ijk = hm.elem_ijk
@@ -957,9 +987,12 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
         held = np.unique(lbl[tuple(ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
     keep = np.isin(lbl[tuple(ijk.T)], held)
     if not keep.all():
-        hm = HexMesh(ijk[keep], pm, origin)
+        hm = members_on(HexMesh(ijk[keep], pm, origin))
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pm)
     fill = share[tuple(hm.elem_ijk.T)]
+    rho = float(mat.density) * fill
+    if stock and getattr(hm, "stock_density", None) is not None:
+        rho = rho + float(mat.density) * hm.stock_density
     masses = []
     for i, (region, shape, kg) in enumerate(vib.masses):
         nodes = np.flatnonzero(_region_nodes(study, hm, region, shape, f"vibration.masses[{i}]", tol_floor=pm))
@@ -1001,9 +1034,9 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
     tops = [k[1] for k in (band_keepout_(ex, eta) for ex in vib.excitations) if k is not None]
     n_modes = vib.modes if not tops else max(vib.modes, 12)
     while True:
-        res = modal_analysis(hm, moduli, float(mat.density) * fill, float(mat.nu), bc.fixed, n_modes,
+        res = modal_analysis(hm, moduli, rho, float(mat.nu), bc.fixed, n_modes,
                              masses,
-                             springs=None if free else springs, free=free, mass_blocks=blocks)
+                             springs=springs if (stock or not free) else None, free=free, mass_blocks=blocks)
         # modes up to the top of the highest band: a mode count that stops
         # short of it has not shown the band clear
         if not tops or res.frequencies[-1] >= max(tops) or n_modes >= MODAL_MODES_MAX \
@@ -1138,6 +1171,26 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
     from types import SimpleNamespace
 
     mat = study.material
+    stock = bool(getattr(study, "stock", None))
+    if stock:
+        # bought members (stock.py): the grid is cut from the printed part and the members as one solid,
+        # so their cells are there to carry their stiffness (boundary_conditions adds it)
+        from .stock import assembly_mesh
+        mesh = assembly_mesh(study, mesh)
+        vol = float(mesh.volume)
+    nu_grid = study.elastic(mat) if nu is None else nu
+
+    def members_on(m, fill_el, keep=None):
+        if stock:
+            m.stock_fill = None if fill_el is None else np.asarray(fill_el, float)
+            m.stock_elastic = nu_grid
+            if cg is not None:
+                # the cut cells' own matrices, for taking the printed share of a member's cell off
+                pos = np.full(cg.mesh.n_elem, -1, np.int64)
+                pos[cg.cut_index] = np.arange(len(cg.cut_index))
+                m.stock_ke_cut = (pos if keep is None else pos[keep], cg.ke_cut)
+        return m
+
     pitch = (vol / max_cells) ** (1.0 / 3.0)
     if min_pitch:
         pitch = max(pitch, min_pitch)
@@ -1176,7 +1229,7 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
     # 1.04 mm pitch stalled verification for over an hour).
     lbl, nlab = ndimage.label(solid)
     elem_ijk = np.argwhere(solid)
-    hm = HexMesh(elem_ijk, pitch, origin)
+    hm = members_on(HexMesh(elem_ijk, pitch, origin), None if share is None else share[tuple(elem_ijk.T)])
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
     # Material not connected to a support would float; it is reported as a
     # separate body and left out of the stress analysis.
@@ -1191,7 +1244,8 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
         supported_lbls = np.array([int(np.argmax(sizes))])
     keep_el = np.isin(lbl[tuple(elem_ijk.T)], supported_lbls)
     if not keep_el.all():
-        hm = HexMesh(elem_ijk[keep_el], pitch, origin)
+        hm = members_on(HexMesh(elem_ijk[keep_el], pitch, origin),
+                        None if share is None else share[tuple(elem_ijk[keep_el].T)], keep_el)
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
     cut_count = None
     if cg is not None:
@@ -1203,8 +1257,19 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
     band = max(1.5 * pitch, contact_band or 0.0)
     edges = _user_edges(study, band)
     on_edge = edges(hm.node_xyz) if edges is not None else None
+    stress_mask, printed_solid = None, None
+    if stock:
+        from .stock import stock_cells
+        sc = stock_cells(study, members_on(hm, fill))
+        # the cells with printed material in them: the rest are a member's alone
+        stress_mask = (sc.owner < 0) | (sc.printed > 0.05)
+        if cg is not None:
+            cg.stress_mask = stress_mask
+        printed_solid = np.zeros(solid.shape, bool)
+        printed_solid[tuple(hm.elem_ijk[stress_mask].T)] = True
     return SimpleNamespace(pitch=pitch, cg=cg, solid=solid, origin=origin, share=share, hm=hm, bc=bc, fill=fill,
-                           band=band, edges=edges, on_edge=on_edge, cut_count=cut_count, keep_el=keep_el)
+                           band=band, edges=edges, on_edge=on_edge, cut_count=cut_count, keep_el=keep_el,
+                           stress_mask=stress_mask, printed_solid=printed_solid)
 
 
 def _solve_grid(study: Study, g, nu, moduli, rhs):
@@ -1230,8 +1295,10 @@ def _solve_grid(study: Study, g, nu, moduli, rhs):
         stiff = GridElasticity(hm, nu, fixed, springs=mat.E * bc.springs if bc.springs is not None else None,
                                rtol=1e-6, maxiter=3000)
         stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
+        stiff.stress_mask = getattr(g, "stress_mask", None)
         return stiff, stiff.solve_many(rhs)
     stiff = Stiffness(hm, nu, fixed)
+    stiff.stress_mask = getattr(g, "stress_mask", None)
     k = stiff.assemble(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
     if bc.springs is not None:
         k = (k + mat.E * bc.springs).tocsr()
@@ -1372,18 +1439,11 @@ def _undeclared_layers(study):
     return (kind, float(ratio)) if ratio < 1.0 else None
 
 
-def support_reactions(stiff, hm, u, f, moduli, nodes_of, fill=None, cg=None):
-    """What each support carries in one solved case: per support (node mask
-    in `nodes_of`) the resultant force the part puts on it (N) and the
-    moment of that force about the support's centroid (N·mm). Read as the
-    load less the part's own internal force, f - K u, at the support's
-    nodes, which is the clamp's reaction on the held dofs and a pin's
-    spring force on the rest (so pins and partly fixed supports read right,
-    and the supports' forces sum to the applied load). Only the cells
-    touching a support are visited."""
+def _internal_force(stiff, hm, u, moduli, fill=None, cg=None, el=None):
+    """K u per dof from the grid's own cells (`el`: only these), without the
+    springs: what the material's stress puts on each node."""
     n_el = hm.n_elem
-    held = np.any(nodes_of, axis=0) if len(nodes_of) else np.zeros(hm.n_nodes, bool)
-    el = np.nonzero(held[hm.enode].any(axis=1))[0]
+    el = np.arange(n_el) if el is None else el
     mod = np.broadcast_to(np.asarray(moduli, float), (n_el,))[el].copy()
     if fill is not None and cg is None:
         mod *= fill[el]
@@ -1397,7 +1457,25 @@ def support_reactions(stiff, hm, u, f, moduli, nodes_of, fill=None, cg=None):
         cut = k >= 0
         if cut.any():
             fe[cut] = np.einsum("nij,nj->ni", cg.ke_cut[k[cut]], ue[cut]) * mod[cut, None]
-    ku = np.bincount(edof.ravel(), weights=fe.ravel(), minlength=hm.n_dof)
+    return np.bincount(edof.ravel(), weights=fe.ravel(), minlength=hm.n_dof)
+
+
+def support_reactions(stiff, hm, u, f, moduli, nodes_of, fill=None, cg=None, extra=None):
+    """What each support carries in one solved case: per support (node mask
+    in `nodes_of`) the resultant force the part puts on it (N) and the
+    moment of that force about the support's centroid (N·mm). Read as the
+    load less the part's own internal force, f - K u, at the support's
+    nodes, which is the clamp's reaction on the held dofs and a pin's
+    spring force on the rest (so pins and partly fixed supports read right,
+    and the supports' forces sum to the applied load). Only the cells
+    touching a support are visited. `extra`: stiffness the cells do not
+    hold that is the part's own all the same (a bought member's, stock.py:
+    sparse, N/mm)."""
+    held = np.any(nodes_of, axis=0) if len(nodes_of) else np.zeros(hm.n_nodes, bool)
+    el = np.nonzero(held[hm.enode].any(axis=1))[0]
+    ku = _internal_force(stiff, hm, u, moduli, fill, cg, el)
+    if extra is not None:
+        ku = ku + extra @ u
     carried = (f - ku).reshape(-1, 3)
     xyz = hm.node_xyz
     out, taken = [], np.zeros(hm.n_nodes, bool)
@@ -1575,6 +1653,19 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     # decompose() lists each enclosed cavity too, as a negative volume
     pieces = [b.volume() for b in part.decompose()]
     report["bodies"] = sum(1 for v in pieces if v > 0)
+    stock_on = bool(getattr(study, "stock", None))
+    if stock_on:
+        # printed pieces that only the bought members join (two nodes on one tube) are one assembly:
+        # the count that has to be 1 is the assembly's
+        from .stock import assembly_mesh, stock_mass
+
+        report["printedBodies"] = report["bodies"]
+        report["bodies"] = sum(1 for b in manifold_from_trimesh(assembly_mesh(study, mesh)).decompose()
+                               if b.volume() > 0)
+        report["stockMass"] = stock_mass(study)
+        report["assemblyMass"] = report["mass"] + report["stockMass"]
+        # the submodels re-solve a box of printed material alone: skipped, as with heat
+        refine = 0
     report["enclosedCavityVolume"] = float(-sum(v for v in pieces if v < 0))
 
     if study.print_direction is not None:
@@ -1606,7 +1697,10 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     if thin:
         report["thinPreserves"] = thin["thinPreserves"]
         report.setdefault("warnings", []).extend(thin["warnings"])
-    report["minMember"], report["p5Member"] = _thickness(solid if share is None else share >= 0.5, pitch)
+    printed_cells = solid if share is None else share >= 0.5
+    if g.printed_solid is not None:
+        printed_cells = printed_cells & g.printed_solid
+    report["minMember"], report["p5Member"] = _thickness(printed_cells, pitch)
     report["contactBand"] = band
     fg = gravity_force(hm, np.ones(hm.n_elem) if fill is None else fill, bc.gravity, fixed) if bc.gravity is not None else None
     # Heat (the study's thermal block): the part's own temperature, solved on
@@ -1754,6 +1848,12 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     reaction_rows = []
     sup_nodes = bc.regions[:len(study.supports)]
     clear_nodes = _clearance_nodes(study, hm, pitch, report)
+    stock_k, stock_cases = None, []
+    if stock_on:
+        from .stock import stock_cells
+
+        _sc = stock_cells(study, hm)
+        stock_k = _sc.operator(None) if _sc is not None else None
     for ci, case in enumerate(study.load_cases):
         load_nodes = bc.case_load_nodes[ci]
         # Exclude nodes within the contact band of an applied load or support.
@@ -1784,7 +1884,10 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                 f, u = f + rhs[idx[0]], u + displacements[idx[0]]
         worst_dirs.append(direction)
         if sup_nodes and not study.self_equilibrated:
-            reaction_rows.append((case.name, support_reactions(stiff, hm, u, f, moduli, sup_nodes, fill, cg)))
+            reaction_rows.append((case.name, support_reactions(stiff, hm, u, f, moduli, sup_nodes, fill, cg,
+                                                               extra=stock_k)))
+        if stock_on:
+            stock_cases.append((case.name, u, f))
         sig_u = nodal_stress(stiff, u, moduli, eps)
         vm = equivalent_stress(sig_u, m_c)
         env = vm if env is None else np.maximum(env, vm)
@@ -1967,6 +2070,17 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         })
     report["cases"] = cases
     report["safetyFactor"] = worst_sf
+    if stock_on and stock_k is not None:
+        # the members and their joints, from what the solved assembly puts on them (stock.assess):
+        # section forces against the member's strength and buckling, interface forces against the
+        # bond, the clamp's grip, the pin's bearing and the tube wall's crushing
+        from .stock import assess as stock_assess
+
+        def residual(u, f):
+            return _internal_force(stiff, hm, u, moduli, fill, cg) + stock_k @ u - f
+
+        report["stock"] = stock_assess(study, hm, stock_cases, residual, study.goal.safety_factor)
+        report.setdefault("warnings", []).extend(report["stock"].pop("warnings", []))
     if layers is not None:
         kind, ratio = layers
         sfs = {a: (float(ratio * mat.strength / (axis_bond[i] * STRESS_ALLOWANCE)) if axis_bond[i] > 0 else None)

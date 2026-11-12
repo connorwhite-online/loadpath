@@ -228,14 +228,21 @@ class BoundaryConditions:
     # inertiaRelief: the loads as written (before the part's own inertia
     # balances them) and the rigid-body modes, for rebalancing on a design
     raw_loads: list | None = None
+    # whether `springs` holds the part anywhere (a pin support); a bought member's stiffness is in
+    # `springs` too (stock.py) and holds nothing
+    pinned: bool = False
 
 
 def node_mass(mesh: HexMesh, density) -> np.ndarray:
     """Lumped volume per node (mm^3) of cells at `density` (0-1 per cell or
     a scalar): what inertia relief weighs each node's acceleration by."""
     m = np.zeros(mesh.n_nodes)
-    np.add.at(m, mesh.enode, (np.broadcast_to(np.asarray(density, float), (mesh.n_elem,))
-                              * mesh.pitch ** 3 / 8.0)[:, None])
+    dens = np.broadcast_to(np.asarray(density, float), (mesh.n_elem,))
+    extra = getattr(mesh, "stock_density", None)
+    if extra is not None:
+        # bought members in the mesh (stock.py): their own density, less the printed material's they displace
+        dens = dens + extra
+    np.add.at(m, mesh.enode, (dens * mesh.pitch ** 3 / 8.0)[:, None])
     return m
 
 
@@ -489,6 +496,14 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         rows, cols, vals = (np.concatenate(v) for v in (rows, cols, vals))
         keep = ~(fixed[rows] | fixed[cols])
         springs = sp.csr_matrix((vals[keep], (rows[keep], cols[keep])), shape=(mesh.n_dof, mesh.n_dof))
+    pinned = springs is not None
+    if getattr(study, "stock", None):
+        # bought members: their own stiffness on their cells, less the printed material's the grid puts
+        # there, added to every solve the way the pins' springs are (stock.stock_operator)
+        from .stock import stock_operator
+        k_stock = stock_operator(study, mesh, fixed)
+        if k_stock is not None:
+            springs = k_stock if springs is None else (springs + k_stock).tocsr()
 
     load_nodes = np.zeros(mesh.n_nodes, bool)
     # A force "over a region" is a uniform traction on it (or a uniform body
@@ -602,7 +617,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         raw = [f.copy() for f in loads]
         loads = _inertia_relief(study, mesh, loads, fixed, tol_floor)
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
-                              case_wet, imbalance, spreads, raw)
+                              case_wet, imbalance, spreads, raw, pinned=pinned)
 
 
 def _near_cells(mesh: HexMesh, nodes: np.ndarray, layers: int = 2) -> np.ndarray:
@@ -618,7 +633,11 @@ def _near_cells(mesh: HexMesh, nodes: np.ndarray, layers: int = 2) -> np.ndarray
 
 def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed: np.ndarray) -> np.ndarray:
     """Nodal self-weight for per-element solid fraction `density`."""
-    per_node = (np.asarray(density, float) * mesh.pitch ** 3 / 8.0)[:, None] * gravity[None, :]
+    density = np.asarray(density, float)
+    extra = getattr(mesh, "stock_density", None)
+    if extra is not None:
+        density = density + extra         # bought members weigh what they weigh (stock.py)
+    per_node = (density * mesh.pitch ** 3 / 8.0)[:, None] * gravity[None, :]
     f = np.zeros(mesh.n_dof)
     for a in range(3):
         f += np.bincount(mesh.edof[:, a::3].ravel(), weights=np.repeat(per_node[:, a], 8),
@@ -782,7 +801,36 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         preserve |= (_fraction(skin, centers, pitch) >= 0.5) & (bore_f < 0.5)
     preserve = _face_bridge(preserve, pres_f, dims, (design_f >= 0.5) & (keep_f == 0))
     design = (design_f >= 0.5) & ~preserve & (keep_f == 0)
+    stock_cell = None
+    if getattr(study, "stock", None):
+        # Bought members (stock.py) are bodies in the analysis: every cell one touches is in the mesh,
+        # pinned, and carries the member's own stiffness there (boundary_conditions adds it). A cell its
+        # wall shares with a sleeve is the member's; the sleeve's part of it is kept as printed material.
+        from .stock import _shares
+        stock_f = np.zeros(len(centers))
+        free = np.zeros(len(centers), bool)
+        joined = np.zeros(len(centers), bool)
+        body_f = np.zeros(len(centers))
+        for m in study.stock:
+            f = _shares(m.fe_shape(), centers, pitch)
+            stock_f = np.maximum(stock_f, f)
+            on = f > 0
+            body_f[on] = np.maximum(body_f[on], _shares(m.body(), centers[on], pitch, floor=False))
+            s_c = (centers - m.p0) @ m.axis
+            for j in m.joints:
+                joined |= (f > 0) & (s_c >= j.span[0] - 0.5 * pitch) & (s_c <= j.span[1] + 0.5 * pitch)
+        free = (stock_f > 0) & ~joined
+        stock_cell = stock_f >= 1.0 / 64.0
+        preserve &= ~stock_cell
+        design &= ~stock_cell
+        if free.any():
+            # where a member is not joined nothing printed may touch it: a cell of air round it on this
+            # grid, whatever clearance the keep-out draws
+            fg = ndimage.binary_dilation((free & stock_cell).reshape(dims), structure=_CONN26).ravel()
+            design &= ~fg
     active = preserve | design
+    if stock_cell is not None:
+        active |= stock_cell
     if not active.any():
         raise ValueError("the design space is empty after removing keep-outs")
 
@@ -792,6 +840,8 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     # the touch microphone's rails were read as missing except at the wall
     # they hang from, so its board looked held at one end only.
     lost_cells = (pres_f >= 0.5) & ~preserve
+    if stock_cell is not None:
+        lost_cells &= ~stock_cell          # a sleeve's cells its member shares are the member's, not lost
     if lost_cells.any() and cutting:
         on = np.flatnonzero(pres_f >= 0.5)
         for r in study.preserve:
@@ -873,6 +923,13 @@ def _build_domain(study: Study, pitch: float) -> Domain:
 
     pres_el = preserve[active]
     joints = drawn_joints(preserve.reshape(dims), mesh.elem_ijk) & ~pres_el
+    stock_el = None
+    if stock_cell is not None:
+        stock_el = stock_cell[active]
+        # the printed share of a member's cell: what of it is a sleeve (or other drawn geometry)
+        mesh.stock_print = np.where(stock_el, np.minimum(pres_f[active], 1.0 - body_f[active]), 0.0)
+        mesh.stock_elastic = study.elastic(design=True)
+        pres_el = pres_el | stock_el
     try:
         bc = boundary_conditions(study, mesh)
     except _HeldPreload:
@@ -993,6 +1050,11 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     dom.impacts = [(ci, c) for ci, c in enumerate(study.load_cases) if getattr(c, "impact", None) is not None]
     dom.impact_material = (float(study.material.E), float(study.material.density))
     dom.impact_study = study
+    if stock_el is not None:
+        # bought members' cells, and those of them on stretches that are not joined (reconstruct leaves
+        # these out of the printed part)
+        dom.stock = stock_el
+        dom.stock_free = free[active] & stock_el
     return dom
 
 

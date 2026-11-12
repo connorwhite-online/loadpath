@@ -60,7 +60,11 @@ resolve against; it defaults to the server's working directory.
    envelope the part may fill, how it is held, what pushes on it and how
    hard (mass × 9.81 × a dynamic factor), the material and the printer.
    Start from the nearest `loadpath_examples` document rather than a blank
-   page. Bolted joints go in `fasteners`, not as drawn bosses. A hole
+   page. Bolted joints go in `fasteners`, not as drawn bosses. A bought
+   tube, rod or plate the part is built round (a carbon arm between printed
+   nodes) goes in `stock` with its joint, not as a keep-out: it is then a
+   body in the analysis and its bond, clamp or pin is checked
+   ([STOCK.md](STOCK.md); `loadpath materials --stock` lists the cards). A hole
    something goes into gets a `fit` on its keep-out (press for a bearing,
    slip for a locating pin, clearance for a turning shaft), drawn at the
    mating part's diameter: loadpath sizes the hole for the process, and

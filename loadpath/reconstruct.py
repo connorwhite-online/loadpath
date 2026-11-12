@@ -1386,6 +1386,11 @@ def _fragment(man, stage: str, field: "_FieldBodies | None", main: set) -> dict:
 
 def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: ReconstructOptions | None = None):
     """Returns (trimesh.Trimesh, info dict)."""
+    free = getattr(domain, "stock_free", None)
+    if free is not None and free.any():
+        # a bought member's cells away from its joints (stock.py) are not printed material: left at 1
+        # they would mesh as a crust round the member's clearance
+        xphys = np.where(free, 0.0, xphys)
     mesh, info = _reconstruct(study, domain, xphys, opts)
     o = opts or ReconstructOptions()
     if info.get("watertight", True) or not o.taubin_iterations:

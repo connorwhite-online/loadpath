@@ -1472,6 +1472,109 @@ SPLIT_SCHEMA = {
     "$defs": {**_SHAPES, "shape": _SHAPE},
 }
 
+_STOCK_MATERIAL = {
+    "description": "What the member is made of. A stock card (`loadpath materials --stock`: cfrp-pultruded, "
+                   "cfrp-roll-wrapped, cfrp-fabric, cfrp-quasi-isotropic), a library metal (6061-t6, 7075-t6, 304, "
+                   "ti64, ...), a card with its own layup, or measured constants. Direction 1 runs along the "
+                   "member; MPa and g/cm³.",
+    "anyOf": [
+        {"type": "string"},
+        {"type": "object", "required": ["base"], "additionalProperties": False, "properties": {
+            "base": {"type": "string", "description": "a stock card"},
+            "lamina": {"type": "string", "description": "carbon-epoxy-ud, carbon-epoxy-fabric or carbon-pultruded "
+                                                         "(default the card's)"},
+            "layup": {"type": "array", "minItems": 1, "description": "[[angle from the member's axis in degrees, "
+                      "share of the wall], ...]; shares are normalized",
+                      "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}},
+            "name": {"type": "string"}}},
+        {"type": "object", "required": ["E1", "E2", "G12", "density", "Xt", "Yt", "S"],
+         "additionalProperties": False,
+         "description": "An orthotropic material as measured: moduli, Poisson's ratios and strengths (Xt, Xc "
+                        "along the member in tension and compression; Yt, Yc across it; S in-plane shear; ILSS "
+                        "interlaminar shear; Zc through-thickness compression).",
+         "properties": {**{k: _POS for k in ("E1", "E2", "E3", "G12", "G13", "G23", "density", "Xt", "Xc", "Yt",
+                                             "Yc", "S", "ILSS", "Zc")},
+                        **{k: {"type": "number", "minimum": 0, "exclusiveMaximum": 1} for k in ("nu12", "nu13",
+                                                                                                   "nu23")},
+                        "name": {"type": "string"},
+                        "family": {"type": "string", "description": "what an adhesive sees: composite, aluminum, "
+                                                                    "steel, stainless"}}},
+        {"type": "object", "required": ["E", "strength", "density"], "additionalProperties": False,
+         "description": "An isotropic material as measured.",
+         "properties": {"E": _POS, "nu": {"type": "number", "minimum": 0, "exclusiveMaximum": 0.5}, "strength": _POS,
+                        "density": _POS, "name": {"type": "string"}, "family": {"type": "string"}}},
+    ],
+}
+
+_STOCK_JOINT = {
+    "description": "How the printed part holds the member. One joint object with no span stands for every stretch "
+                   "of the member that runs through the design space.",
+    "anyOf": [{"type": "string", "enum": ["bond", "clamp", "pin"]},
+              {"type": "object", "additionalProperties": False, "properties": {
+        "type": {"enum": ["bond", "clamp", "pin"], "default": "bond",
+                 "description": "bond: adhesive in a printed sleeve, checked in shear and peel against the "
+                                "adhesive's strength on these two materials. clamp: a split sleeve closed by "
+                                "screws, checked against slipping (friction x the clamp's grip). pin: a cross pin "
+                                "or bolt through the member, checked in bearing, shear-out and net section. Every "
+                                "kind also checks the member's wall under the pressure the joint puts on it."},
+        "span": {"type": "array", "items": {"type": "number", "minimum": 0}, "minItems": 2, "maxItems": 2,
+                 "description": "[from, to] in mm along the member from its `from` end. Default: where the member "
+                                "runs through the design space. Required when a member lists several joints."},
+        "adhesive": {"description": "bond: 'epoxy' (default) or 'polyurethane', or your own with its lap-shear "
+                                    "strength on these materials.",
+                     "anyOf": [{"type": "string"},
+                               {"type": "object", "additionalProperties": False, "properties": {
+                                   "base": {"type": "string"}, "name": {"type": "string"},
+                                   "strength": {**_POS, "description": "lap-shear strength, MPa"},
+                                   "tension": {**_POS, "description": "strength pulling the surfaces apart, MPa "
+                                                                      "(default the shear strength)"},
+                                   "overlap": {**_POS, "description": "the overlap the strength was measured "
+                                                                      "over, mm (default 12.7)"},
+                                   "gap": {"type": "number", "minimum": 0, "description": "bond line, mm"}}}]},
+        "gap": {"type": "number", "minimum": 0,
+                "description": "radial clearance between the member and its seat, mm (default the adhesive's bond "
+                               "line; a clamp's slip fit)"},
+        "sleeve": {"anyOf": [_POS, {"type": "boolean"}],
+                   "description": "wall of the printed sleeve kept round the member over the joint, mm (default the "
+                                  "thinnest member the study prints); false leaves it to the optimizer"},
+        "friction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1.5,
+                     "description": "clamp: static friction of the printed clamp on the member (default 0.2)"},
+        "fasteners": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+                      "description": "clamp: ids of the study's fasteners that close it; give the study a load "
+                                     "case named 'preload' with their preloads and the grip is read from it"},
+        "clampForce": {**_POS, "description": "clamp: normal force on the member, N, when no preload case gives "
+                                              "it"},
+        "diameter": {**_POS, "description": "pin: the pin's or bolt's diameter, mm"},
+        "at": {"type": "number", "minimum": 0, "description": "pin: mm along the member from its `from` end"},
+        "direction": {**_VEC3, "description": "pin: the pin's axis (default across the member)"},
+    }}],
+}
+
+_STOCK_MEMBER = {
+    "type": "object", "required": ["id", "from", "to"], "additionalProperties": False,
+    "description": "A bought member the printed part is built round: a tube, rod or plate with its own material. "
+                   "It is a body in every analysis with its own (orthotropic) stiffness and mass, the optimizer "
+                   "designs the printed nodes round it, and the report's `stock` block checks the member (its "
+                   "stress, wall and column buckling) and each joint from what the solved assembly puts on them. "
+                   "A load or support whose region is the member's id acts on its free stretches.",
+    "properties": {
+        "id": {"type": "string"},
+        "type": {"enum": ["tube", "rod", "plate"], "default": "tube"},
+        "material": {"$ref": "#/$defs/stockMaterial"},
+        "from": {**_VEC3, "description": "one end of its axis, mm"},
+        "to": {**_VEC3, "description": "the other end"},
+        "od": {**_POS, "description": "tube, rod: outer diameter, mm"},
+        "wall": {**_POS, "description": "tube: wall thickness, mm"},
+        "innerDiameter": {**_POS, "description": "tube: inner diameter, mm (instead of wall)"},
+        "width": {**_POS, "description": "plate: width, mm"},
+        "thickness": {**_POS, "description": "plate: thickness, mm"},
+        "widthAxis": {**_VEC3, "description": "plate: the direction its width runs"},
+        "clearance": {**_POS, "description": "air kept round the member where it is not joined, mm (default 2)"},
+        "joint": {"$ref": "#/$defs/stockJoint"},
+        "joints": {"type": "array", "items": {"$ref": "#/$defs/stockJoint"}, "minItems": 1},
+    },
+}
+
 STUDY_SCHEMA = {
     "$schema": _DIALECT,
     "$id": "https://github.com/connorwhite-online/loadpath/schema/study.schema.json",
@@ -1489,6 +1592,10 @@ STUDY_SCHEMA = {
         "keepOut": {"type": "array", "items": {"$ref": "#/$defs/keepOut"},
                     "description": "Volume that must stay empty: bores, bolt access, cables, mating parts."},
         "fasteners": {"type": "array", "items": {"$ref": "#/$defs/fastener"}},
+        "stock": {"type": "array", "items": {"$ref": "#/$defs/stockMember"},
+                  "description": "Bought members the printed part is built round (carbon or aluminium tubes, rods, "
+                                 "plates): bodies in the analysis with their own material; the printed nodes and "
+                                 "clamps are designed round them and every joint is checked (docs/STOCK.md)."},
         "supports": {"type": "array", "items": {"$ref": "#/$defs/support"},
                      "description": "Where the part is held. Required unless every load is a pressure."},
         "skin": {"anyOf": [_POS, {"type": "object", "properties": {
@@ -1845,7 +1952,8 @@ STUDY_SCHEMA = {
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
               "switchClearance": _SWITCH_CLEARANCE,
-              "load": _LOAD, "loadCase": _LOAD_CASE, "material": _ONE_MATERIAL, "fastener": _FASTENER, "goal": _GOAL},
+              "load": _LOAD, "loadCase": _LOAD_CASE, "material": _ONE_MATERIAL, "fastener": _FASTENER, "goal": _GOAL,
+              "stockMember": _STOCK_MEMBER, "stockJoint": _STOCK_JOINT, "stockMaterial": _STOCK_MATERIAL},
 }
 
 _FLUID_NAMES = ["water", "water60", "air", "glycol50", "oil"]
@@ -3582,7 +3690,7 @@ def _check(v, node, root, path, out):
 
 # common words for a field that difflib would not match
 _ALIASES = {"radius": ["r"], "diameter": ["r"], "innerRadius": ["rInner"], "bolts": ["fasteners"],
-            "screws": ["fasteners"], "holes": ["keepOut"], "fixed": ["supports"], "constraints": ["supports"],
+            "screws": ["fasteners"], "holes": ["keepOut"], "tubes": ["stock"], "members": ["stock"], "fixed": ["supports"], "constraints": ["supports"],
             "forces": ["loads"], "torque": ["moment"], "domain": ["designSpace"], "bounds": ["designSpace"],
             # shape types
             "cube": ["box"], "cuboid": ["box"], "rect": ["box"], "cyl": ["cylinder"], "rod": ["cylinder"],
