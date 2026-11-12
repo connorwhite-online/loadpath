@@ -303,7 +303,7 @@ def _tile_len(shape, cap):
     return max(int(_TILE_VOXELS // max(plane, 1)) - 2 * cap, 8)
 
 
-def wall_thickness(solid, pitch, cap_mm=None, limit_mm=None, spots=5, origin=None):
+def wall_thickness(solid, pitch, cap_mm=None, limit_mm=None, spots=5, origin=None, thin_cells=False):
     """Member thickness of a grid's solid, in mm, on the medial ridge (the
     local maxima of the distance to void). The estimate 2*edt - 0.5 cells is
     within half a cell of the true thickness either way, so a reading carries
@@ -313,7 +313,9 @@ def wall_thickness(solid, pitch, cap_mm=None, limit_mm=None, spots=5, origin=Non
     transform only has to look that far, which is what lets it run in tiles).
     limit_mm: also return the share of the surface lying on a member thinner
     than this, and the thinnest spots (world coordinates when `origin` is
-    given). Returns a dict."""
+    given). thin_cells: also return the grid indices of the ridge cells
+    thinner than limit_mm ("thinCells", an (n, 3) int array). Returns a
+    dict."""
     shape = solid.shape
     cap_mm = float(cap_mm) if cap_mm else float(max(shape) * pitch)
     cap = int(np.ceil(cap_mm / (2.0 * pitch))) + 2  # edt cells to look
@@ -342,7 +344,7 @@ def wall_thickness(solid, pitch, cap_mm=None, limit_mm=None, spots=5, origin=Non
         r = ridge[core]
         e = edt[core][r]
         vals_all.append((2.0 * e - 0.5) * pitch)
-        if spots and limit_mm:
+        if (spots or thin_cells) and limit_mm:
             ijk = np.argwhere(r)
             ijk[:, 0] += a
             where_all.append(ijk)
@@ -358,6 +360,8 @@ def wall_thickness(solid, pitch, cap_mm=None, limit_mm=None, spots=5, origin=Non
         out.update(minMm=None, p1Mm=None, p5Mm=None)
         return out
     out.update(minMm=float(vals.min()), p1Mm=float(np.percentile(vals, 1)), p5Mm=float(np.percentile(vals, 5)))
+    if limit_mm and thin_cells:
+        out["thinCells"] = np.concatenate(where_all)[vals < limit_mm] if where_all else np.zeros((0, 3), int)
     if limit_mm:
         out["thinSurfaceFraction"] = thin_surf / surf_total if surf_total else 0.0
         out["thinAreaMm2"] = float(thin_surf * pitch * pitch)

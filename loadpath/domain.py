@@ -848,8 +848,11 @@ def _build_domain(study: Study, pitch: float) -> Domain:
             mine = on[_fraction([r.shape], centers[on], pitch) >= 0.5]
             gone = mine[lost_cells[mine]]
             if len(mine) and len(gone) >= 4 and len(gone) > 0.25 * len(mine):
-                by = [k.id for k in study.keep_out if getattr(k, "cuts", True)
-                      and _fraction([k.shape], centers[gone], pitch).mean() >= 0.25]
+                cut_by = [k for k in study.keep_out if getattr(k, "cuts", True)
+                          and _fraction([k.shape], centers[gone], pitch).mean() >= 0.25]
+                if cut_by and all(getattr(k, "cuts_declared", False) for k in cut_by):
+                    continue   # the study says these keep-outs cut what is drawn
+                by = [k.id for k in cut_by]
                 warnings.append(
                     f"preserve {r.id!r}: {100 * len(gone) / len(mine):.0f}% of it is inside keep-out "
                     f"{', '.join(map(repr, by)) or 'regions'} and is left out of the part; a clear zone drawn round "

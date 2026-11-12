@@ -598,6 +598,101 @@ def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_C
     return out
 
 
+
+
+def _process_min_wall(study):
+    """The thinnest wall the study's powder-bed or resin process forms (mm),
+    or None for any other process (FDM's walls are its extrusion widths)."""
+    proc = getattr(study, "process", None)
+    kind = str(getattr(proc, "kind", "") or "").lower()
+    from .processcheck import POWDER, RESIN, rules_for
+    if kind not in POWDER + RESIN:
+        return None
+    return float(rules_for(proc, getattr(study, "material", None))["minWall"])
+
+
+def _drop_unformed(part, study, cut_ko, min_wall):
+    """Where the designed surface meets a keep-out at a slant, the material
+    between them tapers to a feather edge, finer than any design grid sees.
+    A powder bed or resin vat forms what a ball of its minimum wall's
+    diameter sweeps (processcheck._walls); a feather edge reaching further
+    than that wall from the rest does not form, or breaks off in
+    depowdering (the robot wrist link's, 12 mm^3 reaching 1.3 mm at a J6
+    driver bore). Those pieces are cut from the part, so it ends there as
+    it will print. Only the designed material: a drawn shape cut thin by a
+    keep-out is the designer's, and stays for processcheck to report.
+    Returns (part, [{volumeMm3, reachMm, at}])."""
+    out = []
+    # what is left behind a dropped edge can be thin again (material wedged
+    # between two keep-outs nearer than the wall): a few rounds
+    for _ in range(3):
+        part, more = _drop_unformed_once(part, study, cut_ko, min_wall)
+        out += more
+        if not more:
+            break
+    return part, out
+
+
+def _drop_unformed_once(part, study, cut_ko, min_wall):
+    import manifold3d as m3d
+    from skimage.measure import marching_cubes
+
+    from .processcheck import _choose_pitch, _grid, _unformed
+    from .shapes import trimesh_from_manifold
+    from .sharp import exact_manifold
+    from .voxels import wall_thickness
+
+    mesh = trimesh_from_manifold(part)
+    if not len(mesh.faces):
+        return part, []
+    p = _choose_pitch(np.asarray(mesh.extents, float), min_wall)
+    if p > 0.5 * min_wall + 1e-9:
+        return part, []
+    solid, origin = _grid(mesh, np.eye(3), None, p, pad=4)
+    w = wall_thickness(solid, p, cap_mm=4.0 * min_wall, limit_mm=min_wall, spots=0, thin_cells=True)
+    pieces, _, _ = _unformed(solid, w.get("thinCells"), p, min_wall, min_wall + p, cells=True)
+    if not pieces:
+        return part, []
+    drawn = [r.shape for r in study.preserve]
+    kos = [r.shape for r in cut_ko]
+    cut, out = np.zeros(solid.shape, bool), []
+    for u in pieces:
+        pts = origin + (u["cells"] + 0.5) * p
+        # touching a keep-out (within a minimum wall of its face), and designed
+        near = np.min([k.sdf(pts) for k in kos], axis=0) < min_wall + p
+        mine = ~(np.min([s.sdf(pts) for s in drawn], axis=0) < 0) if drawn else np.ones(len(pts), bool)
+        # the designed cells must themselves reach past the wall: a drawn
+        # sliver's piece also takes in the designed surface beside it, a
+        # cell deep, which only rounds
+        if near.any() and mine.any() and u["cellReach"][mine].max() > min_wall + p:
+            # its designed cells (the cut below leaves the drawn shapes whole)
+            cut[tuple(u["cells"][mine].T)] = True
+            out.append({"volumeMm3": round(float(mine.sum() * p ** 3), 2), "reachMm": u["reachMm"],
+                        "at": [round(float(c), 2) for c in pts[mine].mean(axis=0)]})
+    if not out:
+        return part, []
+    # Cut along what the ball sweeps, not round the pieces' cells: the
+    # surface at a ball's radius from the cells a ball fits in (the opening's
+    # own boundary) meets the printed surface tangentially, a round, where a
+    # cut round the cells left a new knife edge to peel again. Only near the
+    # pieces (two cells round them).
+    r = 0.5 * min_wall / p
+    core = ndimage.distance_transform_edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1] > r
+    far = ndimage.distance_transform_edt(~core).astype(np.float32) - r
+    near = ndimage.binary_dilation(cut, iterations=2)
+    f = np.pad(np.where(near, np.clip(far, -2.0, 2.0), -2.0), 2, constant_values=-2.0)
+    if f.max() <= 0.0:
+        return part, []
+    v, faces, _, _ = marching_cubes(f, 0.0)
+    v = origin + (v - 2 + 0.5) * p
+    blob = m3d.Manifold(m3d.Mesh(vert_properties=v.astype(np.float32), tri_verts=faces[:, ::-1].astype(np.uint32)))
+    if blob.is_empty():
+        return part, []
+    if drawn:
+        blob = blob - m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
+    return part - blob, out
+
+
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
                 flush=(), preserve=(), design=(), draft=None, skin=()):
     import trimesh
@@ -1685,6 +1780,15 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
         clip = envelope - ko_all
     if study.preserve:
         hold = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
+    min_wall = _process_min_wall(study)
+    if min_wall and cut_ko:
+        try:
+            part, unformed = _drop_unformed(part, study, cut_ko, min_wall)
+        except Exception as exc:  # noqa: BLE001 - the part stands as meshed; processcheck still reports
+            unformed = []
+            info["unformedDropFailed"] = f"{type(exc).__name__}: {exc}"
+        if unformed:
+            info["unformedDropped"] = unformed
     part, pinches = _fill_pinches(part, clip=clip, keep_out=ko_all, hold=hold)
     if pinches and not _stl_watertight(_drop_slivers(trimesh_from_manifold(part))):
         # contacts the clipped balls could not close (where three drawn

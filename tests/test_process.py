@@ -67,8 +67,28 @@ def test_thin_walls():
     thin = trimesh.boolean.union([base, _box((10, 0, 4), (10.5, 20, 14))])
     ok = trimesh.boolean.union([base, _box((10, 0, 4), (11.2, 20, 14))])
     r = check_process(thin, "sls")
-    assert r["walls"]["ok"] is False and r["walls"]["p1WallMm"] < 0.8, r["walls"]
+    assert r["walls"]["ok"] is False and r["walls"]["judgedWallMm"] < 0.8, r["walls"]
+    assert r["walls"]["unformed"] and r["walls"]["unformed"][0]["reachMm"] > 5.0, r["walls"]
     assert check_process(ok, "sls")["walls"]["ok"] is True
+    # the same fin on a part with far more material elsewhere fails the same
+    # way (a percentile of wall thickness let it pass: the wrist link's bore
+    # lips read p1 1.31 mm on a 30.7 g part, 0.57 on a 20.7 g one)
+    big = trimesh.boolean.union([_box((0, 0, -30), (60, 50, 4)), _box((10, 0, 4), (10.5, 20, 14))])
+    rb = check_process(big, "sls")
+    assert rb["walls"]["ok"] is False and rb["walls"]["judgedWallMm"] < 0.8, rb["walls"]
+
+
+def test_a_slanted_edge_is_rounded_not_missing():
+    """A wedge's edge tapers through every thickness to nothing; the print
+    rounds it a little, as it does every edge, and that is not a thin wall.
+    At 60 degrees the material a 0.8 mm ball cannot reach stays within the
+    minimum wall of the printed part."""
+    h, w = 10.0, 10.0 * np.tan(np.radians(30.0))
+    prism = trimesh.convex.convex_hull(np.array([[x, y, z] for x, y in ((0, 0), (2 * w, 0), (w, h))
+                                                 for z in (0.0, 20.0)]))
+    r = check_process(prism, "sls")["walls"]
+    assert r["ok"] is True and not r["unformed"], r
+    assert r["minWallMm"] < 0.8   # the ridge does read thin at the edge itself
 
 
 def test_resin_cups_supports_and_peel():

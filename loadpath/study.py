@@ -1162,7 +1162,7 @@ def _process_checks(result: StudyResult, on_progress=None) -> StudyResult:
         on_progress({"stage": "process", "process": proc.kind}, None)
     try:
         mat = _material_named((o.report.get("material") or {}).get("name"), result.study)
-        rep = check_process(o.mesh, proc, material=mat)
+        rep = check_process(o.mesh, proc, material=mat, drawn=[(r.id, r.shape) for r in result.study.preserve])
     except Exception as exc:  # noqa: BLE001 - a failed check leaves the part's report standing
         rep = {"process": proc.kind, "error": f"{type(exc).__name__}: {exc}", "ok": None, "warnings": []}
     o.report["process"] = rep

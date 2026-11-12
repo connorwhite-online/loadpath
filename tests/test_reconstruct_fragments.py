@@ -119,3 +119,29 @@ def test_saved_field_round_trips_and_remeshes():
         assert r.returncode == 0, r.stderr[-2000:]
         rep = json.loads(open(os.path.join(t, "re", "report.json")).read())
         assert rep["ok"] and os.path.exists(rep["stl"]) and rep["reconstruction"]["bodies"] == 1, rep
+
+
+def test_feather_edges_at_a_bore_are_cut_to_what_prints():
+    """A bore leaving a block's top at a slant (11 degrees) leaves the
+    material beside it tapering to a knife edge: MJF forms what a 0.8 mm
+    ball sweeps, and the edge reached 2.7 mm past that (processcheck reads
+    it as walls that will not form). reconstruct cuts it along the ball's
+    sweep, so the part ends in a round, as it will print, losing a few
+    mm^3."""
+    from loadpath.processcheck import check_process
+
+    spec = {"name": "groove", "designSpace": {"type": "box", "min": [-20, -15, 0], "max": [20, 15, 12]},
+            "keepOut": [{"id": "bore", "shape": {"type": "cylinder", "p0": [-25, 0, 10], "p1": [25, 0, 14],
+                                                 "r": 3}}],
+            "supports": [{"shape": {"type": "box", "min": [-21, -16, -1], "max": [21, 16, 0.01]}}],
+            "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [-21, -16, 11],
+                                                             "max": [21, 16, 13]}, "force": [0, 0, -100]}]}],
+            "material": "pa12", "process": {"type": "mjf", "buildDirection": "+z"},
+            "goal": {"volumeFraction": 0.9}, "resolution": {"pitch": 1.0}, "minMember": 2.0}
+    s = study_from_dict(spec)
+    d = build_domain(s)
+    mesh, info = reconstruct(s, d, np.ones(d.mesh.n_elem))
+    assert info.get("unformedDropped"), info
+    w = check_process(mesh, "mjf", build="+z", material="pa12")["walls"]
+    assert w["ok"] is True and not w["unformed"], w
+    assert mesh.volume > 13500, mesh.volume   # 13543 mm^3 before: a round, not a groove widened

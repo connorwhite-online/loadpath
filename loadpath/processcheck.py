@@ -137,22 +137,123 @@ def _choose_pitch(extents, min_wall, pitch=None, budget=_BUDGET):
     return max(want, floor)
 
 
-def _walls(solid, pitch, origin, min_wall):
+def _walls(solid, pitch, origin, min_wall, rot=None, drawn=None):
+    """Walls under the process's minimum, judged by what the print loses.
+
+    A powder bed forms what a ball of the minimum wall's diameter can sweep
+    inside the part; what it cannot reach (the part less its opening by that
+    ball) does not form, or breaks off in depowdering. Where that material
+    reaches no further than the process resolves from the printed part (the
+    minimum wall, plus a cell for the grid), the print only rounds an edge:
+    the feather edge where a skin meets a bore at a slant comes out as a
+    small round on the bore's lip, as every printed edge does. Where it
+    reaches further, a wall, strut or fin is missing (`unformed`), and the
+    part fails. A percentile of ridge thickness judged this before, which
+    let the same thin edges pass on a part with more material elsewhere and
+    fail on a lighter one (the wrist link's bore lips: p1 1.31 mm at 30.7 g,
+    0.57 mm at 20.7 g, the same 107 cells)."""
     from .voxels import wall_thickness
 
     if pitch > min_wall / 2.0 + 1e-9:
         return {"minWallMm": None, "ok": None,
                 "inconclusive": f"pitch {pitch:.3g} mm (cell budget) is coarser than half the {min_wall:g} mm wall"}
-    w = wall_thickness(solid, pitch, cap_mm=4.0 * min_wall, limit_mm=min_wall, spots=5, origin=origin)
-    p1 = w.get("p1Mm")
-    out = {"minWallMm": w.get("minMm"), "p1WallMm": p1, "thinAreaMm2": w.get("thinAreaMm2", 0.0),
+    w = wall_thickness(solid, pitch, cap_mm=4.0 * min_wall, limit_mm=min_wall, spots=5, origin=origin,
+                       thin_cells=True)
+    reach = min_wall + pitch
+    unformed, rounded, judged = _unformed(solid, w.get("thinCells"), pitch, min_wall, reach, cells=bool(drawn))
+    R = rot if rot is not None else np.eye(3)
+    world = (lambda ijk: [round(float(c), 2) for c in R.T @ (origin + (np.asarray(ijk, float) + 0.5) * pitch)])
+    for u in unformed:
+        u["at"] = world(u.pop("ijk"))
+        cells = u.pop("cells", None)
+        u.pop("cellReach", None)
+        if drawn and cells is not None:
+            pts = (origin + (cells + 0.5) * pitch) @ R
+            inside = [(rid, float((sh.sdf(pts) < 0).mean())) for rid, sh in drawn]
+            u["drawn"] = [rid for rid, f in inside if f >= 0.1]
+            u["drawnShare"] = round(float((np.min([sh.sdf(pts) for _, sh in drawn], axis=0) < 0).mean()), 2)
+    out = {"minWallMm": w.get("minMm"), "p1WallMm": w.get("p1Mm"), "thinAreaMm2": w.get("thinAreaMm2", 0.0),
            "thinSpots": w.get("thinSpots", []), "toleranceMm": pitch,
-           # judged on the 1st percentile with the half-cell estimator error,
-           # as check_dfm does: one sliver does not condemn a part
-           "ok": p1 is None or p1 + 0.5 * pitch >= min_wall,
-           "basis": "ok is judged on p1WallMm (1st percentile, +/- half a cell); minWallMm is the single "
-                    "thinnest spot, which can sit under the minimum on a passing part (a sliver at an edge)"}
+           # the thinnest wall the print is missing (None: it forms every wall)
+           "unformedWallMm": judged,
+           "unformed": unformed[:10], "unformedVolumeMm3": round(float(sum(u["volumeMm3"] for u in unformed)), 2),
+           "roundedEdgeVolumeMm3": round(float(rounded), 2),
+           "ok": not unformed,
+           "basis": "ok: no material the process cannot form reaches more than the minimum wall plus a cell from "
+                    "what it does form (unformed); thinner material nearer than that only rounds an edge "
+                    "(roundedEdgeVolumeMm3). minWallMm and p1WallMm are the ridge readings, for reference"}
+    # the wall the check holds to the minimum: the thinnest missing wall, or
+    # the thinnest one formed
+    out["judgedWallMm"] = judged if judged is not None else max(w.get("minMm") or min_wall, min_wall)
     return out
+
+
+def _unformed(solid, thin, pitch, min_wall, reach, cells=False):
+    """Material a ball of `min_wall` diameter cannot sweep, near the ridge
+    cells `thin` (grid indices) thinner than that: each piece's volume and
+    how far it reaches from the swept part. Works in boxes round clusters of
+    thin cells (what is not swept lies within a ball's radius of them).
+    Returns (unformed pieces reaching past `reach` mm, volume of the rest,
+    thinnest ridge reading among the unformed). With `cells`, each piece
+    also carries its grid indices ("cells", an (n, 3) array) and each cell's
+    reach from the swept part ("cellReach", mm)."""
+    if thin is None or not len(thin):
+        return [], 0.0, None
+    r = 0.5 * min_wall / pitch
+    halo = int(np.ceil(2.0 * r + reach / pitch)) + 3
+    # clusters: thin cells within a ball's diameter of each other
+    mark = np.zeros(solid.shape, bool)
+    mark[tuple(thin.T)] = True
+    lo_all, hi_all = thin.min(axis=0), thin.max(axis=0) + 1
+    box = tuple(slice(max(0, a - halo), min(n, b + halo)) for a, b, n in zip(lo_all, hi_all, solid.shape))
+    grown = ndimage.binary_dilation(mark[box], iterations=int(np.ceil(2.0 * r)) + 1)
+    lbl, n = ndimage.label(grown, _CONN)
+    off = np.array([s.start for s in box])
+    unformed, rounded, judged = [], 0.0, None
+    for k, sl in enumerate(ndimage.find_objects(lbl), start=1):
+        if sl is None:
+            continue
+        lo = np.maximum(np.array([s.start for s in sl]) + off - halo, 0)
+        hi = np.minimum(np.array([s.stop for s in sl]) + off + halo, solid.shape)
+        crop = tuple(slice(a, b) for a, b in zip(lo, hi))
+        sub = solid[crop]
+        # void outside the crop where the crop meets the grid's edge
+        din = ndimage.distance_transform_edt(np.pad(sub, 1, constant_values=False))[1:-1, 1:-1, 1:-1]
+        core = din > r
+        swept = (ndimage.distance_transform_edt(~core) <= r) & sub if core.any() else np.zeros_like(sub)
+        lost = sub & ~swept
+        mine = np.zeros_like(sub)
+        cl = (lbl == k) & mark[box]
+        # this cluster's own thin cells, in the crop's frame
+        idx = np.argwhere(cl) + off - lo
+        idx = idx[np.all((idx >= 0) & (idx < sub.shape), axis=1)]
+        mine[tuple(idx.T)] = True
+        ll, ln = ndimage.label(lost, _CONN)
+        keep = np.unique(ll[mine & lost])
+        keep = keep[keep > 0]
+        if not len(keep):
+            continue
+        far = ndimage.distance_transform_edt(~swept) * pitch if swept.any() else np.full(sub.shape, np.inf)
+        cell3 = pitch ** 3
+        for j in keep:
+            piece = ll == j
+            depth = float(far[piece].max())
+            vol = float(piece.sum() * cell3)
+            if depth > reach:
+                # the ridge reading of the thinnest thin cell in the piece
+                t_here = (round(float(2.0 * din[piece & mine].min() - 0.5) * pitch, 3)
+                          if (piece & mine).any() else None)
+                unformed.append({"volumeMm3": round(vol, 2), "reachMm": round(depth, 2), "wallMm": t_here,
+                                 "ijk": (np.argwhere(piece).mean(axis=0) + lo).tolist()})
+                if cells:
+                    unformed[-1]["cells"] = np.argwhere(piece) + lo
+                    unformed[-1]["cellReach"] = far[piece]
+                if t_here is not None:
+                    judged = t_here if judged is None else min(judged, t_here)
+            else:
+                rounded += vol
+    unformed.sort(key=lambda u: -u["volumeMm3"])
+    return unformed, rounded, judged
 
 
 def _escapes(solid, pitch, origin, hole, rot):
@@ -288,14 +389,16 @@ def _layers(solid, pitch):
 
 
 def check_process(part, process="sls", build=None, material=None, pitch: float | None = None,
-                  bounds=None, rules: dict | None = None, slicer: bool = True) -> dict:
+                  bounds=None, rules: dict | None = None, slicer: bool = True, drawn=None) -> dict:
     """Process checks for powder-bed polymer (sls, mjf) and resin (sla, dlp)
     parts. `part` is a trimesh (mm) or a field f(P) < 0 inside with
     `bounds`. `process` is a name or a spec.Process; `build` the direction
     layers stack ((axis, sign), a vector or '+z'; default the process's,
     else +z), which only resin and the layer report depend on. `rules`
     overrides any RULES entry. slicer=True (meshes, resin) adds printcheck's
-    support and island read."""
+    support and island read. `drawn`: the study's preserved regions (id,
+    shape), so a wall that will not form says whose it is: a drawn shape
+    cut thin by the keep-outs is the study's to change."""
     from .am import parse_build_direction
     from .printcheck import rotation_to_z
 
@@ -339,10 +442,17 @@ def check_process(part, process="sls", build=None, material=None, pitch: float |
         rep["materialize"] = ref
         warnings.extend(ref["warnings"])
 
-    rep["walls"] = _walls(solid, p, origin, card["minWall"])
+    rep["walls"] = _walls(solid, p, origin, card["minWall"], rot, drawn)
     if rep["walls"]["ok"] is False:
-        warnings.append(f"walls down to {rep['walls']['p1WallMm']:.2f} mm (1st percentile) are under the "
-                        f"{card['minWall']:g} mm {kind} minimum ({rep['walls']['thinAreaMm2']:.0f} mm^2 of surface)")
+        u = rep["walls"]["unformed"][0]
+        who = sorted({d for x in rep["walls"]["unformed"] for d in x.get("drawn", [])})
+        warnings.append(f"walls down to {rep['walls']['judgedWallMm']:.2f} mm are under the {card['minWall']:g} mm "
+                        f"{kind} minimum and will not form: {rep['walls']['unformedVolumeMm3']:.1f} mm^3 the "
+                        f"process cannot make, reaching up to {u['reachMm']:.1f} mm from the rest (largest at "
+                        f"{u['at']})" + (f"; it is drawn geometry ({', '.join(who)}) the keep-outs cut thin, so "
+                                         "the fix is in the study: move the keep-out or the drawn shape so a "
+                                         f"{card['minWall']:g} mm wall is left, or cut the drawn shape through"
+                                         if who else "; thicken it to the minimum or let it go"))
 
     esc = _escapes(solid, p, origin, card["escapeHole"], rot)
     rep["escape"] = esc

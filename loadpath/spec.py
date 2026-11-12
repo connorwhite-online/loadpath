@@ -93,6 +93,9 @@ class Region:
     # square hole where its USB-C port is a stadium). `cutsPreserve` sets
     # it either way; see cuts_of.
     cuts: bool = True
+    # keepOut only: cutsPreserve was set true in the study, so cutting what
+    # is drawn is meant (a bearing's pocket in its drawn hub): no warning
+    cuts_declared: bool = False
 
 
 @dataclass
@@ -1002,7 +1005,7 @@ def _regions(items, label, base_dir, bounds=None):
         bore = bool(item.get("bore", True)) and item.get("insertFrom") is None
         cuts = bool(item.get("bore", True)) or item.get("insertFrom") is not None
         out.append(Region(rid, shape, bore, float(wall) if wall is not None else None,
-                          bool(item.get("cutsPreserve", cuts))))
+                          bool(item.get("cutsPreserve", cuts)), cuts_declared=item.get("cutsPreserve") is True))
     return out
 
 

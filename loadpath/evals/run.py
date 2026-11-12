@@ -26,7 +26,7 @@ variants must miss a limit: run_field_case):
       "maxUnderDraftedArea": 50,  # mm^2 of cast wall under casting.draft (report.manufacturing.draft)
       "maxToolUnreachableVolume": 50,  # mm^3 of void a milled part's smallest cutter cannot reach
       "maxMachiningMinutes": 90,  # machining estimate (report.manufacturing.machining)
-      "minProcessWall": 0.8,      # mm, 1st-percentile wall (SLS/MJF/SLA/DLP: processcheck)
+      "minProcessWall": 0.8,      # mm, thinnest wall the print is missing (SLS/MJF/SLA/DLP: processcheck)
       "maxTrappedVolume": 1,      # mm^3 of powder or resin that cannot get out
       "maxWarpSpan": 100,         # mm, longest thin flat panel (SLS/MJF)
       "maxCupArea": 10,           # mm^2, largest suction cup (SLA/DLP)
@@ -111,7 +111,8 @@ CHECKS = {
     "closedBores": ("maxClosedBores", lambda o: len(o.get("closedBores") or []), "<="),
     "overhang": ("maxOverhangFraction", lambda o: o.get("designOverhangFraction"), "<="),
     # SLS/MJF/SLA/DLP process checks on the delivered part (processcheck.py)
-    "processWall": ("minProcessWall", lambda o: _proc(o, "walls", "p1WallMm"), ">="),
+    # the thinnest wall the print is missing, else the thinnest formed (processcheck._walls)
+    "processWall": ("minProcessWall", lambda o: _proc(o, "walls", "judgedWallMm"), ">="),
     "trappedVolume": ("maxTrappedVolume", lambda o: _proc(o, "trappedVolumeMm3"), "<="),
     "warpSpan": ("maxWarpSpan", lambda o: _proc(o, "warp", "maxSpan"), "<="),
     "cupArea": ("maxCupArea", lambda o: _proc(o, "cups", "maxArea"), "<="),

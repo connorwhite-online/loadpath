@@ -178,6 +178,22 @@ below the reported safety factor. The same boss, pulled, with no process:
 safety factor 7.8 as a solid; 3.3 if the layers stack along z. Declaring
 `process.buildDirection` (or `"auto"`) designs for it, as before.
 
+A powder bed's or a resin vat's minimum wall is read the same way, by
+what the print loses (`processcheck._walls`): the process forms what a
+ball of the minimum wall's diameter sweeps inside the part, and material
+it cannot reach that stands more than that wall (plus a grid cell) off the
+printed part is a wall, strut or fin that will not form. Closer than that,
+the print only rounds an edge, as it rounds every edge. A percentile of
+wall thickness judged this before, and judged a part by how much other
+material it had: the robot wrist link's bore lips, the same 107 thin
+cells, read 1.31 mm on a 30.7 g part and 0.57 mm on a 20.7 g one. Where
+the designed surface meets a keep-out at a slant, the knife edge between
+them is finer than any design grid sees; `reconstruct` cuts it along the
+ball's sweep, so it ends in a round, as it will print. A drawn shape cut
+thin by keep-outs is the designer's and stays: the warning names it (the
+wrist link's idler shoulder leaves 0.58 mm between its parent's mount
+hole and the shaft hole).
+
 That reading is for a part handed to `verify`. A study that is designed no
 longer gets there as a solid at all: a material says how it is made. PETG
 is a filament, PA12 a sintered powder, AlSi10Mg a laser-melted one, so a
