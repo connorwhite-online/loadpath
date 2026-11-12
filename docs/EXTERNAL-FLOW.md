@@ -45,6 +45,12 @@ Minutes are on two of this machine's four cores (two rows ran side by side), at 
 updates a second on all four. "Not settled" rows hit the time limit before the standard error of the mean
 drag fell inside 1%.
 
+One row is missing: the cylinder at Re 3900 (`cylinder-3900` in the
+script, 64 cells across in two surface layers). It went unstable at the
+default lattice speed, reran itself slower as designed, and did not finish
+in the hours this machine stays up; two layers on a spanning strut are not
+established.
+
 What the table says. Where the grid holds the boundary layer and the wake
 is steady or sheds cleanly (the rows to Re 300) the drag is within 1.2%,
 2.5% at Re 300, and the cylinder's shedding frequency within 3%. The
