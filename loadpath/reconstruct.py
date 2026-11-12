@@ -979,21 +979,20 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
     import manifold3d as m3d
 
     total = 0
+    last, last_r, ends = None, 0.0, None
     for k in range(rounds):
         # a ball can leave a contact of its own: each round a size larger
         r = PINCH_R * 1.5 ** k
-        m = trimesh_from_manifold(part)
-        # as an STL stores it: float32, then welded by position
-        m.vertices = m.vertices.astype(np.float32).astype(float)
-        m.merge_vertices()
-        e = m.edges_sorted
-        if not len(e):
+        mg = part.to_mesh64() if hasattr(part, "to_mesh64") else part.to_mesh()
+        verts = np.asarray(mg.vert_properties, float)[:, :3]
+        faces = np.asarray(mg.tri_verts, np.int64)
+        if not len(faces):
             break
-        u, inv, c = np.unique(e, axis=0, return_inverse=True, return_counts=True)
-        bad = u[(c > 2) | (c == 1)]   # kissing edges, and slits a weld opens
+        bad, wv = _round_contacts(verts, faces, last, last_r * 1.05 + 1e-3, ends)
         if not len(bad):
             break
-        mids = m.vertices[bad].mean(axis=1)
+        ends = wv[np.unique(bad)]
+        mids = wv[bad].mean(axis=1)
         # one ball per cluster of pinched edges a ball apart (greedy, in
         # order; kept points hashed by r-sized cell so each test looks at
         # 27 cells, not every ball so far: the plain pass was quadratic and
@@ -1029,19 +1028,66 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
             balls = [m3d.Manifold.batch_boolean(balls, m3d.OpType.Add) ^ clip]
         part = m3d.Manifold.batch_boolean([part] + balls, m3d.OpType.Add)
         total += len(keep)
+        last, last_r = np.asarray(keep), r
     return part, total
+
+
+def _round_contacts(verts, faces, last=None, reach=0.0, ends=None):
+    """A pinch round's contacts (_stl_bad_edges). After the first round
+    (`last`: its ball centres) only those balls, and the cuts they bring,
+    changed the part, so only there can a new contact be, or an old one stay
+    (a ball clipped away: `ends`, its edges' ends): the faces with a vertex
+    within `reach` of a ball or on an end are read. Every face on such a
+    vertex comes along, so an edge counted there is counted whole; the
+    subset's own rim, which reads open, lies past the reach."""
+    if last is not None:
+        near = _near(verts, last, reach, ends)
+        faces = faces[near[faces].any(axis=1)]
+        if not len(faces):
+            return np.zeros((0, 2), np.int64), np.zeros((0, 3))
+    bad, wv = _stl_bad_edges(verts, faces)
+    if last is not None and len(bad):
+        bad = bad[_near(wv[bad].reshape(-1, 3), last, reach, ends).reshape(-1, 2).any(axis=1)]
+    return bad, wv
+
+
+def _near(pts, centres, reach, ends):
+    """Points within `reach` of a centre, or (to float32) on one of `ends`."""
+    from scipy.spatial import cKDTree
+
+    hit = cKDTree(centres).query(pts, k=1, distance_upper_bound=reach)[0] < np.inf
+    if ends is not None and len(ends):
+        hit |= cKDTree(ends).query(pts, k=1, distance_upper_bound=1e-5)[0] < np.inf
+    return hit
+
+
+def _stl_bad_edges(verts, faces):
+    """The edges an STL reader would find open or shared by more than two
+    faces: vertices rounded to float32 and welded by position, as every
+    reader does. Returns (bad edges as welded vertex pairs, welded
+    positions). Plain numpy on 1-D keys: trimesh's merge_vertices and an
+    axis-0 unique took ~60 s and 2-3 GB a call on a generated cover skin."""
+    v32 = np.ascontiguousarray(np.asarray(verts, np.float32) + np.float32(0.0))   # -0 welds to +0
+    used = np.unique(faces)
+    key = v32[used].view(np.dtype((np.void, 12))).ravel()
+    uk, inv = np.unique(key, return_inverse=True)
+    weld = np.empty(len(v32), np.int64)
+    weld[used] = inv.ravel()
+    wv = uk.view(np.float32).reshape(-1, 3).astype(float)
+    f = weld[faces]
+    e = np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1)
+    n = np.int64(len(wv))
+    ek, c = np.unique(e[:, 0] * n + e[:, 1], return_counts=True)
+    b = ek[(c > 2) | (c == 1)]
+    return np.stack([b // n, b % n], axis=1), wv
 
 
 def _stl_watertight(mesh) -> bool:
     """Watertight as an STL reader sees it: float32 vertices welded by
     position, every edge on exactly two faces."""
-    m = mesh.copy()
-    m.vertices = m.vertices.astype(np.float32).astype(float)
-    m.merge_vertices()
-    if not len(m.faces):
+    if not len(mesh.faces):
         return False
-    _, c = np.unique(m.edges_sorted, axis=0, return_counts=True)
-    return bool((c == 2).all())
+    return not len(_stl_bad_edges(mesh.vertices, np.asarray(mesh.faces, np.int64))[0])
 
 
 def _drop_slivers(mesh):

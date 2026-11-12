@@ -545,8 +545,66 @@ def _user_edges(study: Study, band: float):
 _MESH_QUERY = threading.Lock()
 
 
+# Resident bytes a submodel's solve holds per unknown, measured on the desk
+# hub's 420k-600k dof cut-cell boxes: the assembled matrix and its free block
+# (~81 entries a row), the AMG hierarchy (about the matrix again) and CG's
+# vectors.
+_SUB_DOF_BYTES = 4.5e3
+
+
+class _MemoryGate:
+    """Submodel solves share the memory there is, not a fixed pool width:
+    each takes its estimated bytes before it assembles and gives them back
+    when done; one that does not fit waits for those running to finish. The
+    first always runs (a lone box too big for the budget is the analysis's
+    own problem). The boxes are independent, so the numbers are the same
+    however many run at once; only how many overlap changes."""
+
+    def __init__(self, budget):
+        self.budget = float(budget) if budget is not None else float("inf")
+        self.held = 0.0
+        self.cond = threading.Condition()
+
+    def take(self, need):
+        with self.cond:
+            while self.held > 0 and self.held + need > self.budget:
+                self.cond.wait()
+            self.held += need
+        return need
+
+    def give(self, need):
+        with self.cond:
+            self.held -= need
+            self.cond.notify_all()
+
+
+def _submodel_gate():
+    """The gate for one verify's submodels: 80% of the memory free now (the
+    analysis grid and everything else this process holds are already out of
+    it)."""
+    from .study import _available_bytes
+
+    avail = _available_bytes()
+    return _MemoryGate(None if avail is None else 0.8 * avail)
+
+
 def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None, edges=None,
-                   cut=False, ratio=1.0):
+                   cut=False, ratio=1.0, gate=None):
+    """_submodel_box, holding its share of `gate` (a _MemoryGate) while it
+    builds and solves. Its unknowns are known before it is built: the
+    global grid's nodes in the box, times the refinement cubed."""
+    if gate is None:
+        return _submodel_box(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case, edges, cut, ratio)
+    inbox = np.all(np.abs(hm.node_xyz - center) <= half, axis=1).sum()
+    need = gate.take(_SUB_DOF_BYTES * 3.0 * float(inbox) * (hm.pitch / pitch) ** 3)
+    try:
+        return _submodel_box(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case, edges, cut, ratio)
+    finally:
+        gate.give(need)
+
+
+def _submodel_box(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None, edges=None,
+                  cut=False, ratio=1.0):
     """Re-solve a small box around a global hotspot at a finer pitch, driven by
     the global displacement field on the box's cut faces (classic FE
     submodeling). Voxel stress converges only with about 8 cells across a
@@ -588,8 +646,11 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     st = Stiffness(sm, study.elastic(mat), np.zeros(sm.n_dof, bool))
     k = (cgrid.assemble(st, mat.E) if cgrid is not None else st.assemble(np.full(sm.n_elem, mat.E))).tocsr()
     free = ~pd
-    kff = k[free][:, free]
-    rhs = -(k[free][:, pd] @ up)
+    kf = k[free]
+    del k
+    kff = kf[:, free]
+    rhs = -(kf[:, pd] @ up)
+    del kf
     if case is not None:
         # a pressure inside the box pushes on its walls here too
         from .pressure import pressure_force
@@ -599,7 +660,6 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
             if ld.pressure:
                 fp += pressure_force(sm, study.region_shape(ld.region)[0], ld.pressure)[0]
         rhs = rhs + fp[free]
-    solver = Solver(sm, rtol=1e-7, maxiter=4000)
     # Rigid-body modes are pinned by the driven nodes; AMG still wants a
     # near-null space sized to the free unknowns, so use plain CG+AMG on kff.
     from scipy.sparse.linalg import cg
@@ -607,7 +667,7 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     from .fem import amg_solver
     ml = amg_solver(kff, symmetry="hermitian", strength="symmetric", max_coarse=400, coarse_solver="splu")
     uf, info = cg(kff, rhs, rtol=1e-7, maxiter=4000, M=ml.aspreconditioner(cycle="V"))
-    del solver
+    del ml, kff
     if info != 0:
         return None
     us = np.zeros(sm.n_dof)
@@ -1807,13 +1867,16 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                 # in): the highest of them get a submodel too
                 spots += _thin_spots(hm, solid, origin, pitch, vm, body, peak, half, spots, count=refine)
 
+            gate = _submodel_gate() if len(spots) > 1 else None
+
             def sub(c, u=u, case=case, half=half, contact=contact):
                 return _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
                                       hm.node_xyz[contact], band, case, edges=edges, cut=cg is not None,
-                                      ratio=m_c)
+                                      ratio=m_c, gate=gate)
             if len(spots) > 1:
                 # independent boxes, on threads (the solves release the GIL;
-                # amg_solver sets up one at a time, so the same numbers)
+                # amg_solver sets up one at a time, so the same numbers), as
+                # many at once as the memory free holds (_MemoryGate)
                 from .pools import pool
 
                 with pool(min(len(spots), 3)) as ex:
