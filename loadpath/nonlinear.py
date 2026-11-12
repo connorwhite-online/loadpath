@@ -388,7 +388,7 @@ def _have_pardiso():
 _KERNELS_STARTED = False
 
 
-def mkl_threads(solver) -> None:
+def mkl_threads(solver) -> int:
     """Give PARDISO the run's cores on the calling thread. loadpath sets
     MKL_NUM_THREADS=1 at import (for BLAS; see __init__.py), which left every
     PARDISO factor and solve on one core: the constrained method's buckling
@@ -422,6 +422,41 @@ def mkl_threads(solver) -> None:
     try:
         solver.libmkl.MKL_Set_Num_Threads_Local(int(n))
     except Exception:  # noqa: BLE001 - an MKL without it: its own default
+        pass
+    return int(n)
+
+
+# The thread count PARDISO's reproducible mode is laid out for (iparm(34)),
+# at least. Left to itself PARDISO's solve is not repeatable where a pivot
+# was perturbed and it refines the answer: a free part on its 3-2-1 hold
+# (16,908 dofs, residual 4e-12) came back as ten different vectors from one
+# matrix, some from one factor, and a frequency-held design grown on them
+# rang at 410, 153 or 78 Hz from one run to the next, where the iterative
+# solvers repeat to the bit. With iparm(34) set, the same answer every call,
+# and for one right-hand side the same at 2, 3 and 4 threads when it is laid
+# out for more threads than the machine has. It costs the solve its
+# speed-up for a single right-hand side (0.15 to 0.35 s at 114k dofs, 0.6
+# to 1.3 s at 317k, against 2 and 11 s to factor) and a block of several
+# nothing; laid out for 16 on 4 threads the factorization took as long as
+# laid out for 4.
+CNR_THREADS = 16
+
+
+def _reproducible(solver, mtype: int, threads: int) -> None:
+    """PARDISO's own settings for this matrix type, with its reproducible
+    mode on. Set afresh for every factorization: a handle that is reused
+    (_Pardiso._pool) carries the last matrix type's settings and PARDISO's
+    outputs in the same array."""
+    import ctypes
+
+    try:
+        it = np.zeros(64, np.int32)
+        pt = np.zeros(64, np.int64)
+        solver.libmkl.pardisoinit(pt.ctypes.data_as(ctypes.c_void_p), ctypes.byref(ctypes.c_int32(int(mtype))),
+                                  it.ctypes.data_as(ctypes.c_void_p))
+        it[33] = max(CNR_THREADS, int(threads))
+        solver.iparm[:] = it
+    except Exception:  # noqa: BLE001 - a wrapper without them: PARDISO's defaults, as before
         pass
 
 
@@ -490,12 +525,13 @@ class _Pardiso:
         import pypardiso
 
         s = _Pardiso._pool.pop() if _Pardiso._pool else pypardiso.PyPardisoSolver()
-        mkl_threads(s)
+        threads = mkl_threads(s)
         over = None
         for mtype in ((2, -2) if symmetric else (11,)):
             a = sp.triu(k, format="csr") if mtype != 11 else k.tocsr()
             a.sort_indices()
             s.set_matrix_type(mtype)
+            _reproducible(s, mtype, threads)
             try:
                 need = None
                 if hasattr(s, "_check_A") and hasattr(s, "_call_pardiso"):
@@ -1300,7 +1336,10 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force,
             except Exception:  # noqa: BLE001 - ARPACK below
                 pass
         if mu is None:
-            mu, vec = eigsh(-kg, k=nm, M=k, Minv=minv, which="LA", tol=tol)
+            # (a fixed start, zero on the held dofs: ARPACK's own is drawn anew every call)
+            v0 = np.random.default_rng(0).standard_normal(n)
+            v0[np.asarray(fixed, bool)] = 0.0
+            mu, vec = eigsh(-kg, k=nm, M=k, Minv=minv, which="LA", tol=tol, v0=v0)
         order = np.argsort(-mu)
         mu, vec = mu[order], vec[:, order]
         pos = mu > 1e-12

@@ -290,10 +290,11 @@ class BucklingModel:
                 return mu[:nm], vec[:, :nm]
         except Exception:  # noqa: BLE001 - fall back to ARPACK below
             pass
+        v0 = x0[:, 0]       # (a fixed start: ARPACK's own is drawn anew every call)
         try:
-            mu, vec = eigsh(a, k=nm, M=k, Minv=minv, which="LA", tol=1e-4, maxiter=2000)
+            mu, vec = eigsh(a, k=nm, M=k, Minv=minv, which="LA", tol=1e-4, maxiter=2000, v0=v0)
         except Exception:  # noqa: BLE001 - ARPACK did not converge: once more, looser
-            mu, vec = eigsh(a, k=nm, M=k, Minv=minv, which="LA", tol=1e-3, maxiter=5000)
+            mu, vec = eigsh(a, k=nm, M=k, Minv=minv, which="LA", tol=1e-3, maxiter=5000, v0=v0)
         order = np.argsort(-mu)
         mu, vec = mu[order], vec[:, order]
         self._store(c, vec, fd, n_full)
