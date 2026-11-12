@@ -1127,6 +1127,19 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
     return part, total
 
 
+def _outside(part, keep_out):
+    """Everything round `part` but the keep-outs (a manifold), or None when
+    there are none: the bound for balls that may stand proud of the drawn
+    shapes but never in a bore."""
+    import manifold3d as m3d
+
+    if keep_out is None:
+        return None
+    bb = np.asarray(part.bounding_box(), float)
+    lo, hi = bb[:3] - 1.0, bb[3:] + 1.0
+    return m3d.Manifold.cube(tuple(map(float, hi - lo))).translate(tuple(map(float, lo))) - keep_out
+
+
 def _stl_watertight(mesh) -> bool:
     """Watertight as an STL reader sees it: float32 vertices welded by
     position, every edge on exactly two faces."""
@@ -1793,8 +1806,11 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
     if pinches and not _stl_watertight(_drop_slivers(trimesh_from_manifold(part))):
         # contacts the clipped balls could not close (where three drawn
         # surfaces meet, the touch microphone's base, rails and skin):
-        # balls of at most 0.27 mm, unclipped
-        part, more = _fill_pinches(part, rounds=4)
+        # balls of at most 0.27 mm, free of the envelope and the drawn
+        # skin but never in a cut keep-out: a bore or a driver's way in is
+        # where a pin, a screw head or a tool goes (the MJF wrist link's J6
+        # driver bore took 1.3 mm^3 of balls at its boss face, unclipped)
+        part, more = _fill_pinches(part, rounds=4, clip=_outside(part, ko_all))
         pinches += more
     if pinches:
         info["pinchesFilled"] = pinches

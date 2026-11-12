@@ -145,3 +145,22 @@ def test_feather_edges_at_a_bore_are_cut_to_what_prints():
     w = check_process(mesh, "mjf", build="+z", material="pa12")["walls"]
     assert w["ok"] is True and not w["unformed"], w
     assert mesh.volume > 13500, mesh.volume   # 13543 mm^3 before: a round, not a groove widened
+
+
+def test_pinch_balls_never_stand_in_a_bore():
+    """Two blocks kissing along an edge that runs through a bore: the
+    fallback balls (free of the envelope) still close the contact outside
+    the bore and put nothing inside it, where a pin or a driver goes."""
+    import manifold3d as m3d
+
+    from loadpath.reconstruct import _fill_pinches, _outside
+
+    a = m3d.Manifold.cube((10, 10, 10))
+    b = m3d.Manifold.cube((10, 10, 10)).translate((10, 10, 0))   # shares the edge x=y=10
+    bore = m3d.Manifold.cylinder(4, 2, 2, 32).translate((10, 10, 3))   # round the edge, z 3..7
+    part = (a + b) - bore
+    out, n = _fill_pinches(part, rounds=4, clip=_outside(part, bore))
+    assert n > 0
+    assert (out ^ bore).volume() < 1e-9, (out ^ bore).volume()
+    unclipped, _ = _fill_pinches(part, rounds=4)
+    assert (unclipped ^ bore).volume() > 1e-4   # what the bound keeps out
