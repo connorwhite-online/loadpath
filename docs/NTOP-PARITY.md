@@ -75,7 +75,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | Steady and transient thermal | `thermal.py` (cycles, softening, expansion) | Have |
 | Lattices as solids, beams or homogenized | resolved check, homogenized check | Have |
 | Static analysis with inertia relief (unsupported bodies) | `inertiaRelief: true`: loads balanced by the part's own rigid-body inertia, in the check and the optimizer ([README](../loadpath/README.md#the-study)) | Have (new) |
-| CFD | lattice-Boltzmann flow for exchangers and lattice cells (`flow.py`, `conjugate.py`); `loadpath external-flow` puts any part in a wind or water tunnel and writes the surface forces as a load case ([EXTERNAL-FLOW.md](EXTERNAL-FLOW.md); coarse LES, reads high, capped Reynolds number) | Have (new, coarse) |
+| CFD | lattice-Boltzmann flow for exchangers and lattice cells (`flow.py`, `conjugate.py`); `loadpath external-flow` puts any part in a wind or water tunnel on nested grids with walls at the true surface (`windtunnel.py`), held to published drag (spheres and cylinders across Reynolds number, a rotor disk against momentum theory), and writes the surface forces as a load case ([EXTERNAL-FLOW.md](EXTERNAL-FLOW.md)) | Have |
 | Nonlinear, contact, fatigue, creep, impact | `nonlinear.py`, `contact.py`, `durability.py`, `impact.py` | Beyond nTop |
 | (none: nTop has no cable or harness model) | `wires.py`, `rods.py`: wires, bundles and flat cables as Cosserat rods with contact, bend radius, twist and flex-life checks through a joint's motion; cables inside the enclosure placement search and their channels kept clear; connector and clip loads; board stacks ordered and spaced by heat, centre of mass and whether their harness can bend ([WIRES.md](WIRES.md)) | Beyond nTop (new) |
 | (none: nTop has no electromagnetic solver) | `rf.py`, `antenna.py`: a board antenna solved by FDTD inside the printed shell and among the placed parts, with printed plastics' measured permittivity and loss; resonance shift, match, efficiency and heat by material; a reciprocity sensitivity field as the keep-out; in the enclosure placement search; an inverted-F's dimensions solved in place ([ANTENNA.md](ANTENNA.md)) | Beyond nTop (new) |
@@ -108,7 +108,12 @@ test. **Partial** means part of it. **Missing** means not yet.
 ## What is left
 
 By count: about 60 rows have it, none partial, none missing. External flow
-is now in, coarse: it reads drag on the high side and caps the Reynolds
-number, which is right for structural loads and not for aerodynamic design. The open problem nTop does not
+is no longer the coarse one: spheres and cylinders to Re 300 read drag
+within 1 to 3% of published values (the old solver: 12%), and a faster
+stream is run at the Reynolds number the grid resolves and says so (a
+cube 8% low, a long square strut 16% low, a sphere at Re 1000 8.5% high;
+ducted rotors, the drag crisis and streamlined sections at flight Reynolds
+numbers are not validated: [EXTERNAL-FLOW.md](EXTERNAL-FLOW.md)).
+The open problem nTop does not
 solve either is physical validation of printed parts
 ([VALIDATION.md](VALIDATION.md), [CALIBRATION.md](CALIBRATION.md)).

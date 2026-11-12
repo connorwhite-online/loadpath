@@ -174,18 +174,28 @@ def _external_flow(args):
     from .aero import external_flow
 
     mesh = trimesh.load(args.part, force="mesh")
-    d = args.direction.strip().lower()
     axes = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
-    if d.lstrip("+-") in axes:
-        vec = np.array(axes[d.lstrip("+-")], float) * (-1 if d.startswith("-") else 1)
-    else:
-        vec = np.array([float(v) for v in d.split(",")])
+
+    def vector(text):
+        d = text.strip().lower()
+        if d.lstrip("+-") in axes:
+            return np.array(axes[d.lstrip("+-")], float) * (-1 if d.startswith("-") else 1)
+        return np.array([float(v) for v in d.split(",")])
+
     try:
-        rep = external_flow(mesh, args.speed, vec, medium=args.medium, cells=args.cells, re_max=args.re_max)
+        rotors = None
+        if args.rotors:
+            rotors = _load(args.rotors)
+            rotors = rotors.get("aero", rotors).get("rotors", rotors) if isinstance(rotors, dict) else rotors
+        rep = external_flow(mesh, args.speed, vector(args.direction), medium=args.medium, cells=args.cells,
+                            re_max=args.re_max, layers=args.layers, max_layers=args.max_layers,
+                            span=vector(args.span) if args.span else None, rotors=rotors,
+                            max_time=args.max_time)
     except (ValueError, RuntimeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
     rep.pop("_surface", None)
+    rep.pop("_tunnel", None)
     if args.study:
         doc = _load(args.study)
         doc.setdefault("loadCases", []).append(rep["load_case"])
@@ -1118,11 +1128,22 @@ def main(argv=None):
     ef = sub.add_parser("external-flow", help="a part in a stream of air or water (lattice Boltzmann wind "
                                               "tunnel): drag, lift, moment, and the surface forces as a load case")
     ef.add_argument("part", help="STL, 3MF or OBJ in mm, closed")
-    ef.add_argument("--speed", type=float, required=True, help="m/s")
+    ef.add_argument("--speed", type=float, default=0.0, help="m/s (0 with --rotors: hover)")
     ef.add_argument("--direction", default="x", help="the way the fluid moves: x, -z, ... or vx,vy,vz (default x)")
     ef.add_argument("--medium", default="air", help="air, water, glycol50, oil (default air)")
-    ef.add_argument("--cells", type=int, default=16, help="voxels across the part's frontal size (default 16)")
-    ef.add_argument("--re-max", type=float, default=2e4, help="Reynolds number the run is capped at (default 2e4)")
+    ef.add_argument("--cells", type=int, default=24,
+                    help="voxels across the part's thickness to the stream, before the surface layers (default 24)")
+    ef.add_argument("--layers", type=int, default=None,
+                    help="fine layers hugging the surface, each half the cell (default: as many as the boundary "
+                         "layer needs, up to --max-layers)")
+    ef.add_argument("--max-layers", type=int, default=1, help="most layers added automatically (default 1; each "
+                                                              "costs about four times the run)")
+    ef.add_argument("--span", help="x, y, z or a vector: the part runs the whole width of the tunnel this way "
+                                   "(a slice of a long strut), periodic")
+    ef.add_argument("--rotors", help="JSON: [{center, axis, radius, thrust, hub}] (mm, N; axis the way the air "
+                                     "goes), or a study with aero.rotors: actuator disks blowing on the part")
+    ef.add_argument("--re-max", type=float, default=None, help="cap the run's Reynolds number")
+    ef.add_argument("--max-time", type=float, default=100.0, help="most convective times to run (default 100)")
     ef.add_argument("--study", help="append the flow's load case to this study, written to --out")
     ef.add_argument("--out", help="the study with the flow case (default <study>-flow.json)")
     fx = sub.add_parser("fe-export", help="a part with the study's material, supports and load cases as a "
@@ -1183,6 +1204,11 @@ def main(argv=None):
     for sp in (r, lt, h, fg, tu, ed, asm, v, bs, ex, en):
         sp.add_argument("--quick", action="store_true",
                         help="coarse grid, fewer iterations: a first look in a minute or two (quick.py)")
+    # `--direction -x`: argparse reads a value that starts with a dash as a flag
+    argv = list(sys.argv[1:] if argv is None else argv)
+    for i in range(len(argv) - 2, -1, -1):
+        if argv[i] in ("--direction", "--span") and argv[i + 1][:1] == "-" and argv[i + 1][1:2] in ("x", "y", "z"):
+            argv[i:i + 2] = [f"{argv[i]}={argv[i + 1]}"]
     args = p.parse_args(argv)
     if getattr(args, "quick", False):
         from . import quick

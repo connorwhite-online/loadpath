@@ -1,36 +1,26 @@
 """
 External flow: a part in a stream of air or water, as a wind tunnel would
-put it, by the same lattice Boltzmann kernels as flow.py (D3Q19, TRT,
-Smagorinsky subgrid viscosity, halfway bounce-back walls).
+put it (windtunnel.py: lattice Boltzmann on nested grids, walls at the
+true surface), and what a part costs a rotor by sitting in its stream.
 
-`external_flow` voxelizes the part in a tunnel (upstream, downstream and
-side clearance in body lengths), drives a uniform stream in at the
-upstream face and out at fixed pressure downstream, with the sides
-periodic, and measures the force on the part by momentum exchange on every
-wall link, time-averaged once the wake has developed. It returns the drag,
-side force and lift (N) and their coefficients on the frontal area, the
-moment about a point, the surface pressure as forces per wall voxel, and
-`load_case`: that pressure as a study load case of surface patches, so a
-wind or water load goes straight into a structural study (a drone arm, a
-fairing, a bracket on a vehicle, a mount in a current).
+`external_flow` puts the part in a tunnel whose far boundaries are ten and
+more body lengths away, brings the stream up, and measures the force on
+the part by momentum exchange on every wall link, time-averaged once the
+wake has developed. It returns the drag, side force and lift (N) and their
+coefficients on the frontal area, the moment about a point, the shedding
+frequency, and `load_case`: the surface forces as a study load case of
+patches, so a wind or water load goes straight into a structural study (a
+drone arm, a fairing, a bracket on a vehicle, a mount in a current).
 
-What it is and is not: a coarse large-eddy simulation on a cubic grid,
-and it reads high, the safe side for a structural load. The laminar
-sphere at Re 100 (Cd 1.09, Schiller-Naumann) reads 1.21 at 12 cells
-across in the default tunnel (11% high; 18 cells across moves it 1.5%, so
-most of it is the tunnel: 1.26 with half the upstream and downstream run,
-the periodic sides' 2% blockage the rest).
-Sponge layers at both ends of the tunnel soak up the sound waves a bluff
-body throws; without them a sharp-edged cube on 10 cells rang up and blew
-(with them it reads Cd 1.00 at Re 250, and a 10 x 30 mm plate face-on 1.03
-at Re 200).
-Smooth bodies at high Reynolds number, whose separation point moves with
-the boundary layer, need a resolution this grid does not reach: past
-`re_max` (default 2e4 on the body length), or past what the grid holds
-stably (about 25 times the body length in voxels), the run is made at that
-lower Reynolds number with the physical dynamic pressure, and the report
-says so (`reScale`, `note`). For those the coefficient is the subcritical one, a
-conservative load for structure (more drag than the drag crisis gives).
+How far to trust it (docs/EXTERNAL-FLOW.md has the table against published
+drag): where the grid holds the boundary layer, about four cells in a
+layer 3 d / sqrt(Re) thick, spheres and cylinders to Re 300 read within
+1 to 3%. N cells across hold Re to about (0.75 N)^2; a faster stream is
+run at the Reynolds number the grid resolves, with the physical dynamic
+pressure, and the report says so (`reynoldsRun`, `reScale`, `note`): 8%
+on a cube, 16% low on a long square strut, the drag of the lower Reynolds
+number on a round body. The drag crisis and a streamlined section's
+attached turbulent boundary layer are out of reach.
 """
 from __future__ import annotations
 
@@ -38,9 +28,8 @@ import time
 
 import numpy as np
 
-from .flow import C19, FLUID, INLET, LAMBDA, OUTLET, SOLID, _equilibrium, _kernels
 
-__all__ = ["external_flow", "tunnel_grid", "rotor_blockage", "RotorStream", "BlockageCost", "duct_performance",
+__all__ = ["external_flow", "boundary_layer_cells", "rotor_blockage", "RotorStream", "BlockageCost", "duct_performance",
            "inlet_loss"]
 
 
@@ -55,205 +44,412 @@ def _rotation_to_x(direction):
     return np.stack([d, y, z])
 
 
-def tunnel_grid(mesh, direction=(1, 0, 0), cells: int = 32, upstream: float = 1.5, downstream: float = 4.0,
-                side: float = 1.5, max_nodes: int = 3_000_000):
-    """The part in a tunnel along `direction`: (solid mask, voxel h mm,
-    origin of voxel (0,0,0)'s centre in the tunnel frame, rotation R with
-    tunnel = R @ part, body length mm). `cells` voxels across the body's
-    largest frontal extent; clearances in body lengths (frontal size),
-    shrunk to stay under `max_nodes`."""
-    from .cutcell import scan_voxelize
+def _frame(direction, span=None):
+    """Rotation to the tunnel's frame (rows: its axes in the part's): x
+    along the stream, and z along `span` for a body that runs the width of
+    the tunnel."""
+    d = np.asarray(direction, float)
+    d = d / np.linalg.norm(d)
+    if span is None:
+        return _rotation_to_x(d)
+    z = np.asarray(span, float)
+    z = z - (z @ d) * d
+    if np.linalg.norm(z) < 1e-6 * max(np.linalg.norm(span), 1e-30):
+        raise ValueError("span is along the stream: a spanning body lies across it")
+    z /= np.linalg.norm(z)
+    return np.stack([d, np.cross(z, d), z])
 
-    R = _rotation_to_x(direction)
-    m = mesh.copy()
+
+BL_THICKNESS = 3.0     # laminar boundary layer where it leaves a bluff body: about 3 d / sqrt(Re) (Schlichting)
+
+
+def boundary_layer_cells(reynolds: float, cells: float) -> float:
+    """Cells across the laminar boundary layer where it separates from a
+    bluff body `cells` across at Reynolds number `reynolds`: its thickness
+    there is about 3 d / sqrt(Re) (1.2 d / sqrt(Re) at the stagnation
+    point of a cylinder, grown two- to three-fold by the shoulder)."""
+    return BL_THICKNESS * cells / np.sqrt(max(reynolds, 1e-12))
+
+
+def external_flow(mesh, speed: float, direction=(1, 0, 0), *, medium="air", cells: int = 24, layers: int | None = None,
+                  max_layers: int = 1, span=None, rotors=None, about=None, re_max: float | None = None,
+                  bl_cells: float = 4.0, resolve: bool | None = None, domain=None, fine=None, shell: int = 6,
+                  u_lattice: float = 0.1, sgs: str = "wale", develop: float = 10.0, window: float = 8.0,
+                  tolerance: float = 0.01, max_time: float = 100.0, patches: int = 24, interpolated: bool = True,
+                  verbose: bool = False) -> dict:
+    """Time-averaged flow round `mesh` (mm) in a stream of `speed` m/s along
+    `direction` (the way the fluid moves), in a virtual wind tunnel
+    (windtunnel.py: nested lattice Boltzmann grids, walls at the surface).
+    medium: a heatx_thermal fluid name ("air", "water", ...) or Fluid.
+
+    Resolution. `cells` is the voxels across the body's thickness to the
+    stream (its smaller frontal extent) on the finest box of the grid;
+    `layers` more levels, each half the cell, hug the surface. A laminar
+    boundary layer is about 3 d / sqrt(Re) thick where it leaves the body,
+    and where it leaves sets the drag, so the grid resolves a Reynolds
+    number of about (3 N / bl_cells)^2 on N cells across (bl_cells cells
+    in the layer). With `layers` None, layers are added until that reaches
+    the physical Reynolds number, up to `max_layers`; past it the run is
+    made at the Reynolds number the grid resolves, with the physical
+    dynamic pressure, and the report says so (`reynoldsRun`, `reScale`,
+    `note`). Between Re 1e3 and 2e5 a bluff body's coefficient barely
+    moves, so that reading carries; a drag crisis (smooth bodies past Re
+    2e5) is not in it.
+
+    span: a direction (part frame) along which the body runs the whole
+    width of the tunnel, periodic: a slice of a long strut or cylinder.
+    The tunnel is as wide as the mesh is long that way.
+
+    rotors: [{center, axis, radius, thrust, hub}] (mm, N; axis the way the
+    air is pushed): actuator disks, each a pressure jump thrust / area
+    over its annulus, so a part can sit in a propeller's wash, alone
+    (speed 0: hover; the tunnel then runs along the first rotor's axis) or
+    with a stream. The reference speed is then the faster of the stream
+    and 2.2 times the fastest wake. With rotors the run keeps the
+    physical viscosity (`resolve` False) instead of the Reynolds number
+    the grid resolves on the part: a jet is not a boundary layer's to scale.
+
+    The run ramps the stream up over two convective times (the time the
+    stream takes to pass the body), develops for `develop`, then averages
+    in windows of `window` until two in a row agree to `tolerance` (or
+    `max_time`). about: the point moments are taken about (mm, default the
+    part's centroid).
+
+    Returns drag (N, along the stream), force (N, part frame),
+    coefficients on the frontal area, moment (N mm), strouhal (shedding,
+    on the reference length, when the side force has a clear period), the
+    Reynolds numbers (on referenceLength), levels, converged, and
+    `load_case` (the surface forces as a study load case).
+
+    u_lattice is the stream's speed in lattice units (Mach 0.17 at 0.1). A
+    run that goes unstable (a strongly shedding sharp section passes air at
+    twice the stream's speed) is made again at 0.7 of it, and `latticeSpeed`
+    says so."""
+    call = dict(locals())
+    import trimesh
+
+    from .cutcell import scan_voxelize
+    from .heatx_thermal import FLUIDS, Fluid
+    from .windtunnel import Tunnel, frontal_area, layout, wall_links
+
+    fl = medium if isinstance(medium, Fluid) else FLUIDS[medium]
+    t0 = time.time()
+    rotors = list(rotors or [])
+    if speed <= 0 and not rotors:
+        raise ValueError("no stream and no rotor: nothing moves the fluid")
+    if speed > 0:
+        R = _frame(direction, span)
+    else:
+        R = _frame(rotors[0]["axis"], span)
+    m = mesh.copy() if isinstance(mesh, trimesh.Trimesh) else trimesh.Trimesh(*mesh)
     T = np.eye(4)
     T[:3, :3] = R
     m.apply_transform(T)
-    lo, hi = m.bounds
+    tri = np.asarray(m.triangles, float)
+    lo, hi = np.asarray(m.bounds, float)
     ext = hi - lo
-    front = float(max(ext[1], ext[2]))
+    span_axis = 2 if span is not None else None
+    thick = float(ext[1]) if span is not None else float(min(ext[1], ext[2]))
     L = float(max(ext))
-    h = front / cells
-    while True:
-        pad_lo = np.array([upstream * L, side * front, side * front])
-        pad_hi = np.array([downstream * L, side * front, side * front])
-        g_lo = lo - pad_lo
-        dims = np.ceil((ext + pad_lo + pad_hi) / h).astype(int)
-        if np.prod(dims) <= max_nodes:
-            break
-        h *= 1.1
-    body = scan_voxelize(m, h, g_lo, dims)
-    return body, h, g_lo + 0.5 * h, R, L, front
-
-
-def external_flow(mesh, speed: float, direction=(1, 0, 0), *, medium="air", cells: int = 16, about=None,
-                  upstream: float = 3.0, downstream: float = 6.0, side: float = 2.5, re_max: float = 2e4,
-                  u_lattice: float = 0.1, cs: float = 0.1, flow_throughs: float = 5.0, average: float = 3.5,
-                  max_nodes: int = 3_000_000, sponge: float = 0.1, sponge_strength: float = 0.3,
-                  patches: int = 24, nu_floor: float = 0.004, verbose: bool = False) -> dict:
-    """Steady (time-averaged) flow round `mesh` (mm) in a stream of `speed`
-    m/s along `direction` (the way the fluid moves). medium: a heatx_thermal
-    fluid name ("air", "water", ...) or Fluid. about: the point moments are
-    taken about (mm, default the part's centroid).
-
-    Runs `flow_throughs` passes of the stream through the tunnel, averaging
-    the force over the last `average` of them. Returns drag (along the
-    stream), the force (N, part frame), coefficients on the frontal area,
-    the moment (N mm), the Reynolds number on the body length, the run's
-    own (reScale < 1 when capped at re_max), and `load_case`."""
-    from .heatx_thermal import FLUIDS, Fluid
-
-    K = _kernels()
-    fl = medium if isinstance(medium, Fluid) else FLUIDS[medium]
-    t0 = time.time()
-    body, h, origin, R, L, front = tunnel_grid(mesh, direction, cells, upstream, downstream, side, max_nodes)
-    shape = body.shape
     nu_phys = fl.mu / fl.rho
-    re_phys = speed * L * 1e-3 / nu_phys
-    # the grid holds a Reynolds number of about u L / nu_floor (L in voxels):
-    # under nu_floor (tau 0.512) a coarse grid's shear layers blow up even
-    # with the subgrid viscosity (a 30 mm plate at 15 m/s on 8 cells did)
-    re_grid = u_lattice * (L / h) / nu_floor
-    re_run = min(re_phys, re_max, re_grid)
+    # rotors, in the tunnel's frame
+    rot = []
+    w_max = 0.0
+    b_lo, b_hi = lo.copy(), hi.copy()
+    include = []
+    for r in rotors:
+        c = R @ np.asarray(r["center"], float)
+        a = R @ (np.asarray(r["axis"], float) / np.linalg.norm(r["axis"]))
+        rad, hub, thrust = float(r["radius"]), float(r.get("hub", 0.0)), float(r["thrust"])
+        area = np.pi * (rad * rad - hub * hub) * 1e-6
+        v_i = float(np.sqrt(thrust / (2.0 * fl.rho * area)))
+        w_max = max(w_max, 2.0 * v_i)
+        rot.append({"c": c, "a": a, "radius": rad, "hub": hub, "thrust": thrust, "area": area, "v_i": v_i})
+        reach = rad * np.sqrt(np.maximum(1.0 - a * a, 0.0)) + 0.1 * rad
+        rot[-1]["lo"], rot[-1]["hi"] = c - reach, c + reach
+        b_lo = np.minimum(b_lo, c - reach)
+        b_hi = np.maximum(b_hi, c + reach)
+        # the disk on a grid of a sixteenth of its radius, or the body's if that is coarser
+        include.append((c - reach, c + reach, rad / 16.0))
+    u_ref = max(float(speed), 2.2 * w_max)
+    u_char = float(speed) if speed > 0 else w_max
+    re_phys = u_ref * thick * 1e-3 / nu_phys
+    # how many surface layers the boundary layer asks for
+    def resolved(n_layers):
+        return (BL_THICKNESS * cells * 2 ** n_layers / bl_cells) ** 2
+    if layers is None:
+        layers = 0
+        while layers < max_layers and resolved(layers) < min(re_phys, re_max or np.inf):
+            layers += 1
+    # a rotor's jet, and the flow it drives through a duct, are not a boundary layer's to
+    # scale: at the Reynolds number a coarse grid resolves on the part the jet is treacle (a
+    # long duct lost four fifths of its lip's thrust to wall friction). With rotors the run
+    # keeps the physical viscosity, the subgrid model takes up what the grid cannot hold,
+    # and the part's own boundary layers are thicker than life (boundaryLayerCells says)
+    if resolve is None:
+        resolve = not rotors
+    re_run = min(re_phys, resolved(layers) if resolve else np.inf, re_max or np.inf)
     re_scale = re_run / re_phys
-    # lattice viscosity for the run's Re on the body length in voxels
-    nu_lu = u_lattice * (L / h) / re_run
-    tau0 = 0.5 + 3.0 * nu_lu
-    ntype = np.where(body, SOLID, FLUID).astype(np.int8)
-    ntype[0] = INLET
-    ntype[-1] = OUTLET
-    ntype[0][body[0]] = SOLID
-    ntype[-1][body[-1]] = SOLID
-    uin = np.zeros((3,) + shape, np.float32)
-    uin[0][0] = u_lattice
-    uin[0][-1] = -1.0                       # the outlet's inward normal
-    per = np.array([0, 1, 1], np.int64)
-    rho = np.ones(shape, np.float32)
-    # still fluid, the inlet ramped up over a few sound crossings: an
-    # impulsive start round a bluff body throws 20% density waves that blow
-    # a coarse grid up
-    u = [np.zeros(shape, np.float32) for _ in range(3)]
-    f = _equilibrium(rho, *u)
-    fn = f.copy()
-    nut = np.zeros(shape, np.float32)
+    h_box = thick / cells
 
-    # wall links: fluid node x, direction i, with x + c_i solid
-    fluid = ~body
-    links = []
-    for i in range(1, 19):
-        c = C19[i]
-        nb = np.roll(body, shift=(-c[0], -c[1], -c[2]), axis=(0, 1, 2))
-        if c[0] == 1:
-            nb[-1] = False
-        if c[0] == -1:
-            nb[0] = False
-        m = fluid & nb
-        if m.any():
-            idx = np.nonzero(m)
-            links.append((i, idx))
-    steps_per_pass = int(np.ceil(shape[0] / u_lattice))
-    total = int(flow_throughs * steps_per_pass)
-    avg_from = int(max(0.0, flow_throughs - average) * steps_per_pass)
-    chunk = 50
-    F_hist = []
-    wall = np.zeros((3,) + shape)               # time-summed force on each wall voxel (lattice)
-    n_avg = 0
-    it = 0
-    # links gathered as flat indices once: the force is summed every step
-    # while averaging (the tunnel's sound waves ring at a few hundred steps,
-    # which sparse samples alias), the wall map every few
-    flat = [(i, np.ravel_multi_index(idx, shape),
-             np.ravel_multi_index((idx[0] + C19[i, 0], idx[1] + C19[i, 1], idx[2] + C19[i, 2]), shape))
-            for i, idx in links]
-    F_sum = np.zeros(3)
-    n_f = 0
-    ramp = int(4 * shape[0] * np.sqrt(3.0))
-    total += ramp
-    avg_from += ramp
-    # sponge slabs at both ends of the tunnel: the populations there are
-    # pulled toward the free stream each step, which soaks up the sound
-    # waves a bluff body throws (a velocity inlet reflects them, and a
-    # sharp-edged cube on 10 cells rang up until it blew)
-    ns = max(3, min(int(sponge * shape[0]), shape[0] // 6))
-    sig = (np.arange(ns, dtype=np.float32)[::-1] + 1.0) / ns
-    sig = (sponge_strength * sig * sig)[None, :, None, None]
-    sig_out = sig[:, ::-1]
-    ones = np.ones((ns,) + shape[1:], np.float32)
-    zeros = np.zeros_like(ones)
-    while it < total:
-        if it <= ramp and it % 10 == 0:
-            uin[0][0] = u_lattice * 0.5 * (1.0 - np.cos(np.pi * min(1.0, it / ramp)))
-            feq_in = _equilibrium(ones, ones * uin[0][0][None], zeros, zeros)
-        K["step"](f, fn, ntype, tau0, cs * cs, 0.0, 0.0, 0.0, uin, 1.0, per, rho, u[0], u[1], u[2], LAMBDA, nut)
-        f, fn = fn, f
-        f[:, :ns] += sig * (feq_in - f[:, :ns])
-        f[:, -ns:] += sig_out * (feq_in - f[:, -ns:])
-        it += 1
-        if verbose and it % 200 == 0:
-            print("  step", it, "max u", float(np.abs(u[0]).max()) / u_lattice, "rho", float(rho.min()), float(rho.max()),
-                  "at", np.unravel_index(int(np.argmax(rho)), shape), np.unravel_index(int(np.argmax(np.abs(u[0]))), shape),
-                  shape, flush=True)
-        if it % 200 == 0 and (not np.isfinite(rho[shape[0] // 2].mean())
-                              or float(np.abs(u[0]).max()) > 4.0 * u_lattice):
+    def vox(hh, corner, dims):
+        return scan_voxelize(m, hh, np.asarray(corner, float), np.asarray(dims))
+
+    if domain is None:
+        # a spanning body blocks a strip of the tunnel, not a spot: the sides go further out
+        domain = (20.0, 40.0, 40.0) if span is not None else (12.0, 10.0, 24.0)
+    if fine is None:
+        # the finest box reaches past where the wake rolls up (further behind a strut)
+        fine = (0.5, 1.5, 4.0) if span is not None else (0.5, 0.5, 1.5)
+    lev = layout(lo, hi, h_box, thick, domain=domain, fine=fine, span_axis=span_axis, shells=layers,
+                 shell=shell, voxelize=vox, domain_ref=max(L, float(np.max(b_hi - b_lo))), include=include)
+    h = lev[-1]["h"]
+    fshape = np.array(lev[-1]["shape"])
+    solid = vox(h, lev[-1]["origin"] - 0.5 * h, fshape)
+    per = (False, False, span is not None)
+    bid, q, xyz_t, missed = wall_links(solid, tri, lev[-1]["origin"], h, per)
+    if not interpolated:
+        q[q >= 0] = 0.5
+    n_across = thick / h
+    nu_lu = u_lattice * n_across / re_run
+    tun = Tunnel(lev, solid, nu_lu, u_lattice, bid=bid, q=q, periodic=per, sgs=sgs, open_far=speed <= 0)
+    f_unit = fl.rho * (h * 1e-3) ** 2 * (u_ref / u_lattice) ** 2        # N per lattice force (finest level)
+    # rotor disks: a pressure jump thrust / area, spread over a few cells along the axis
+    frc_base = {}
+    for r in rot:
+        # the finest level that holds the whole disk carries it, and so does every finer
+        # one where they overlap, each at its own cell
+        kd = 0
+        for k in range(len(lev) - 1, -1, -1):
+            c0_ = lev[k]["origin"] - 0.5 * lev[k]["h"]
+            c1_ = c0_ + np.array(lev[k]["shape"]) * lev[k]["h"]
+            if np.all(r["lo"] >= c0_ + 2 * lev[k]["h"]) and np.all(r["hi"] <= c1_ - 2 * lev[k]["h"]):
+                kd = k
+                break
+        r["level"] = kd
+        sig = lev[kd]["h"]
+        norm = None
+        for k in range(kd, len(lev)):
+            hk = lev[k]["h"]
+            xs = tun.centres(k)
+            X, Y, Z = np.meshgrid(xs[0] - r["c"][0], xs[1] - r["c"][1], xs[2] - r["c"][2], indexing="ij", sparse=True)
+            s_ax = X * r["a"][0] + Y * r["a"][1] + Z * r["a"][2]
+            rr = np.sqrt(np.maximum(X * X + Y * Y + Z * Z - s_ax * s_ax, 0.0))
+            # the pressure jump thrust / area, spread along the axis (a Gaussian one cell of
+            # the disk's level wide), its edges a cell soft
+            wgt = (np.exp(-0.5 * (s_ax / sig) ** 2) / (sig * np.sqrt(2.0 * np.pi)) * hk
+                   * np.clip((r["radius"] - rr) / sig + 0.5, 0.0, 1.0) * np.clip((rr - r["hub"]) / sig + 0.5, 0.0, 1.0))
+            wgt[np.abs(s_ax) > 4.0 * sig] = 0.0
+            # per cell, in this level's lattice force: (T / A) x cell face area x share of the jump
+            dp_lu = r["thrust"] / (r["area"] * 1e6) * hk * hk / (fl.rho * (hk * 1e-3) ** 2 * (u_ref / u_lattice) ** 2)
+            if norm is None:
+                tot_w = float(wgt.sum()) * dp_lu
+                t_lu = r["thrust"] / (fl.rho * (hk * 1e-3) ** 2 * (u_ref / u_lattice) ** 2)
+                if tot_w <= 0:
+                    raise ValueError("a rotor disk falls between the grid's cells: more cells")
+                norm = t_lu / tot_w                      # the discrete disk carries the thrust exactly
+            if k not in frc_base:
+                frc_base[k] = np.zeros((3,) + tuple(lev[k]["shape"]), np.float32)
+            for ax in range(3):
+                frc_base[k][ax] += (norm * dp_lu * r["a"][ax]) * wgt
+    # run: ramp, develop, then average in windows until two agree
+    area = frontal_area(tri, h / 4.0) * 1e-6
+    scale_len = max(float(ext[0]), float(np.sqrt(area)) * 1e3, max([2.0 * r["radius"] for r in rot], default=0.0))
+    u_lat_char = u_lattice * u_char / u_ref
+    tc = scale_len / h / u_lat_char                                  # finest steps per convective time
+    nfs = tun.fine_per_step
+    ramp = 2.0 * tc
+    u_lat_stream = u_lattice * float(speed) / u_ref
+    hist = []
+    t_hist = []
+    prev = np.zeros(3)
+    fine = tun.levels[-1]
+    means = []
+    side_rms = []
+    t_avg0 = ramp + develop * tc
+    next_win = t_avg0 + window * tc
+    win_start_i = None
+    converged = False
+    by_error = False
+    ramping = True
+    while True:
+        s = tun.steps
+        if s < ramp:
+            x = s / ramp
+            fac = 0.5 * (1.0 - np.cos(np.pi * x))
+            # with a passing side gust (10% of the stream, there and back): a real stream is
+            # never exactly symmetric, and a wake that sheds needs something to start it
+            gust = 0.1 * u_lat_char * 2.0 * np.pi / ramp * np.cos(2.0 * np.pi * x)
+            tun.set_stream(u_lat_stream * fac, u_lat_stream * 0.5 * np.pi * np.sin(np.pi * x) / ramp,
+                           (gust, 0.0) if span is not None else (0.8 * gust, 0.6 * gust))
+            for k, base in frc_base.items():
+                tun.set_force(k, base * np.float32(fac))
+        elif ramping:
+            ramping = False
+            tun.set_stream(u_lat_stream, 0.0)
+            if span is not None:
+                # a strut's wake is three-dimensional past Re 200, and nothing in a uniform
+                # stream on a uniform section says so: 2% of the stream, one wave along the span
+                tun.ripple(0.02 * u_lat_char)
+            for k, base in frc_base.items():
+                tun.set_force(k, base)
+        if not tun.sampling and s >= ramp:
+            tun.sampling = True
+        tun.step()
+        if tun.sampling:
+            cur = fine.facc.sum(axis=0)
+            hist.append((cur - prev) / nfs)
+            t_hist.append(tun.steps)
+            prev = cur
+        if tun.steps % (50 * nfs) < nfs:
+            rmin, rmax = float(fine.rho.min()), float(fine.rho.max())
+            if not np.isfinite(rmin) or rmax > 0.5 or rmin < -0.5:
+                if verbose:
+                    for k, L in enumerate(tun.levels):
+                        r_ = np.nan_to_num(np.abs(L.rho), nan=np.inf)
+                        print(f"  level {k} cell {L.h:.3g}: worst density at {np.unravel_index(int(r_.argmax()), r_.shape)}"
+                              f" of {L.shape}, {float(r_.max()):.3g}", flush=True)
+                if u_lattice > 0.04:
+                    if verbose:
+                        print(f"  unstable at lattice speed {u_lattice:.3g}: again at {0.7 * u_lattice:.3g}", flush=True)
+                    del tun
+                    return external_flow(**{**call, "u_lattice": 0.7 * u_lattice})
+                raise RuntimeError("the flow run went unstable: more cells across the body, or a lower re_max")
+        if tun.steps >= t_avg0 and win_start_i is None:
+            win_start_i = len(hist)
+            snaps = [(fine.fb.copy(), fine.facc.sum(axis=0), tun.n_samples, len(hist))]
+        if tun.steps >= next_win:
+            wm = np.mean(hist[win_start_i:], axis=0)
+            means.append(wm)
+            side_rms.append(float(np.std(np.asarray(hist[win_start_i:])[:, 1:], axis=0).max()))
+            win_start_i = len(hist)
+            snaps.append((fine.fb.copy(), fine.facc.sum(axis=0), tun.n_samples, len(hist)))
+            next_win += window * tc
             if verbose:
-                print("  max u", float(np.abs(u[0]).max()) / u_lattice, flush=True)
-            raise RuntimeError("the flow run went unstable: give more cells across the body or a lower re_max")
-        sample = it >= avg_from
-        if not sample and it % chunk:
-            continue
-        F = np.zeros(3)
-        wall_now = sample and it % 5 == 0
-        for i, src, tgt in flat:
-            fi = 2.0 * f[i].ravel()[src].astype(np.float64)
-            F += C19[i] * fi.sum()
-            if wall_now:
-                for k in range(3):
-                    if C19[i, k]:
-                        np.add.at(wall[k].ravel(), tgt, C19[i, k] * fi)
-        if wall_now:
-            n_avg += 1
-        if sample:
-            F_sum += F
-            n_f += 1
-        if it % chunk == 0:
-            F_hist.append(F)
-        if verbose and it % (40 * chunk) == 0:
-            print(f"  {it}/{total}  F {F}", flush=True)
-    F_hist = np.array(F_hist)
-    F_lu = F_sum / max(n_f, 1)
-    # lattice -> physical: the run keeps the physical dynamic pressure
-    vel = speed / u_lattice                       # m/s per lattice velocity
-    f_unit = fl.rho * (h * 1e-3) ** 2 * vel ** 2   # N per lattice force
-    F_t = F_lu * f_unit                           # tunnel frame
+                print(f"  t {tun.steps / tc:6.1f}  window mean F {wm * f_unit}  {time.time() - t0:.0f} s", flush=True)
+            if len(means) >= 2:
+                ref_f = max(np.linalg.norm(means[-1]), 1e-30)
+                # the mean has settled, and so has what sheds: a wake still growing its
+                # oscillation reads a steady mean for a while
+                grown = (abs(side_rms[-1] - side_rms[-2]) <= 0.15 * side_rms[-1]
+                         or side_rms[-1] <= 1e-3 * ref_f)
+                if np.linalg.norm(means[-1] - means[-2]) <= tolerance * ref_f and grown:
+                    converged = True
+                    break
+                # a chaotic wake's windows never agree that closely: there the mean over all of
+                # them (less the first) is the answer once its standard error is inside the
+                # tolerance
+                if len(means) >= 4 and grown:
+                    mx = np.array([v[0] for v in means[1:]])
+                    if mx.std(ddof=1) / np.sqrt(len(mx)) <= tolerance * abs(mx.mean()):
+                        converged = True
+                        by_error = True
+                        break
+            if tun.steps >= ramp + max_time * tc:
+                break
+    hist = np.array(hist)
+    # the mean over the last two windows where they agreed; over every window but the
+    # first where the run stopped on the standard error, or at its time limit
+    if converged and not by_error:
+        fb0, fa0, n0, i_0 = snaps[-3] if len(snaps) >= 3 else snaps[0]
+    else:
+        fb0, fa0, n0, i_0 = snaps[1] if len(snaps) >= 4 else snaps[0]
+    std_err = None
+    if len(means) >= 3:
+        mx = np.array([v[0] for v in means[1:]])
+        std_err = float(mx.std(ddof=1) / np.sqrt(len(mx)) * f_unit)
+    n_s = max(tun.n_samples - n0, 1)
+    F_lu = (fine.facc.sum(axis=0) - fa0) / n_s
+    sample = hist[i_0:]
+    # a steady flow settles exponentially (the wake fills in on the viscous time): three
+    # windows falling toward a limit, with nothing shedding, give the limit (Aitken)
+    settled = None
+    if len(means) >= 3:
+        d1, d2 = means[-2][0] - means[-3][0], means[-1][0] - means[-2][0]
+        steady = sample[:, 0].std() <= 2.0 * abs(d2) + 1e-30 and side_rms[-1] <= 1e-3 * abs(means[-1][0])
+        if steady and d1 * d2 > 0 and abs(d2) < 0.9 * abs(d1):
+            settled = float(means[-1][0] + d2 * d2 / (d1 - d2))
+    F_t = F_lu * f_unit                                   # tunnel frame, N
     F_part = R.T @ F_t
-    q = 0.5 * fl.rho * speed ** 2
-    area = float(body.any(axis=0).sum()) * (h * 1e-3) ** 2   # frontal area (projected on the stream)
-    wall = wall / max(n_avg, 1) * f_unit          # N per wall voxel, tunnel frame
-    sv = np.nonzero(np.abs(wall).sum(axis=0) > 0)
-    xyz_t = origin + np.stack(sv, 1) * h
-    xyz = xyz_t @ R                               # part frame (R orthonormal: part = R^T tunnel)
-    fw = (wall[:, sv[0], sv[1], sv[2]].T) @ R
+    q_dyn = 0.5 * fl.rho * speed ** 2
+    fw_t = (fine.fb - fb0) / n_s * f_unit
+    xyz = xyz_t @ R
+    fw = fw_t @ R
     c0 = np.asarray(about, float) if about is not None else np.asarray(mesh.center_mass if mesh.is_volume
                                                                          else mesh.centroid, float)
     M = np.cross(xyz - c0, fw).sum(axis=0)
     drag = float(F_t[0])
+    if settled is not None:
+        # the load case and the other components keep the measured average
+        drag = settled * f_unit
+    # shedding: the side force's dominant period over the averaging time
+    strouhal = None
+    whole = hist[snaps[0][3]:]
+    side = whole[:, 1] if whole[:, 1].std() >= whole[:, 2].std() else whole[:, 2]
+    if len(side) > 16 and speed > 0 and side.std() > 1e-3 * abs(F_lu[0]):
+        # the period between upward crossings of the mean, when they come evenly
+        v = side - side.mean()
+        k = np.nonzero((v[:-1] < 0) & (v[1:] >= 0))[0]
+        if len(k) >= 4:
+            tx = k + v[k] / (v[k] - v[k + 1])               # in samples
+            per_ = np.diff(tx)
+            if per_.std() < 0.2 * per_.mean():
+                strouhal = float(n_across / (per_.mean() * nfs * u_lat_stream))
     rep = {
-        "speed": speed, "direction": (np.asarray(direction, float) / np.linalg.norm(direction)).tolist(),
-        "medium": fl.name, "drag": drag, "force": F_part.tolist(), "moment": M.tolist(), "about": c0.tolist(),
-        "dragCoefficient": drag / (q * area), "frontalArea": area * 1e6,
-        "sideCoefficient": float(F_t[1] / (q * area)), "liftCoefficient": float(F_t[2] / (q * area)),
-        "dynamicPressure": q, "reynolds": re_phys, "reynoldsRun": re_run, "reScale": re_scale,
-        "bodyLength": L, "voxel": h, "grid": list(shape), "cellsAcross": front / h,
-        "steps": it, "seconds": round(time.time() - t0, 1),
-        "forceHistory": [float(f"{v:.4g}") for v in (F_hist * f_unit)[:, 0][-40:]],
+        "speed": speed, "direction": R[0].tolist(), "medium": fl.name, "drag": drag, "force": F_part.tolist(),
+        "moment": M.tolist(), "about": c0.tolist(), "frontalArea": float(area * 1e6), "dynamicPressure": q_dyn,
+        "dragCoefficient": float(drag / (q_dyn * area)) if speed > 0 else None,
+        "sideCoefficient": float(F_t[1] / (q_dyn * area)) if speed > 0 else None,
+        "liftCoefficient": float(F_t[2] / (q_dyn * area)) if speed > 0 else None,
+        "dragFluctuation": float(sample[:, 0].std() * f_unit),
+        "sideFluctuation": float(side.std() * f_unit), "strouhal": strouhal,
+        "reynolds": re_phys, "reynoldsRun": re_run, "reScale": re_scale, "referenceLength": thick,
+        "referenceSpeed": u_ref, "bodyLength": L, "voxel": float(h), "cellsAcross": float(n_across), "layers": int(layers),
+        "boundaryLayerCells": float(boundary_layer_cells(re_run, n_across)),
+        "grid": [int(v) for v in fshape],
+        "levels": [{"cell": float(s_["h"]), "grid": [int(v) for v in s_["shape"]]} for s_ in lev],
+        "blockage": float(area * 1e6 / ((lev[0]["shape"][1] * lev[0]["h"]) * (lev[0]["shape"][2] * lev[0]["h"]))),
+        "steps": int(tun.steps), "time": float((tun.steps - ramp) / tc), "converged": bool(converged),
+        "windowMeans": [float(v[0] * f_unit) for v in means], "settledByExtrapolation": settled is not None,
+        "dragMeasured": float(F_t[0]), "dragStandardError": std_err,
+        "seconds": round(time.time() - t0, 1), "latticeSpeed": float(u_lattice), "missedLinks": int(missed),
+        "forceHistory": [float(f"{v:.4g}") for v in (sample[:, 0] * f_unit)[-200:]],
         "wallForceTotal": fw.sum(axis=0).tolist(),
     }
+    if rot:
+        # the air through each disk, on the finest box
+        tun.fill_parents()
+        vel = u_ref / u_lattice
+        rep["rotors"] = []
+        for r in rot:
+            Lb = tun.levels[r["level"]]
+            xs = tun.centres(r["level"])
+            X, Y, Z = np.meshgrid(xs[0] - r["c"][0], xs[1] - r["c"][1], xs[2] - r["c"][2], indexing="ij", sparse=True)
+            s_ax = X * r["a"][0] + Y * r["a"][1] + Z * r["a"][2]
+            rr = np.sqrt(np.maximum(X * X + Y * Y + Z * Z - s_ax * s_ax, 0.0))
+            on = (np.abs(s_ax) <= 0.75 * Lb.h) & (rr <= r["radius"]) & (rr >= r["hub"]) & (Lb.ntype != 1)
+            ua = Lb.u[0] * r["a"][0] + Lb.u[1] * r["a"][1] + Lb.u[2] * r["a"][2]
+            out = {"thrust": r["thrust"], "inducedVelocity": r["v_i"], "cell": float(Lb.h),
+                   "diskVelocity": float(ua[on].mean() * vel) if on.any() else None}
+            # the wake a diameter behind the disk
+            far = (np.abs(s_ax - 2.0 * r["radius"]) <= 0.75 * Lb.h) & (rr <= 1.5 * r["radius"]) & (Lb.ntype != 1)
+            if far.any():
+                uf = ua[far] * vel
+                out["wakeVelocity"] = float(uf.max())
+            # the load on the part along this rotor's axis, as a share of its thrust
+            out["download"] = float(F_t @ r["a"])
+            out["downloadShare"] = float(F_t @ r["a"] / r["thrust"])
+            rep["rotors"].append(out)
     if re_scale < 1:
-        rep["note"] = (f"run at Re {re_run:.3g} (the physical {re_phys:.3g} is past what this grid resolves; "
-                       "more --cells raises it); "
-                       "forces are at the physical dynamic pressure with the lower-Re coefficient")
+        rep["note"] = (f"run at Re {re_run:.3g} on the {thick:.3g} mm facing the stream (the physical {re_phys:.3g} "
+                       f"needs a boundary layer {bl_cells:g} cells thick: more cells or layers); forces are at the "
+                       "physical dynamic pressure with that Reynolds number's coefficient")
+        if re_run < 500:
+            rep["note"] += ("; below Re 500 friction still adds to a bluff body's drag (a cube reads 1.5 at Re 100 "
+                            "against 1.05 past 1e3), so this reading is high for the physical stream: add layers")
     rep["load_case"] = _load_case(xyz, fw, h, patches, speed)
     rep["_surface"] = (xyz, fw)
+    rep["_tunnel"] = tun
     return rep
 
 
