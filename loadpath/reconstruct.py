@@ -846,9 +846,14 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     if min_member and parting is None:
         # Each vertex's member half-thickness (mm) on this field, before the
         # mesh is smoothed: the deepest point inside within reach of it.
-        # _smooth_surface holds members to the minimum with it.
+        # _smooth_surface holds members to the minimum with it. Read on the
+        # sub-cell surface distance: _field_distance's gradient band runs
+        # deep on a member a few cells across (1.44 mm on a rod 1.26 mm in
+        # radius), which let the smoothing take an SLS rod (minMember 1.6)
+        # to 1.3 mm.
         reach = int(np.ceil(0.5 * float(min_member) / step)) + 1
-        depth = np.clip(-_field_distance(fine, step, o.level), 0.0, None)
+        depth = np.clip(-_surface_distance(fine, step, o.level, reach=0.5 * float(min_member) + 2.0 * step),
+                        0.0, None)
         half = ndimage.maximum_filter(depth, size=2 * reach + 1)
         ijk = np.rint((np.asarray(mesh.vertices) - origin) / step).astype(int)
         ijk = np.clip(ijk, 0, np.array(fine.shape) - 1)
