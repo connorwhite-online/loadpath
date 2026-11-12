@@ -38,6 +38,12 @@ import os
 __all__ = ["SimpOptions", "SimpResult", "filter_radius", "density_filter", "optimize"]
 
 E_MIN = 1e-6
+# casting.feed: the full pour (castfeed.FeedTerm.pour) judges the design every
+# this many iterations, once the projection is this sharp (below it the design
+# is too grey to say which cells are metal).
+FEED_POUR_EVERY = 8
+FEED_POUR_BETA = 2.0
+
 # The search's buckling penalty acts on load cases whose buckling factor is
 # under 1 / (1 - BUCKLE_MMA) times the limit, from projection sharpness
 # BUCKLE_BETA on (a grey design reads far below its sharpened self: the hook
@@ -817,6 +823,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     blk = getattr(domain, "blockage", None)
     com_cfg = getattr(domain, "center_of_mass", None)
     com_state = {}
+    feed_t = getattr(domain, "feeding", None)
+    feed_state = {}
     com_cen = (mesh.origin + (mesh.elem_ijk + 0.5) * mesh.pitch) if com_cfg is not None else None
     target = vf * float(wdesign.sum())
 
@@ -1090,6 +1098,48 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             dc = dc + ht @ (printed_grad(am_b, gcom) * dproj / hs)
             com_rec = {"centerOfMass": [round(float(v), 3) for v in C],
                        "centerOfMassWeight": [round(float(v), 3) for v in w_c]}
+        feed_rec = None
+        if feed_t is not None:
+            # casting.feed (castfeed.FeedTerm): the metal that freezes cut off from the feeder, as the
+            # cavity it would leave, read on the eroded design as stiffness is (its necks are the
+            # thinnest the delivered part's can be). The fast measure says which neck to thicken and
+            # which pool to lighten, but it over-predicts where heavy lumps keep a short thin section
+            # open, so the full pour is the judge: every FEED_POUR_EVERY iterations once the design
+            # is sharp enough to pour, and the weight climbs only while that pour leaves more cavity
+            # than a sound casting may hold, holds while the pour is just inside that, and eases once
+            # it is sound with room to spare.
+            xe_grid = domain.full_grid(xe)
+            f_val, f_grad, feed_rec = feed_t.measure(xe_grid)
+            if beta >= FEED_POUR_BETA and (feed_state.get("age", FEED_POUR_EVERY) >= FEED_POUR_EVERY):
+                try:
+                    feed_state["pour"] = feed_t.pour(xe_grid, order=feed_t.last["theta"].reshape(domain.dims)
+                                                     * mesh.pitch)["cavityShare"]
+                except Exception:  # noqa: BLE001 - a failed pour leaves the last reading standing
+                    pass
+                feed_state["age"] = 0
+            feed_state["age"] = feed_state.get("age", FEED_POUR_EVERY) + 1
+            poured = feed_state.get("pour")
+            w_f = feed_state.get("w", 0.0)
+            if poured is not None and poured > feed_t.limit and f_val > 0:
+                # (per cell the term's gradient is about n / 3 times a compliance sensitivity at
+                # weight 1, n the cell count: the climb starts under parity)
+                w_f = min(max(w_f * 1.5, 30.0 / n_design), 3000.0 / n_design)
+            elif poured is not None and poured < 0.5 * feed_t.limit:
+                # the pour is sound with room to spare: what the measure still reads is its own
+                # over-prediction, and holding the weight would spend stiffness on it
+                w_f *= 0.8
+            feed_state["w"] = w_f
+            # while the pour leaves a cavity the design is still being reshaped: the projection is
+            # not sharpened under it until the weight has reached its cap, and a flat compliance
+            # is not a stall
+            feed_state["over"] = bool(poured is not None and poured > feed_t.limit)
+            feed_state["climbing"] = feed_state["over"] and w_f < 3000.0 / n_design
+            if w_f > 0:
+                cref = feed_state.setdefault("c", comp)
+                comp = comp + cref * w_f * f_val / feed_t.limit
+                dc = dc + ht @ (printed_grad(am_e, cref * w_f / feed_t.limit * f_grad[ijk]) * dproj_e / hs)
+            feed_rec = {"cavityShare": None if poured is None else round(poured, 5),
+                        "cavityMeasure": round(f_val, 5), "feedWeight": round(w_f * n_design, 2)}
         dv = ht @ (printed_grad(am_b, wdesign) * dproj / hs)
         blk_rec = None
         if blk is not None:
@@ -1102,7 +1152,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             dv_b = ht @ (printed_grad(am_b, np.where(design, b_grad, 0.0)) * dproj / hs)
             dv = np.maximum(dv + dv_b, 0.1 * dv)
             blk_rec = {"blockageDrag": b_drag, "blockageCells": b_cells}
-        if com_cfg is not None:
+        if com_cfg is not None or feed_t is not None:
             # the penalty's pull makes some sensitivities positive; shift by
             # s dv as the thermal swing does (the volume multiplier absorbs it)
             live = design & (dv > 1e-12)
@@ -1331,6 +1381,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             rec.update(blk_rec)
         if com_rec is not None:
             rec.update(com_rec)
+        if feed_rec is not None:
+            rec.update(feed_rec)
         if excess is not None:
             rec["maxMemberExcess"] = excess
             rec["maxMemberWeight"] = mu
@@ -1338,11 +1390,13 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if on_iter is not None:
             on_iter(rec, xp)
 
-        if beta < opts.beta_max and (change < opts.tol * 2 or since_beta >= _beta_hold(opts, beta)):
+        if beta < opts.beta_max and feed_state.get("climbing") and beta >= FEED_POUR_BETA:
+            pass
+        elif beta < opts.beta_max and (change < opts.tol * 2 or since_beta >= _beta_hold(opts, beta)):
             beta = min(beta * 2, opts.beta_max)
             since_beta = 0
         elif beta >= opts.beta_max and it >= 3:
-            if change < opts.tol:
+            if change < opts.tol and not feed_state.get("over"):
                 converged = True
                 break
             w = opts.stall_window
@@ -1351,7 +1405,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             # test beam's compliance went flat at iteration 65 with the
             # flanges still 8 mm against a 5 mm limit)
             mm_over = excess is not None and (over > 0.05 or excess > 0.05)
-            if since_beta >= w and len(history) > w and not mm_over:
+            if since_beta >= w and len(history) > w and not mm_over and not feed_state.get("over"):
                 old = history[-1 - w]["compliance"]
                 if abs(comp - old) <= opts.stall_rtol * abs(old):
                     converged = True

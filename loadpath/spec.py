@@ -828,6 +828,9 @@ class Study:
     # casting with a process: the pour to solve on the delivered part
     # (manufacture.parse_foundry), or None
     foundry: Any = None
+    # casting.feed: "auto" or the shapes the riser or gate joins; the optimizer then keeps every
+    # region freezing toward it (castfeed.py). None: the pour is only reported
+    cast_feed: Any = None
     pattern: Any = None
     max_member: float | None = None
     # Every material to try (a list in the study); `material` is the first.
@@ -951,6 +954,18 @@ def cuts_of(study, region) -> list:
     cutting keep-out (Region.cuts), but for the skin only the bores."""
     return [k for k in study.keep_out if getattr(k, "cuts", True)
             and (region.id != "skin" or getattr(k, "bore", True))]
+
+
+def _cast_feed(casting, base_dir):
+    if not isinstance(casting, dict) or casting.get("feed") is None:
+        return None
+    if casting.get("process") is None:
+        raise ValueError("casting.feed needs casting.process (and alloy): they set how the part freezes")
+    feed = casting["feed"]
+    if feed == "auto":
+        return "auto"
+    items = feed if isinstance(feed, list) else [feed]
+    return [shape_from_spec(s, base_dir) for s in items]
 
 
 def _regions(items, label, base_dir, bounds=None):
@@ -1807,6 +1822,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         extrusion=_extrusion_axis(d.get("extrusion")),
         access=access,
         foundry=parse_foundry(d.get("casting")),
+        cast_feed=_cast_feed(d.get("casting"), base_dir),
         pattern=parse_pattern(d.get("pattern")),
         max_member=float(max_member) if max_member is not None else None,
         process=process,

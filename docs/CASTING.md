@@ -97,6 +97,69 @@ undercut, found on the shape.
 An alloy can be given as a card of overrides (`{"base": "a356",
 "liquidus": ..., "fraction": [[T, fs], ...]}`).
 
+## The optimizer sees the pour
+
+![Two lumps joined by a lean truss: stiffness alone, and with casting.feed](images/casting-feed.png)
+
+*Two 30 mm lumps, a riser on the left one, the right one loaded in
+bending, a quarter of the space between them to spend. Stiffness alone
+necks the flanges down where they reach the loaded lump, because the
+moment is small there; that throat freezes first and the lump behind it
+is left with a shrinkage cavity of 0.20% of the part. With
+`casting.feed` the flanges arrive at a thickness that keeps the lump
+fed: 0.04%, sound, for 23% more compliance. Both numbers are the full
+pour of the delivered mesh.*
+
+```json
+"casting": {"draw": "+y", "process": "sand", "alloy": "a356",
+            "feed": {"type": "box", "min": [6, 6, 27], "max": [24, 24, 30]}}
+```
+
+`feed` is where the riser or gate joins the part (shapes, or `"auto"`:
+where the metal freezes last). The optimizer then places material so that
+every region freezes toward the feeder (`castfeed.py`).
+
+The full pour above is too slow to differentiate through a few hundred
+times, so the loop carries a reduced form of the same physics. Each cell
+of metal is a unit of heat to lose, each face between metal and mold a
+loss, and the metal conducts between cells by as much as its freezing
+range allows; the steady solution is a length, the local modulus, and
+the order of freezing is its order (0.95 rank correlation with the full
+solve, cell by cell, on the bossed plate above). Metal at a point is fed
+if some path from the feeder stays open longer than the point itself;
+the best such path is found in one pass, and the shortfall is turned
+into the cavity it would leave using the alloy's shrinkage and feeding
+limit. Its gradient is exact (an adjoint solve of the same matrix) and
+says what a foundry does: thicken the neck, or lighten what is behind it.
+
+That measure is good at direction and less good at size. It agrees with
+the full pour on a long thin neck and over-predicts where a short thin
+section sits between heavy lumps, which keep it open as a fin:
+
+| Two lumps 50 mm apart, joined by | measure | full pour |
+|---|---|---|
+| plate 4 mm | 0.74% | 1.65% |
+| plate 6 mm | 0.45% | 0.72% |
+| plate 8 mm | 0.26% | 0.17% |
+| plate 10 mm | 0.14% | 0.00% |
+| plate 14 mm | 0.01% | 0.00% |
+| a lean truss, 30% of the space | 0.44% | 0.01% |
+
+So the full pour is the judge inside the loop as well. Every eight
+iterations the current design is poured with a riser on the feeder; the
+weight on the measure climbs only while that pour leaves more cavity
+than a sound casting may hold (0.1% of the part), and the measure's
+gradient is used only for where to move metal. A design the pour calls
+sound is left to stiffness.
+
+What it does not do: it cannot make an infeasible feed feasible (a heavy
+lug at the far end of a light arm needs its own riser, not a 16 mm thick
+arm; at a fifth of the space instead of a quarter the same part only
+came down from 1.35% to 0.65%), it does not weigh gravity (a riser feeds
+downhill; the report's pour does), and it runs in the search method, not
+yet in the constrained one. It adds the pours to the run: about two
+minutes on the example above (12 000 cells).
+
 ## Slip
 
 ![A slip-cast cup: the wall the cast leaves, the plaster mold half, the box to pour it in](images/casting-slip.png)
@@ -157,7 +220,7 @@ can be overridden (`{"base": "porcelain", "castingRate": 0.5,
 | Kiln sag of an overhanging bar | within 10% | beam theory with the pyroplastic compliance |
 | Porcelain total shrinkage | 14.8% | 12 to 16% for vitreous casting porcelain |
 
-`tests/test_casting.py` and `tests/test_slipcast.py` hold these.
+`tests/test_casting.py`, `tests/test_slipcast.py` and `tests/test_castfeed.py` hold these.
 
 ## What is not there yet
 
@@ -184,10 +247,10 @@ Stated so nobody builds on a number that is weaker than it looks.
 - **Draft is still the angle you give.** What the pattern needs to pull
   from sand without tearing it depends on friction and the sand's green
   strength; that solve is not here.
-- **The optimizer does not yet see the pour.** A study pours the part it
-  delivered and reports; it does not move material to feed a hot spot.
-  Directional solidification as a constraint in the loop is the next
-  step.
+- **The optimizer sees feeding, not yet the rest.** `casting.feed` keeps
+  regions fed (above). Porosity, fluidity and riser size are still only
+  reported on the delivered part, and the feed term is in the search
+  method only.
 
 ## Sources
 

@@ -1236,6 +1236,24 @@
               "exclusiveMinimum": 0,
               "description": "metal head above the part while it fills, mm (default 100)"
             },
+            "feed": {
+              "anyOf": [
+                {
+                  "const": "auto"
+                },
+                {
+                  "$ref": "#/$defs/shape"
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "$ref": "#/$defs/shape"
+                  }
+                }
+              ],
+              "description": "the optimizer sees the pour: where the riser or gate joins the part (shapes), or 'auto' (where the metal freezes last). Material is then placed so every region freezes toward the feeder and none is cut off as a hot spot (needs process)"
+            },
             "risers": {
               "type": "boolean",
               "description": "true (default): size and place risers until the part is sound; false: report the part as poured alone"

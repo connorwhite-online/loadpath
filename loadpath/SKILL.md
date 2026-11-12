@@ -480,6 +480,13 @@ Not every part is printed. Leave `process` out and say how it is made:
   `loadpath slipcast cup.stl --body porcelain --wall 3` (MCP `loadpath_slipcast`)
   gives minutes in the plaster mold, the wall the shape really gets, shrinkage
   and mold scale, kiln sag, and the mold halves. docs/CASTING.md.
+- **Designed to be fed**: add `"feed"` to `casting` (the shapes where the riser
+  or gate joins, or `"auto"`) and the optimizer places metal so every region
+  freezes toward the feeder: the design is poured every few iterations and
+  material moves to the necks that cut a region off. Use it when
+  `castability.shrinkage.hotSpots` shows a cavity a riser cannot reach. It
+  costs stiffness (23% on the docs' example) and cannot fix a feed that needs
+  more metal than the volume allows; then add a riser at the hot spot instead.
 - **Milled**: `"milling": {"axes": 3, "directions": ["+z"], "toolDiameter": 6}`
   (`axes: 5` cuts from all six sides, `2.5` puts pocket floors every `stepDown`).
   Every void must be reachable by a cutter coming straight in from a listed

@@ -72,6 +72,8 @@ class Domain:
     # aero.rotors: the drag of the design in each rotor's stream as a cost in
     # the material budget (aero.BlockageCost), or None
     blockage: object = None
+    # castfeed.FeedTerm: the pour as the optimizer sees it (casting.feed), or None
+    feeding: object = None
     # the vibration block as optimizer constraints (modalopt.ModalModel), or None
     modal: object = None
     # impact load cases: [(case index, spec.LoadCase)], and the material's modulus and density for them
@@ -982,6 +984,9 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         from .aero import BlockageCost
 
         dom.blockage = BlockageCost(dom, aero.rotors, float(study.material.density), aero.grams_per_newton)
+    from .castfeed import study_feed
+
+    dom.feeding = study_feed(study, mesh, dom.dims, pitch)
     from .modalopt import modal_model
 
     dom.modal = modal_model(study, dom)
