@@ -198,3 +198,19 @@ def test_bad_stock_is_reported_plainly():
             assert word in str(exc), (word, str(exc))
         else:
             raise AssertionError(f"accepted a bad {word}")
+
+
+def test_span_holds_on_a_member_of_any_length():
+    """A default span is rounded for the study's raw: it must still lie on a
+    member whose length does not round (a diagonal tube, 43.5436 mm)."""
+    d = {"designSpace": [{"type": "box", "min": [-20, -20, -10], "max": [60, 60, 10]}],
+         "stock": [{"id": "t", "type": "tube", "od": 8, "wall": 1, "from": [0.0, 0.0, 0.0], "to": [30.79, 30.79, 0.0]}],
+         "supports": [{"shape": {"type": "box", "min": [-20, -20, -10], "max": [-18, 60, 10]}}],
+         "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [58, -20, -10], "max": [60, 60, 10]},
+                                                "force": [0, 0, -5]}]}],
+         "material": "pa12", "goal": {"volumeFraction": 0.4}}
+    st = study_from_dict(d)
+    m = st.stock[0]
+    assert m.joints[0].span[1] <= m.length
+    again = study_from_dict(copy.deepcopy(st.raw))
+    assert again.stock[0].joints[0].span == m.joints[0].span

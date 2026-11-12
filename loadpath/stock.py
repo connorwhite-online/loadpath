@@ -747,7 +747,8 @@ def _design_spans(m: Member, design, wall: float, step: float = 0.5) -> list:
         if start is not None and (not v or i == len(on) - 1):
             end = s[i] + half if v else s[i] - half
             if end - start >= 2.0:
-                spans.append((float(round(start, 3)), float(round(end, 3))))
+                # (rounded for the study's raw, and never past the member's own ends)
+                spans.append((float(max(round(start, 3), 0.0)), float(min(round(end, 3), m.length))))
             start = None
     return spans
 
@@ -889,7 +890,7 @@ def parse_stock(items, printed: str = "pla", design=None, member_size: float = 1
                     s0, s1 = float(span[0]), float(span[1])
                 except (TypeError, ValueError, IndexError):
                     raise ValueError(f"{jl}.span is [from, to] in mm along the member from its `from` end") from None
-                if not (0 <= s0 < s1 <= m.length + 1e-6):
+                if not (0 <= s0 < s1 <= m.length + 1e-3):
                     raise ValueError(f"{jl}.span {list(span)} must lie on the member (0 to {m.length:g} mm)")
                 j.span = (s0, min(s1, m.length))
             elif explicit and len(joints_in) > 1:
