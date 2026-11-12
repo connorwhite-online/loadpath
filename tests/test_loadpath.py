@@ -1185,6 +1185,33 @@ def test_printed_search_does_not_amplify_rounding():
     assert 0 < apart < 1e-6, apart                          # before: 2e-4 and growing
 
 
+def test_last_stage_ends_on_its_schedule(monkeypatch):
+    """The sharpest projection stage ends on its schedule like the ones
+    before it. Waiting for the compliance to stall ended two runs a last bit
+    apart at different iterations, and the iterations it waited through
+    bought no strength a larger volume fraction does not (CONVERGENCE.md,
+    cause 5). So two runs a rounding error apart take the same number of
+    iterations and deliver the same volume, and the volume multiplier, which
+    is bracketed from the last step's, costs a handful of filter passes."""
+    from loadpath.simp import _beta_hold
+    s = study_from_dict(LUG)
+    d = build_domain(s)
+    opts = SimpOptions(volume_fraction=0.35, filter_radius=filter_radius(d, None), max_iterations=200)
+    runs = []
+    for seed in ("1:1e-15", "2:1e-15"):
+        monkeypatch.setenv("LOADPATH_JITTER", seed)
+        runs.append(optimize(d, 0.39, opts))
+    monkeypatch.delenv("LOADPATH_JITTER")
+    a, b = runs
+    assert a.converged and a.iterations == b.iterations < 200
+    last = [h for h in a.history if h["beta"] == opts.beta_max]
+    assert len(last) == _beta_hold(opts, opts.beta_max), len(last)
+    design = ~d.preserve
+    assert abs(a.xphys[design].mean() - b.xphys[design].mean()) < 1e-6
+    assert abs(a.history[-1]["volume"] - 0.35) < 1e-9
+    assert np.median([h["volumeSolves"] for h in a.history[1:]]) <= 12
+
+
 def test_voxelize_keeps_a_whole_grid_box():
     """A box a whole number of cells across voxelizes to exactly that many:
     (hi - lo) / pitch read just over n at 107 of 400 pitches, and the

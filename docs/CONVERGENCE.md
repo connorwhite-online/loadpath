@@ -10,8 +10,9 @@ differences in the part.
 This page records what was amplifying them, how each cause was isolated, what
 replaced it, and how to measure it again. The short version: three places in
 `simp.optimize` took a step that the physics of the problem did not support,
-and a fourth stopped a calculation before its answer was settled. Each one
-is now sized from a quantity the run measures.
+two stopped a calculation before its answer was settled, and the search
+stepped on a stress reading that was not the one its parts are confirmed
+with. Each is now sized from a quantity the run measures.
 
 ## How to measure it
 
@@ -68,9 +69,11 @@ step a staircase in its inputs: a 1e-10 difference in a sensitivity either
 leaves the multiplier alone or moves every free cell by 5e-5. Two runs that
 were 1e-10 apart were 5e-5 apart one iteration later.
 
-Bisection now only brackets the root. Illinois false position then lands on
-it to 1e-13 of the target (`simp.VOLUME_RTOL`), which costs 3 to 5 more
-evaluations of the projection and no solves.
+The multiplier is now solved to 1e-13 of the target (`simp.VOLUME_RTOL`).
+It moves little from one iteration to the next, so the solve brackets
+outward from the last one and Illinois false position lands on the root:
+about 8 evaluations of the filter and projection a step where the bisection
+took 24, and no solves. (The bisection was 9% of a hook run.)
 
 ## Cause 3: the overhang filter's kink on a grey design
 
@@ -121,31 +124,82 @@ mesh, check), two runs one rounding error apart:
 | 1e-5 | 6e-9 | 0.06% | 0.05% | about 1.4 |
 | 1e-7 | 2e-10 | 0.04% | 0.04% | 1.7 |
 
-Below 1e-4 the tolerance is no longer what separates the runs (next
-section), so that is where it sits. An exact direct solve would give the
-tightest row without the iterations, where memory allows one.
+Below 1e-4 the tolerance is no longer what separates the runs (cause 5).
+Where the system fits in memory the solve is now a factorization, exact to
+rounding, which gives the tightest row without the iterations and is the
+faster solve as well (BENCHMARKS.md, solver routing).
 
-## What is left: the sharpest stage
+## Cause 5: the run stopped when its compliance stalled
 
-At beta 32 a boundary cell's projected density changes 16 times as fast as
-its design variable, and whichever tolerance the solves use, a difference
-of 1e-9 entering that stage leaves it near 3e-4 in compliance. A shorter
-step (aiming at 0.7 or 0.5 of the measured one) and a wider overhang
-corner were both tried there and neither changes it. The stop rule then
-adds its own share: the run ends when six iterations bought less than
-0.2%, the design is still creeping when it does, and two runs 3e-4 apart
-can stop a few iterations apart. Together that is the 0.1% in delivered
-mass in the table. It is 30 times smaller than what the search steps on
-(the hook's safety factor read 3.32 on one run and 2.13 on another before;
-the same trial now reads 2.034 and 2.033), but it is not zero.
+The sharpest stage ran until six iterations bought less than 0.2%. Two
+things are wrong with that. The design is still creeping when the rule
+fires, so two runs a last bit apart fire it at different iterations: on the
+hook's first trial 83 against 85, 0.02% apart in mass and 0.1% in safety
+factor, with every other cause above already fixed and the solves exact.
+And the iterations it waits through buy nothing. Cut at 35, 40, 50, 60 and
+75 iterations the same hook trial read safety factor 1.97, 2.01, 2.10, 2.14
+and 2.16 at 32.6, 32.8, 33.1, 33.4 and 33.6 g: one line of strength against
+mass. The long tail only brings the delivered volume up to the asked one,
+which the search does more cheaply by asking for a larger fraction.
+
+The sharpest stage now ends on its schedule like every stage before it,
+once the volume is on target. The same two runs: 40 iterations each, mass
+equal to 8 digits, safety factor to 16. A problem with a weight still
+climbing (buckling, vibration, warp, centre of mass, casting feed, a
+maximum member, a temperature swing) is not at rest on a schedule and
+keeps the stall rule.
+
+## Cause 6: the search stepped on a different stress than the check that confirms it
+
+The search sizes each trial from the voxel check and confirms the part it
+picks on tetrahedra. The tetrahedra read stress averaged over the
+material's length (STRESS-READ.md); the voxel check read the peak at a
+node. A point peak on a stair-stepped boundary moves with the layout, the
+average does not, so the ratio between the two checks was not a constant
+the search could calibrate once: over seven hook designs of one search the
+point reading was 0.76 to 0.92 of the tetrahedra's, and the calibration
+factor moved from 1.35 to 1.71 between two designs. A search stepping on
+that lands on a different fraction every time one design's ratio moves.
+
+Two changes make the two checks one measurement:
+
+- `verify._MaterialAverage` averages the voxel stress tensor over the same
+  length before any criterion is taken (von Mises, the layer bond,
+  submodels). `LOADPATH_STRESS_READ=point` restores the old reading.
+- The voxel check left out one cell round each support, the tetrahedra
+  twice their element size. The voxel peak sat in the strip the tetrahedra
+  left out. `study.contact_band` is now the one band for every check.
+
+With both, the voxel reading is 0.92 to 1.02 of the tetrahedra's over the
+same seven designs, and the hook's three searches (three grids 1% apart in
+pitch) confirm at 40.1, 40.0 and 40.6 g. Main's three, same machine, same
+day: 36.8, 39.9 and 42.6 g.
+
+## What is left: which layout a fraction lands on
+
+Parts of one mass differ in strength by which design the fraction started
+from. Fresh hook designs on main's code had strength per mass squared
+(x1000) of 2.14, 2.44 and 1.84 at 20, 22.5 and 26%, and 1.51 warm-started
+from a neighbour. The lightest hook main finds (36.8 g, with 29% to spare
+on the tetrahedra) is one such draw; the other two grids did not repeat it.
+The repeatable search lands on one layout every time (1.9 to 2.0), which is
+the middle of main's draws, not the best.
+
+The hook breaks at its layer bond, and the optimizer minimizes compliance
+with an isotropic stiffness: it cannot tell a member loaded across the
+layers from one loaded along them. Giving the design stiffness the bond's
+weakness across the layers (`process.anisotropic: "bond"`) produced hooks
+16 to 25% stronger at equal mass in three of six tries, and in the other
+three a support column thinner than the minimum member that the delivery
+step removes, leaving the part above it unprintable. Closing that is the
+way to the light hooks without drawing for them.
 
 ## What it costs
 
-The measured step is smaller than the old fixed one in the sharp stages, so
-a run takes more optimizer iterations: 94 against 60 on the hook, 96 against
-70 on the bell crank. The designs it reaches carry the asked volume to
-rounding; the old runs under-delivered about 2%, which read as lighter parts
-with correspondingly less stiffness.
+Nothing. The whole hook search (three grids, every trial, every
+confirmation) took 1298 s on the new code and 2336 s on main, side by side
+on one machine. A trial runs 40 iterations where main ran 49 and the first
+version of these fixes 87.
 
 ## Where the step is still scheduled
 

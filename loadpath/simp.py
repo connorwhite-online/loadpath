@@ -1132,7 +1132,19 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     # along a step can be read, and with the weight at its cap the measured
     # step is so short the limit is still unmet after 200 iterations.
     measured = opts.adaptive_move and thick is None
-    scheduled = (measured and os.environ.get("LOADPATH_STOP", "hold") == "hold"
+    # The sharpest stage ends on its schedule like every stage before it,
+    # for the plain compliance and volume problem. Its iterations past the
+    # schedule were measured on the printed hook: cut at 35 to 75 iterations
+    # the part read safety factor 1.97 to 2.16 at 32.6 to 33.6 g, all on one
+    # line of strength against mass, so they buy nothing a larger volume
+    # fraction does not; and a stop that waits for the compliance to stall
+    # ends two runs a last bit apart at different iterations (83 against 85,
+    # 0.1% apart in strength; on the schedule, equal to 8 digits). A problem
+    # with a weight still climbing (buckling, vibration, warp, centre of
+    # mass, casting feed, a maximum member, a temperature swing) is not at
+    # rest on a schedule and keeps the stall rule.
+    # (LOADPATH_STOP=stall restores the stall rule, to measure against.)
+    scheduled = (measured and os.environ.get("LOADPATH_STOP", "hold") != "stall"
                  and not (heat is not None and heat.swing_limit is not None)
                  and buck is None and modal is None and domain.warp is None and com_cfg is None and feed_t is None)
     mu = 0.0
@@ -1728,8 +1740,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             # test beam's compliance went flat at iteration 65 with the
             # flanges still 8 mm against a 5 mm limit)
             mm_over = excess is not None and (over > 0.05 or excess > 0.05)
-            if scheduled:
-                if since_beta >= _beta_hold(opts, beta) and vol_held:
+            if scheduled and vol_held:
+                if since_beta >= _beta_hold(opts, beta):
                     converged = True
                     break
             elif since_beta >= w and len(history) > w and not mm_over and not feed_state.get("over"):
