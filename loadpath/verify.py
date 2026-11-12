@@ -223,10 +223,15 @@ class _MaterialAverage:
     starts, tets 2.0 and 3.8), and a search stepping on it lands somewhere
     else on every run.
 
-    Each cell is sampled at its eight quarter points (the tensor trilinear
-    between its corners' nodal values), each weighted by an eighth of the
-    cell's filled volume, so the ball is cut by the part's surface on its
-    own. Built once per grid as one sparse operator; apply with ()."""
+    The material in the ball is sampled on the cells: at a cell's eight
+    quarter points while the ball is under three cells across (the tensor
+    trilinear between its corners' nodal values), at its centre on a finer
+    grid, and by blocks of cells on a grid finer still, so a ball holds on
+    the order of a hundred samples whatever the grid (a 0.3 mm grid under a
+    0.86 mm radius otherwise holds 900 a node, and the operator of a
+    million-node check does not fit in memory). Each sample carries its
+    filled volume, so the ball is cut by the part's surface on its own.
+    Built once per grid as one sparse operator; apply with ()."""
 
     def __init__(self, node_xyz, enode, fill, pitch: float, radius: float):
         import scipy.sparse as sp
@@ -235,28 +240,47 @@ class _MaterialAverage:
         from .fem import CORNERS
 
         n, ne = len(node_xyz), len(enode)
-        q = 0.25 + 0.5 * CORNERS                                  # the 8 samples of the unit cell
-        # trilinear weight of each corner at each sample: (8 samples, 8 corners)
-        wts = np.prod(np.where(CORNERS[None, :, :] > 0.5, q[:, None, :], 1.0 - q[:, None, :]), axis=2)
         f = np.ones(ne) if fill is None else np.asarray(fill, float)
         live = np.nonzero(f > 0)[0]
+        rho = radius / pitch
+        if rho <= 1.5:
+            q = 0.25 + 0.5 * CORNERS                              # the 8 samples of the unit cell
+        else:
+            q = np.full((1, 3), 0.5)
+        ns = len(q)
+        # trilinear weight of each corner at each sample: (samples, 8 corners)
+        wts = np.prod(np.where(CORNERS[None, :, :] > 0.5, q[:, None, :], 1.0 - q[:, None, :]), axis=2)
         xs = np.einsum("sk,ekd->esd", wts, node_xyz[enode[live]]).reshape(-1, 3)
-        w = np.repeat(f[live] * pitch ** 3 / 8.0, 8)
+        w = np.repeat(f[live] * pitch ** 3 / ns, ns)
         # samples from nodal values: (samples, nodes)
         rows = np.repeat(np.arange(len(xs)), 8)
-        cols = np.repeat(enode[live], 8, axis=0).ravel()          # per element: its 8 samples x its 8 corners
+        cols = np.repeat(enode[live], ns, axis=0).ravel()         # per element: its samples x its 8 corners
         vals = np.tile(wts.ravel(), len(live))
         interp = sp.csr_matrix((vals, (rows, cols)), shape=(len(xs), n))
+        blk = int(np.ceil(rho / 3.3))
+        if blk > 1 and len(xs):
+            # blocks of blk^3 cells: one sample at the block's filled centroid
+            key = np.floor((xs - xs.min(axis=0)) / (blk * pitch) + 1e-9).astype(np.int64)
+            _, gid = np.unique(key, axis=0, return_inverse=True)
+            gid = np.asarray(gid).ravel()
+            agg = sp.csr_matrix((w, (gid, np.arange(len(xs)))), shape=(int(gid.max()) + 1, len(xs)))
+            wb = np.asarray(agg.sum(axis=1)).ravel()
+            xs = (agg @ xs) / wb[:, None]
+            interp = (sp.diags(1.0 / wb) @ agg @ interp).tocsr()
+            w = wb
         pairs = cKDTree(node_xyz).sparse_distance_matrix(cKDTree(xs), radius, output_type="coo_matrix")
         a = sp.csr_matrix((w[pairs.col], (pairs.row, pairs.col)), shape=(n, len(xs)))
         tot = np.asarray(a.sum(axis=1)).ravel()
         # (a node whose ball holds no sample, at the tip of a sliver: its own value)
         self.lone = tot <= 0
-        self.op = (sp.diags(1.0 / np.where(self.lone, 1.0, tot)) @ a @ interp).tocsr()
+        # two factors, applied in turn: their product has a row entry for
+        # every node in the ball, the factors one for every sample
+        self.ball = (sp.diags(1.0 / np.where(self.lone, 1.0, tot)) @ a).tocsr()
+        self.interp = interp
         self.radius = float(radius)
 
     def __call__(self, sig):
-        out = np.asarray(self.op @ sig)
+        out = np.asarray(self.ball @ (self.interp @ sig))
         if self.lone.any():
             out[self.lone] = sig[self.lone]
         return out

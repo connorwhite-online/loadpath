@@ -200,7 +200,17 @@ def test_voxel_reading_is_the_same_average():
     fill = np.ones(len(enode)); fill[0] = 0.0
     hot = np.zeros((len(xyz), 6)); hot[enode[0], 0] = 100.0
     cut = _MaterialAverage(xyz, enode, fill, 1.0, 1.6)(hot)
-    assert cut[:, 0].max() < avg(hot)[:, 0].max()
+    assert cut[:, 0].sum() < avg(hot)[:, 0].sum()
+    # a grid much finer than the ball samples it by blocks of cells: the
+    # same average, and an operator that still fits (0.9 thousand entries a
+    # node otherwise)
+    xyz, enode = _grid((40, 20, 20), 0.15)
+    fine = _MaterialAverage(xyz, enode, None, 0.15, 0.86)
+    assert (fine.ball.nnz + fine.interp.nnz) / len(xyz) < 150
+    quad = np.zeros((len(xyz), 6)); quad[:, 0] = (xyz[:, 1] - 1.5) ** 2
+    inner = np.all((xyz > 1.0) & (xyz < np.array([6, 3, 3]) - 1.0), axis=1)
+    # a ball of radius r reads a quadratic r^2 / 5 above its centre value
+    assert np.allclose(fine(quad)[inner, 0], quad[inner, 0] + 0.86 ** 2 / 5, atol=0.03)
 
 
 def test_one_contact_band_for_every_check():
