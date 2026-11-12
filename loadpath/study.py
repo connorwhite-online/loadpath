@@ -453,7 +453,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     note({"stage": "verify", "volumeFraction": vf})
     try:
         report = verify_part(study, mesh, max_cells=verify_cells, min_pitch=0.5 * domain.pitch,
-                             contact_band=domain.pitch, refine=refine, max_pitch=domain.pitch)
+                             contact_band=contact_band(study, domain), refine=refine, max_pitch=domain.pitch)
     except (RuntimeError, ValueError) as exc:
         # one outcome verification cannot solve (a piece the supports do
         # not hold) is a failed outcome, not a failed study: the search
@@ -506,6 +506,22 @@ def closed_bore_warning(closed: list) -> str:
             "part sits in that space (a bearing in its pocket, an insert, a screw, a cable), set "
             "\"cutsPreserve\": true on it.")
     return msg + " Extend the keep-out over the head and the driver's reach if this repeats."
+
+
+def contact_band(study: Study, domain: Domain) -> float:
+    """How far from an applied load or a support stress is left out of the
+    peak, mm: nearer, the peak is the edge of an idealized rigid support or
+    patch, not the part. One distance for every check of a study's parts
+    (the search's voxel reading, the finer-grid confirm, the tetrahedral
+    cross-check), so that each judges the same material. (The voxel checks
+    left out one design cell and the tetrahedral one two elements: on a
+    printed hook the voxel peak sat 1.9 mm from the wall, inside the 3 mm the
+    tetrahedra left out, and read 0.82 of them; at one band 0.92, and
+    0.92 to 1.02 over seven designs.)"""
+    from .crosscheck import element_size
+
+    return max(2.0 * element_size(study), 1.5 * domain.pitch)
+
 
 def _confirm_on_tets(study: Study, outcomes: list) -> bool:
     """goal.confirm says tet (or auto, and the cross-check covers it)."""
@@ -2080,7 +2096,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         mesh, rinfo = reconstruct(study, domain, xphys, ReconstructOptions())
         emit({"stage": "verify", "volumeFraction": vf})
         try:
-            report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch,
+            report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=contact_band(study, domain),
                                  max_pitch=domain.pitch)
         except (RuntimeError, ValueError) as exc:
             # one outcome verification cannot solve (or a load pad the
@@ -2260,7 +2276,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         for q in outcomes:
             if q.volume_fraction > o.volume_fraction:
                 prefetch.drop(q)
-        prefetch.submit(study, o, max(2.0 * element_size(study), 1.5 * domain.pitch))
+        prefetch.submit(study, o, contact_band(study, domain))
 
     def _confirm(o: Outcome) -> float:
         # a replayed design's mesh is the one confirmed before: rescale that reading
@@ -2277,7 +2293,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 cc = max(cc, int(1.5 * ac))
                 ap = o.report.get("analysisPitch")
                 rep = verify_part(study, o.mesh, max_cells=cc, min_pitch=0.3 * domain.pitch,
-                                  contact_band=domain.pitch,
+                                  contact_band=contact_band(study, domain),
                                   max_pitch=min(domain.pitch, 0.9 * ap) if ap else domain.pitch)
             except RuntimeError as exc:
                 o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
@@ -2326,7 +2342,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         # edge of an idealized rigid support, not the part. (The MBB beam's
         # read 23-26 MPa there on three meshes of one part, and 13.7-13.9
         # MPa at its real peak mid-span beyond the band.)
-        band = max(2.0 * element_size(study), 1.5 * domain.pitch)
+        band = contact_band(study, domain)
         job = getattr(o, "tet_job", None)     # a constrained part's, started beside its voxel check
         o.tet_job = None
         try:
@@ -2498,9 +2514,9 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             from .crosscheck import element_size
 
             job = SimpleNamespace(mesh=mesh)
-            prefetch.submit(study, job, max(2.0 * element_size(study), 1.5 * domain.pitch))
+            prefetch.submit(study, job, contact_band(study, domain))
         try:
-            report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch,
+            report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=contact_band(study, domain),
                                  max_pitch=domain.pitch)
         except BaseException:
             if job is not None:

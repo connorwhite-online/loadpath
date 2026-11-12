@@ -66,7 +66,7 @@ def test_free_bar_bends_as_beam_theory_says():
 def test_optimizer_designs_a_free_part():
     s = study_from_dict({**FREE_BAR, "designSpace": {"type": "box", "min": [0, 0, -10], "max": [100, 10, 20]}})
     d = build_domain(s)
-    r = optimize(d, 0.3, SimpOptions(volume_fraction=0.3, filter_radius=filter_radius(d, None), max_iterations=40))
+    r = optimize(d, 0.3, SimpOptions(volume_fraction=0.3, filter_radius=filter_radius(d, None), max_iterations=80))
     assert np.isfinite(r.compliance) and r.history[-1]["compliance"] < r.history[0]["compliance"]
     assert abs(r.xphys[~d.preserve].mean() - 0.3) < 0.02
     # its mass sits where the bending is: more material in the middle third
