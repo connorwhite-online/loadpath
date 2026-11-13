@@ -910,62 +910,73 @@
  {
   "case": "robot-wrist-link-mjf",
   "tier": "full",
-  "pass": true,
+  "pass": false,
   "best": {
-   "volumeFraction": 0.03366300784165278,
-   "mass": 30.747691593669163,
-   "massReduction": 0.960228330373222,
-   "safetyFactor": 2.1857266312746018,
-   "p5Member": 3.0246896764905986,
-   "minMember": 1.296295575638828,
-   "creaseLength": 17.91597826021748,
-   "p5Thickness": 2.793039212111272,
-   "p1Thickness": 1.8724938048790833,
-   "deflection": 2.398114004103253,
-   "iterations": 41,
-   "optimizerSeconds": 947.4103157520294,
-   "bucklingFactor": 7.630643823166
+   "volumeFraction": 0.0675,
+   "mass": 45.79542939800432,
+   "massReduction": 0.940764311269179,
+   "safetyFactor": 11.68233067801046,
+   "p5Member": 1.833360074363167,
+   "minMember": 1.833360074363167,
+   "creaseLength": 283.9349065945671,
+   "p5Thickness": 2.9770902045478462,
+   "p1Thickness": 2.129419063323468,
+   "deflection": 0.3762542682511185,
+   "iterations": 54,
+   "optimizerSeconds": 89.16908550262451,
+   "bucklingFactor": 22.775363720079426
   },
   "pareto": {
-   "points": 3,
+   "points": 5,
    "front": [
     [
-     30.747691593669163,
-     2.1857266312746018
+     39.02631617780754,
+     4.651807594369509
     ],
     [
-     51.80471167785904,
-     3.7833718108581365
+     45.79542939800432,
+     11.68233067801046
     ],
     [
-     56.08727374574313,
-     4.112694246665795
+     65.18934149231886,
+     14.695038721363073
+    ],
+    [
+     92.12670218601534,
+     18.224655210071536
     ]
    ],
-   "solidMass": 773.1053758167321,
+   "solidMass": 773.1053758167322,
    "target": 2.0,
-   "massAtTarget": 30.747691593669163,
+   "massAtTarget": 39.02631617780754,
    "bracketed": false,
-   "hypervolume": 1.895149040560919
+   "hypervolume": 1.8990401117400615
   },
   "checks": [
    {
     "check": "mass",
-    "value": 30.747691593669163,
+    "value": 45.79542939800432,
     "op": "<=",
     "limit": 46.0,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 2.1857266312746018,
+    "value": 11.68233067801046,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
+    "check": "clearanceUse",
+    "value": 0.98008208273194,
+    "op": "<=",
+    "limit": 1.0,
+    "pass": true
+   },
+   {
     "check": "keepOutIntrusion",
-    "value": -5.5168485746511994e-14,
+    "value": 0.0036265972597211257,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -986,17 +997,17 @@
    },
    {
     "check": "member",
-    "value": 2.793039212111272,
+    "value": 2.9770902045478462,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    },
    {
     "check": "processWall",
-    "value": 2.052271604537964,
+    "value": 0.591,
     "op": ">=",
     "limit": 0.8,
-    "pass": true
+    "pass": false
    },
    {
     "check": "trappedVolume",
@@ -1014,19 +1025,17 @@
    },
    {
     "check": "buckling",
-    "value": 7.630643823166,
+    "value": 22.775363720079426,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    }
   ],
-  "seconds": 9086.637646913528,
+  "seconds": 4205.221641778946,
   "methodChoice": {
-   "method": "constrained",
-   "stressUtilization": 0.18305478222200763,
-   "searchMass": 32.09432820900008,
-   "constrainedMass": 30.747691593669163,
-   "reason": "stress utilization 0.18: constrained 30.7 g against search 32.1 g"
+   "method": "search",
+   "stressUtilization": 0.27473748058793107,
+   "reason": "the constrained method does not apply"
   },
   "process": {
    "type": "mjf",
