@@ -1709,8 +1709,10 @@ def _deflection_bound(study: Study, rep: dict):
     constrained method, which holds only the limit, wins; the arm link's two
     cases both sit at the limit (0.008). The upper arm reads 0.37 (its axial
     push binds with 16% of the compliance), so the gap there is in the
-    search's weighting of its cases, not in which method runs. Reported in
-    methodChoice.idleCompliance; not used to decide."""
+    search's weighting of its cases, not in which method runs: the search
+    now weights them by what binds (_binding). Reported in
+    methodChoice.idleCompliance (of the search's last part, after that
+    weighting); not used to decide."""
     goal = study.goal
     cases = [c for c in rep.get("cases") or [] if c.get("deflection") is not None]
     if not goal.max_deflection or not cases:
@@ -1725,6 +1727,68 @@ def _deflection_bound(study: Study, rep: dict):
     bound = worst >= 0.85 * goal.max_deflection and (
         goal.safety_factor is None or (sf is not None and sf >= _DEFLECTION_ROOM * goal.safety_factor))
     return bound, idle
+
+
+def _binding(study: Study, domain: Domain, src) -> tuple | None:
+    """SimpOptions.binding for a search part: how close each load case of
+    the verified outcome `src` came to its limit, per unit of its compliance.
+
+    The search minimized the weighted sum of the cases' compliances, while
+    its limits hold each case on its own: the worst case's deflection
+    against goal.maxDeflection, each case's safety factor against the
+    goal's. A case far under both still drew material: the motor mount's
+    belt-side push carried 46% of the compliance at 0.6 of the belt-up
+    deflection, the robot arm's upper arm spent 84% on cases its axial push
+    out-binds (methodChoice.idleCompliance 0.19 and 0.37). Case i's binding
+    ratio is b_i = max(deflection_i / maxDeflection, safetyFactor /
+    (its safety factor x its case factor)), the per-case safety factors
+    scaled to the reported one (a tetrahedral confirm reads the part, the
+    cases are the voxel ones); the optimizer carries b_i in proportion to
+    the case's compliance C_i (a deflection under a point load is C_i over
+    the force exactly; a peak stress follows it as the members it loads
+    thin or thicken) and minimizes a smooth maximum of them.
+
+    None, so the plain weighted sum: one case; no deflection or strength
+    goal; no verified readings for every case; a margin set by something
+    other than the cases' deflections and strengths (buckling, durability,
+    vibration, warp); or LOADPATH_BINDING=0."""
+    g = study.goal
+    if os.environ.get("LOADPATH_BINDING", "1") == "0" or src is None:
+        return None
+    names = list(domain.case_names)
+    cc = (src.optimizer or {}).get("caseCompliance")
+    rep = src.report or {}
+    cases = {c.get("name"): c for c in rep.get("cases") or []}
+    if len(names) < 2 or cc is None or len(cc) != len(names) or (g.safety_factor is None and not g.max_deflection) \
+            or not all(n in cases for n in names) or rep.get("margin") is None:
+        return None
+    k_sf = 1.0
+    if g.safety_factor is not None:
+        each = [float(cases[n].get("safetyFactor") or 0.0) * study.case_factor(n) for n in names]
+        if min(each) <= 0 or not rep.get("safetyFactor"):
+            return None
+        k_sf = float(rep["safetyFactor"]) / min(each)
+    b = []
+    for n in names:
+        c = cases[n]
+        r = 0.0
+        if g.max_deflection and c.get("deflection") is not None:
+            r = float(c["deflection"]) / g.max_deflection
+        if g.safety_factor is not None:
+            r = max(r, g.safety_factor / (float(c["safetyFactor"]) * study.case_factor(n) * k_sf))
+        b.append(r)
+    b = np.asarray(b)
+    c_v = np.asarray(cc, float)
+    if not (b.max() > 0 and (c_v > 0).all()):
+        return None
+    if float(rep["margin"]) < (1.0 - 1e-6) / b.max():
+        return None
+    w0 = np.asarray(domain.case_weights, float)
+    a = w0 * b
+    p = SimpOptions.binding_power
+    j = a.max() * float(np.sum((a / a.max()) ** p)) ** (1.0 / p)
+    beta = a / c_v * float(w0 @ c_v) / j
+    return tuple(float(v) for v in beta)
 
 
 def _makeable(study: Study, pick: Outcome, rc: StudyResult, search_mass: float):
@@ -2228,10 +2292,15 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             warp = None
         elif replay is None:
             breq = buck_state["sf"] * buck_state["kb"] if buck_state["on"] else None
+            # what binds, read on the verified design this one starts from
+            # (else on the nearest fraction's): none on the search's first part
+            src = next((q for q in outcomes if x0 is not None and q.x is x0), None) or \
+                min(outcomes, key=lambda q: abs(q.volume_fraction - vf), default=None)
             res = optimize(domain, study.elastic(design=True),
                            SimpOptions(volume_fraction=vf, filter_radius=radius,
                                        max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
                                        buckling=breq, buckling_modulus=study.material.E,
+                                       binding=_binding(study, domain, src),
                                        **_making(study)),
                            on_iter=on_iter, should_stop=should_stop)
             x, xphys = res.x, res.xphys

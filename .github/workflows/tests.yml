@@ -67,7 +67,7 @@ jobs:
           - group: study           # ~22 min there
             files: >-
               tests/test_ci_groups.py tests/test_recall.py tests/test_escape.py tests/test_contact.py
-              tests/test_fields.py tests/test_directions.py tests/test_agent_path.py
+              tests/test_fields.py tests/test_directions.py tests/test_binding.py tests/test_agent_path.py
               tests/test_brief_kinds_multimat.py tests/test_fits.py tests/test_process.py tests/test_narrowband.py
               tests/test_multimat_fixes.py tests/test_coopt.py tests/test_assembly.py tests/test_benchmarks.py
             pytest: >-

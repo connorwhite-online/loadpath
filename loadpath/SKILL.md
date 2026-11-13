@@ -483,7 +483,13 @@ buckling, printability) you can report to the user.
   search's does (walls, trapped powder, warp): the lightest that does is
   kept, and `methodChoice.constrainedUnmakeable` lists the ones set aside.
   `methodChoice.idleCompliance` is the share of the search's compliance
-  spent on load cases far under the worst case's deflection.
+  spent on load cases far under the worst case's deflection. With two or
+  more load cases the search weights them by what binds: from its second
+  part on, each case counts by how close it came to its limit on the
+  verified part it starts from (deflection over `maxDeflection`, or the
+  goal's safety factor over the case's), as a smooth maximum, so a case far
+  under its limit no longer draws material (robot upper arm 200 to 186 g,
+  cast arm link 68 to 64 g). `LOADPATH_BINDING=0` restores the plain sum.
   Brackets with one
   hot corner come out 20-55% lighter that way, at up to 4.5x the time.
   `"search"` or `"constrained"` force one.

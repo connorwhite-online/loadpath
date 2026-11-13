@@ -569,6 +569,31 @@ class SimpOptions:
     # adaptive buckling penalty the optimality criteria step on.
     buckling: float | None = None
     buckling_modulus: float = 1.0
+    # What binds, per load case (study._binding): b_i = binding[i] * C_i is
+    # how close case i is to its limit (its deflection over the goal's, or
+    # the goal's safety factor over its own, whichever is nearer), read on a
+    # verified design and carried through this run in proportion to the
+    # case's compliance C_i. The objective is then the p-norm of the b_i
+    # (binding_power p), a smooth maximum: the stiffness goes where the
+    # limit binds instead of to a case far under it. Scaled so that on the
+    # design it was read from it equals that design's weighted compliance.
+    # None: the weighted sum of compliances.
+    binding: tuple | None = None
+    binding_power: float = 8.0
+
+
+def binding_weights(binding, case_c, power: float) -> tuple[np.ndarray, float]:
+    """The case weights that make sum_i w_i C_i the p-norm J = (sum_i
+    (beta_i C_i)^p)^(1/p) of the cases' binding ratios, and its gradient
+    sum_i w_i dC_i/dx: w_i = beta_i (beta_i C_i / J)^(p-1). Returns (w, J)."""
+    beta = np.asarray(binding, float)
+    b = beta * np.maximum(np.asarray(case_c, float), 0.0)
+    top = float(b.max()) if len(b) else 0.0
+    if not top > 0.0:
+        return beta.copy(), 0.0
+    t = b / top
+    j = top * float(np.sum(t ** power)) ** (1.0 / power)
+    return beta * (b / j) ** (power - 1.0), j
 
 
 @dataclass
@@ -1115,6 +1140,10 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
     weights = np.asarray(domain.case_weights, float)
     weights0 = weights.copy()
     impacts = getattr(domain, "impacts", None) or []
+    # what binds (SimpOptions.binding): not with heat (its own sensitivities)
+    # or impacts (whose weights are the stopping force's)
+    bind = opts.binding if opts.binding is not None and len(opts.binding) == len(weights) \
+        and domain.thermal is None and not impacts else None
     history = []
     c0 = None
     converged = False
@@ -1301,7 +1330,10 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
                                                         layout, spreads)
             if accs is not None:
                 dc_xp += _relief_heat_grad(domain, heat, heat_state, xe, us, accs, layout, weights)
-        for ci, wc in enumerate(collapse(rhs, layout, us, spreads) if heat is None else ()):
+        wcs = collapse(rhs, layout, us, spreads) if heat is None else ()
+        if bind is not None:
+            weights, _ = binding_weights(bind, [wc.compliance for wc in wcs], opts.binding_power)
+        for ci, wc in enumerate(wcs):
             # the worst direction's sensitivity is its own (envelope theorem),
             # softened over near-ties (directions.SMOOTH)
             cc = wc.compliance
@@ -1924,7 +1956,7 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         case_d.append(None if d is None else [float(v) for v in d])
         if heat is None:
             case_c.append(wc.compliance)
-            comp += weights[ci] * wc.compliance
+            comp += (weights0 if bind is not None else weights)[ci] * wc.compliance
         energy += weights[ci] * stiff * sum(m * fe.strain_energy(v) for m, v in wc.energy)
     warp = _warp_report(domain, xp) if domain.warp is not None else None
     return SimpResult(x=x, xphys=xp, compliance=comp, case_compliance=case_c,
