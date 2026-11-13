@@ -960,6 +960,15 @@ def _attach_plan(mesh, study, organic):
 
 
 PINCH_R = 0.08
+# Geometry finer than an STL keeps (float32: 1.2e-5 mm steps at 100 mm) is
+# collapsed before pinch filling (manifold3d's simplify). The full-tier
+# remote's cover came out of its booleans with slivers a few 1e-7 mm thick
+# where the cut interior met the exact skin on the envelope (174k triangles,
+# genus -60, 191 contacts): simplified it was 66k triangles, genus 3, and
+# the export's own weld and sliver pass left it watertight with no balls,
+# where filling the raw contacts fed itself (22k, 46k, 76k contacts, 3.3M
+# triangles, past 13 GB).
+WELD_TOL = 1e-5
 
 
 def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
@@ -979,7 +988,7 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
     import manifold3d as m3d
 
     total = 0
-    last, last_r, ends = None, 0.0, None
+    last, last_r, ends, n_last = None, 0.0, None, 0.0
     for k in range(rounds):
         # a ball can leave a contact of its own: each round a size larger
         r = PINCH_R * 1.5 ** k
@@ -991,6 +1000,15 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
         bad, wv = _round_contacts(verts, faces, last, last_r * 1.05 + 1e-3, ends)
         if not len(bad):
             break
+        # contact length: a ball closes 2 r of a contact edge, so on a
+        # real kiss it shrinks round by round however the edges split
+        length = float(np.linalg.norm(wv[bad[:, 0]] - wv[bad[:, 1]], axis=1).sum())
+        if last is not None and length > n_last:
+            # the last round's balls made more contact than they closed:
+            # a repair that feeds itself; take it back and stop
+            part, total = before, total - len(last)
+            break
+        n_last = length
         ends = wv[np.unique(bad)]
         mids = wv[bad].mean(axis=1)
         # one ball per cluster of pinched edges a ball apart (greedy, in
@@ -1026,7 +1044,7 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
                 part = part - (cut - hold if hold is not None else cut)
         if clip is not None and balls:
             balls = [m3d.Manifold.batch_boolean(balls, m3d.OpType.Add) ^ clip]
-        part = m3d.Manifold.batch_boolean([part] + balls, m3d.OpType.Add)
+        before, part = part, m3d.Manifold.batch_boolean([part] + balls, m3d.OpType.Add)
         total += len(keep)
         last, last_r = np.asarray(keep), r
     return part, total
@@ -1726,6 +1744,8 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
         clip = envelope - ko_all
     if study.preserve:
         hold = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
+    if hasattr(part, "simplify"):
+        part = part.simplify(WELD_TOL)
     part, pinches = _fill_pinches(part, clip=clip, keep_out=ko_all, hold=hold)
     if pinches and not _stl_watertight(_drop_slivers(trimesh_from_manifold(part))):
         # contacts the clipped balls could not close (where three drawn
