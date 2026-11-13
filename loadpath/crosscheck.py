@@ -832,8 +832,8 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     and one pass over the matrix serve them all, and the Gauss-Seidel goes
     by node colours on every core (tetsolve). The whole native check
     (assembly, solve, stress read) of the upper arm (2.25M dofs, 3 cases):
-    137 s against 337; the turret (1.44M dofs): 86 s against 116, the same
-    safety factors to 9 digits.
+    126 s against 337; the turret (1.44M dofs): 72 s against 116; the motor
+    mount 15 s against 23; the same safety factors to 9 digits.
     `fixed_dof` marks held dofs; `springs` (or None; _pin_springs) is
     added to the stiffness (pins)."""
     import scipy.sparse as sp
@@ -1046,7 +1046,7 @@ def stress_radius(study: Study, size: float) -> tuple:
     return reading_radius(study.material, size, getattr(study, "min_member", None) or None)
 
 
-def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=20_000):
+def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=50_000):
     """Per displacement field in `us`: the stress tensor at each vertex
     (n_vertices, 6), averaged over the material within `radius` of it.
 
@@ -1070,26 +1070,22 @@ def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=20_000):
     pts = nodes[:n_vertices]
     ns = len(_SAMPLES)
     xs = np.einsum("sk,ekd->esd", _SAMPLES, pts[conn[:, :4]]).reshape(-1, 3)
-    w = np.empty(len(conn) * ns)
-    sigs = [np.empty((len(conn) * ns, 6)) for _ in us]
+    from . import tetsolve
 
-    def one(s0):
-        cc = conn[s0:s0 + chunk]
-        vol, g = _grads(nodes, cc)
-        w[s0 * ns:(s0 + len(cc)) * ns] = np.repeat(np.abs(vol) / ns, ns)
-        ues = [np.asarray(u).reshape(-1, 3)[cc].reshape(len(cc), 30) for u in us]
-        for k, lam in enumerate(_SAMPLES):
-            cb = np.einsum("kl,eli->eki", c, _b_matrices(_shape_grads(g, lam)), optimize=True)
-            for sig, ue in zip(sigs, ues):
-                sig[s0 * ns + k:(s0 + len(cc)) * ns:ns] = np.einsum("eki,ei->ek", cb, ue)
-    # chunks on threads (each writes its own rows): the same bits; the
-    # turret's 325k tets 13.3 s against 17.2 (3.5 s of either is the ball
-    # search below, and numpy's small steps hold the GIL)
-    from .pools import pool
-
-    starts = range(0, len(conn), chunk)
-    with pool(min(_threads(), len(starts))) as ex:
-        list(ex.map(one, starts))
+    if tetsolve.available():
+        w, sigs = tetsolve.stress_samples(nodes, conn, us, c, _SAMPLES, _EDGES)
+    else:  # pragma: no cover - numba is a dependency
+        w = np.empty(len(conn) * ns)
+        sigs = [np.empty((len(conn) * ns, 6)) for _ in us]
+        for s0 in range(0, len(conn), chunk):
+            cc = conn[s0:s0 + chunk]
+            vol, g = _grads(nodes, cc)
+            w[s0 * ns:(s0 + len(cc)) * ns] = np.repeat(np.abs(vol) / ns, ns)
+            ues = [np.asarray(u).reshape(-1, 3)[cc].reshape(len(cc), 30) for u in us]
+            for k, lam in enumerate(_SAMPLES):
+                cb = np.einsum("kl,eli->eki", c, _b_matrices(_shape_grads(g, lam)), optimize=True)
+                for sig, ue in zip(sigs, ues):
+                    sig[s0 * ns + k:(s0 + len(cc)) * ns:ns] = np.einsum("eki,ei->ek", cb, ue)
     import scipy.sparse as sp
 
     pairs = cKDTree(pts).sparse_distance_matrix(cKDTree(xs), radius, output_type="coo_matrix")

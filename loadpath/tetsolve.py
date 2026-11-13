@@ -153,6 +153,75 @@ if nb is not None:
                                 data[base + cj] += ke[e, 3 * a + ci, 3 * b + cj]
 
 
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _stress_samples(nodes, conn, us, c, lams, edges, w, sig):
+        ne = conn.shape[0]
+        ns = lams.shape[0]
+        nf = us.shape[0]
+        for e in nb.prange(ne):
+            x0 = nodes[conn[e, 0]]
+            j = np.empty((3, 3))
+            for k in range(3):
+                xk = nodes[conn[e, k + 1]]
+                for d in range(3):
+                    j[d, k] = xk[d] - x0[d]
+            det = (j[0, 0] * (j[1, 1] * j[2, 2] - j[1, 2] * j[2, 1])
+                   - j[0, 1] * (j[1, 0] * j[2, 2] - j[1, 2] * j[2, 0])
+                   + j[0, 2] * (j[1, 0] * j[2, 1] - j[1, 1] * j[2, 0]))
+            inv = np.empty((3, 3))
+            inv[0, 0] = (j[1, 1] * j[2, 2] - j[1, 2] * j[2, 1]) / det
+            inv[0, 1] = (j[0, 2] * j[2, 1] - j[0, 1] * j[2, 2]) / det
+            inv[0, 2] = (j[0, 1] * j[1, 2] - j[0, 2] * j[1, 1]) / det
+            inv[1, 0] = (j[1, 2] * j[2, 0] - j[1, 0] * j[2, 2]) / det
+            inv[1, 1] = (j[0, 0] * j[2, 2] - j[0, 2] * j[2, 0]) / det
+            inv[1, 2] = (j[0, 2] * j[1, 0] - j[0, 0] * j[1, 2]) / det
+            inv[2, 0] = (j[1, 0] * j[2, 1] - j[1, 1] * j[2, 0]) / det
+            inv[2, 1] = (j[0, 1] * j[2, 0] - j[0, 0] * j[2, 1]) / det
+            inv[2, 2] = (j[0, 0] * j[1, 1] - j[0, 1] * j[1, 0]) / det
+            g = np.empty((4, 3))          # gradients of the barycentrics
+            for d in range(3):
+                g[1, d] = inv[0, d]
+                g[2, d] = inv[1, d]
+                g[3, d] = inv[2, d]
+                g[0, d] = -(inv[0, d] + inv[1, d] + inv[2, d])
+            vol = abs(det) / 6.0
+            dn = np.empty((10, 3))
+            eps = np.empty(6)
+            for k in range(ns):
+                row = e * ns + k
+                w[row] = vol / ns
+                for i in range(4):
+                    for d in range(3):
+                        dn[i, d] = (4.0 * lams[k, i] - 1.0) * g[i, d]
+                for m in range(6):
+                    a = edges[m, 0]
+                    b = edges[m, 1]
+                    for d in range(3):
+                        dn[4 + m, d] = 4.0 * (lams[k, b] * g[a, d] + lams[k, a] * g[b, d])
+                for f in range(nf):
+                    for q in range(6):
+                        eps[q] = 0.0
+                    for nn in range(10):
+                        node = conn[e, nn]
+                        ux = us[f, node, 0]
+                        uy = us[f, node, 1]
+                        uz = us[f, node, 2]
+                        dx = dn[nn, 0]
+                        dy = dn[nn, 1]
+                        dz = dn[nn, 2]
+                        eps[0] += dx * ux
+                        eps[1] += dy * uy
+                        eps[2] += dz * uz
+                        eps[3] += dy * ux + dx * uy
+                        eps[4] += dz * uy + dy * uz
+                        eps[5] += dz * ux + dx * uz
+                    for q in range(6):
+                        acc = 0.0
+                        for r in range(6):
+                            acc += c[q, r] * eps[r]
+                        sig[f, row, q] = acc
+
+
 def available() -> bool:
     return nb is not None
 
@@ -186,6 +255,22 @@ def scatter(cc, ke, nptr, nind, data):
     entry is summed in the serial order (the same bits on any thread
     count)."""
     _scatter(np.ascontiguousarray(cc, np.int64), np.ascontiguousarray(ke), nptr, nind, data, 64)
+
+
+def stress_samples(nodes, conn, us, c, lams, edges):
+    """Stress (6, Voigt, engineering shear) at barycentric points `lams` of
+    each P2 element, for each displacement field in `us`, and each point's
+    weight (its element's volume over the points): (w (ne ns,), [sig
+    (ne ns, 6)]), rows element-major. crosscheck._averaged_stress's numpy
+    loop as one pass on every core (the turret: 1 s against 10)."""
+    ne, ns = len(conn), len(lams)
+    w = np.empty(ne * ns)
+    stack = np.ascontiguousarray(np.stack([np.asarray(u, np.float64).reshape(-1, 3) for u in us]))
+    sig = np.empty((len(us), ne * ns, 6))
+    _stress_samples(np.ascontiguousarray(nodes, np.float64), np.ascontiguousarray(conn, np.int64), stack,
+                    np.ascontiguousarray(c, np.float64), np.ascontiguousarray(lams, np.float64),
+                    np.ascontiguousarray(edges, np.int64), w, sig)
+    return w, list(sig)
 
 
 class Blocked:

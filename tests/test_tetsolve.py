@@ -1,8 +1,8 @@
 """The tet confirm's quadratic solve (crosscheck._solve, tetsolve): node
 colours that share no element, a parallel assembly with the serial one's
 bits, every load case in one CG loop with the answers of a direct solve,
-the factored coarse level and the V-cycle one agreeing, and a solve that
-repeats to the bit.
+the factored coarse level and the V-cycle one agreeing, a solve that
+repeats to the bit, and the compiled stress sampling against numpy's.
 
 Run: `python -m pytest tests/test_tetsolve.py -q` (about half a minute).
 """
@@ -116,6 +116,22 @@ def test_pins_and_zero_loads():
     assert np.linalg.norm(us[0].ravel() - ref) <= 1e-6 * np.linalg.norm(ref)
     assert not np.any(us[1])
 
+
+
+def test_stress_samples_match_the_numpy_loop():
+    nodes, conn, *_ = _cantilever()
+    rng = np.random.default_rng(3)
+    us = [rng.standard_normal((len(nodes), 3)) for _ in range(2)]
+    c = cc._elastic(2000.0, 0.35)
+    w, sigs = tetsolve.stress_samples(nodes, conn, us, c, cc._SAMPLES, cc._EDGES)
+    ns = len(cc._SAMPLES)
+    vol, g = cc._grads(nodes, conn)
+    assert np.allclose(w, np.repeat(np.abs(vol) / ns, ns), rtol=1e-12, atol=0)
+    for u, sig in zip(us, sigs):
+        ue = u[conn].reshape(len(conn), 30)
+        for k, lam in enumerate(cc._SAMPLES):
+            ref = np.einsum("kl,eli,ei->ek", c, cc._b_matrices(cc._shape_grads(g, lam)), ue)
+            assert np.allclose(sig[k::ns], ref, rtol=1e-10, atol=1e-10 * np.abs(ref).max())
 
 if __name__ == "__main__":
     import sys
