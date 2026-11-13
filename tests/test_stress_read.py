@@ -164,3 +164,62 @@ def test_peak_at_a_sharp_corner_does_not_move_with_the_mesh():
         assert np.linalg.norm(np.asarray(c["peakAt"])[[0, 2]] - [10, 10]) < 2.0, c["peakAt"]
         peaks.append(c["peakStress"])
     assert abs(peaks[0] - peaks[1]) < 0.15 * peaks[1], peaks
+
+
+def _grid(n=(10, 6, 6), h=1.0):
+    """A block of n voxels of edge h: (node_xyz, enode) in fem's corner order."""
+    from loadpath.fem import CORNERS
+
+    dims = np.array(n) + 1
+    ijk = np.stack(np.meshgrid(*[np.arange(k) for k in n], indexing="ij"), axis=-1).reshape(-1, 3)
+    node = lambda p: (p[:, 0] * dims[1] + p[:, 1]) * dims[2] + p[:, 2]
+    enode = np.stack([node(ijk + c.astype(int)) for c in CORNERS], axis=1)
+    xyz = np.stack(np.meshgrid(*[np.arange(k) * h for k in dims], indexing="ij"), axis=-1).reshape(-1, 3)
+    return xyz, enode
+
+
+def test_voxel_reading_is_the_same_average():
+    # The search's voxel check reads stress averaged over the material's
+    # length, as the tetrahedra do: a uniform field is unchanged, a linear
+    # one is unchanged away from the surface, and a spike at one node (what
+    # a stair-stepped corner gives) is spread over the ball.
+    from loadpath.verify import _MaterialAverage
+
+    xyz, enode = _grid()
+    avg = _MaterialAverage(xyz, enode, None, 1.0, 1.6)
+    sig = np.tile([3.0, 0, 0, 0, 0, 0], (len(xyz), 1))
+    assert np.allclose(avg(sig), sig)
+    lin = np.zeros((len(xyz), 6)); lin[:, 0] = xyz[:, 0]
+    inner = np.all((xyz > 1.9) & (xyz < np.array([10, 6, 6]) - 1.9), axis=1)
+    assert inner.any() and np.allclose(avg(lin)[inner, 0], xyz[inner, 0], atol=1e-9)
+    spike = np.zeros((len(xyz), 6)); k = int(np.nonzero(inner)[0][0]); spike[k, 0] = 1.0
+    out = avg(spike)[:, 0]
+    assert 0 < out.max() < 0.2 and out[k] == out.max()
+    # material the ball does not hold is not averaged in: an empty cell's
+    # stress does not reach its neighbours
+    fill = np.ones(len(enode)); fill[0] = 0.0
+    hot = np.zeros((len(xyz), 6)); hot[enode[0], 0] = 100.0
+    cut = _MaterialAverage(xyz, enode, fill, 1.0, 1.6)(hot)
+    assert cut[:, 0].sum() < avg(hot)[:, 0].sum()
+    # a grid much finer than the ball samples it by blocks of cells: the
+    # same average, and an operator that still fits (0.9 thousand entries a
+    # node otherwise)
+    xyz, enode = _grid((40, 20, 20), 0.15)
+    fine = _MaterialAverage(xyz, enode, None, 0.15, 0.86)
+    assert (fine.ball.nnz + fine.interp.nnz) / len(xyz) < 150
+    quad = np.zeros((len(xyz), 6)); quad[:, 0] = (xyz[:, 1] - 1.5) ** 2
+    inner = np.all((xyz > 1.0) & (xyz < np.array([6, 3, 3]) - 1.0), axis=1)
+    # a ball of radius r reads a quadratic r^2 / 5 above its centre value
+    assert np.allclose(fine(quad)[inner, 0], quad[inner, 0] + 0.86 ** 2 / 5, atol=0.03)
+
+
+def test_one_contact_band_for_every_check():
+    # voxel and tetrahedral checks leave out the same material round a
+    # support, or their peaks are not peaks of the same part
+    from loadpath.domain import build_domain
+
+    s = study_from_dict(_BEAM)
+    d = build_domain(s)
+    band = st.contact_band(s, d)
+    assert band == max(2.0 * cc.element_size(s), 1.5 * d.pitch)
+    assert band >= d.pitch

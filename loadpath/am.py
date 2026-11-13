@@ -47,13 +47,43 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = ["AMFilter", "TiltedAMFilter", "parse_build_direction", "build_vector", "layered_elasticity",
-           "direction_label"]
+           "direction_label", "overhang_eps"]
 
 _P = 40.0
 _XI0 = 0.5
 _EPS = 1e-4
 _N_SUPPORT = 5
 _Q = _P + np.log(_N_SUPPORT) / np.log(_XI0)
+# The widest the smooth minimum's corner is ever rounded, in density: a tenth
+# of the range. Its bias is half the width, so past this more than 5% density
+# would print in empty space.
+_EPS_WIDEST = 1e-2
+# the projection sharpness _EPS is right for
+_BETA_SHARP = 32.0
+
+
+def overhang_eps(beta: float) -> float:
+    """The smooth minimum's eps for a design projected at sharpness `beta`
+    (set it on a filter's `.eps`).
+
+    printed = smin(x, support) has a corner where a cell is exactly as dense
+    as what holds it up, rounded over a width sqrt(eps) in density. Langelaar's
+    1e-4 (width 0.01) is right for a near-black-and-white design. On a grey
+    design nearly every cell sits on that corner (a uniform start sits on it
+    exactly), and across it the gradient jumps between "this cell matters"
+    and "its support matters": whichever side the last bits fall decides
+    which cells the next step feeds. Two runs of the printed hook differing
+    by one part in 10^9 at the start were 1% apart 25 iterations later; with
+    the filter off they stayed together to 11 digits.
+
+    So the rule is only as sharp as the projection feeding it: the corner's
+    width follows the projection's own transition width, 1 / beta, and is
+    Langelaar's at beta 32, where the search ends. The sharpness is the
+    design's own, not how far along its schedule a run is: the coarse
+    warm-up that stops at beta 4 is as grey at its end as any design at
+    beta 4, and with the full-sharp rule there two warm-ups a rounding
+    error apart handed over starts 0.1% apart (docs/CONVERGENCE.md)."""
+    return float(min(_EPS * (_BETA_SHARP / max(float(beta), 1e-9)) ** 2, _EPS_WIDEST))
 
 
 def parse_build_direction(spec):
@@ -131,10 +161,10 @@ def layered_elasticity(nu: float, process, design: bool = False):
     return Layered(nu, ez, gz, build_vector(process.build))
 
 
-def _smin(x, xi):
+def _smin(x, xi, eps=_EPS):
     d = x - xi
-    r = np.sqrt(d * d + _EPS)
-    val = 0.5 * (x + xi - r + np.sqrt(_EPS))
+    r = np.sqrt(d * d + eps)
+    val = 0.5 * (x + xi - r + np.sqrt(eps))
     dx = 0.5 * (1.0 - d / r)
     dxi = 0.5 * (1.0 + d / r)
     return val, dx, dxi
@@ -182,6 +212,7 @@ class AMFilter:
         # Pinned cells (preserved geometry) print as solid regardless: they
         # are the user's, and they support what is above them.
         self.pinned = None if pinned is None else self._to_layers(pinned.astype(float))
+        self.eps = _EPS
         self._cache = None
 
     def _to_layers(self, g):
@@ -206,7 +237,7 @@ class AMFilter:
                 parts = _neighbors(printed[k - 1])
                 ssum = sum(np.maximum(p, 0.0) ** _P for p in parts)
                 xi = np.maximum(ssum, 1e-300) ** (1.0 / _Q)
-            val, dx, dxi = _smin(x[k], xi)
+            val, dx, dxi = _smin(x[k], xi, self.eps)
             if self.pinned is not None:
                 pin = self.pinned[k] > 0.5
                 val = np.where(pin, 1.0, val)
@@ -276,6 +307,7 @@ class TiltedAMFilter:
             plate = np.asarray(plate, bool).ravel()
         self._plate = plate
         self._pinned = None if pinned is None else np.asarray(pinned, bool).ravel()
+        self.eps = _EPS
         self._cache = None
 
     def forward(self, field: np.ndarray) -> np.ndarray:
@@ -290,7 +322,7 @@ class TiltedAMFilter:
             xi = np.maximum(ssum, 1e-300) ** (1.0 / self._q)
             on_plate = self._plate[idx]
             xi = np.where(on_plate, 1.0, xi)
-            val, dx, dxi = _smin(x[idx], xi)
+            val, dx, dxi = _smin(x[idx], xi, self.eps)
             dxi = np.where(on_plate, 0.0, dxi)
             if self._pinned is not None:
                 pin = self._pinned[idx]

@@ -23,6 +23,7 @@ part; every FEA package has the same caveat. Everything else counts.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -200,6 +201,89 @@ def nodal_von_mises(stiff, u, modulus, thermal=None):
     up, converged. Averaging across elements is also what keeps a single
     voxel staircase corner from reading as a spike."""
     return von_mises(nodal_stress(stiff, u, modulus, thermal))
+
+
+def _averaged() -> bool:
+    """LOADPATH_STRESS_READ=point restores the nodal peak (for comparing the two readings)."""
+    return os.environ.get("LOADPATH_STRESS_READ", "").lower() != "point"
+
+
+class _MaterialAverage:
+    """Nodal stress tensors averaged over the material within `radius` of
+    each node, on a voxel or cut-cell grid: the stress that is read against
+    strength (failure.MATERIAL_LENGTH says why a material answers to an
+    average over its own length and not to a point; crosscheck.
+    _averaged_stress is the same reading on tetrahedra, and the two now
+    read one quantity).
+
+    A point reading is also the mesh's and not the part's. The peak node
+    next to a re-entrant corner moves and grows with every change of the
+    surface, so the safety factor of two near-identical parts differed by
+    half (a printed hook read 1.18 and 2.80 at one volume fraction from two
+    starts, tets 2.0 and 3.8), and a search stepping on it lands somewhere
+    else on every run.
+
+    The material in the ball is sampled on the cells: at a cell's eight
+    quarter points while the ball is under three cells across (the tensor
+    trilinear between its corners' nodal values), at its centre on a finer
+    grid, and by blocks of cells on a grid finer still, so a ball holds on
+    the order of a hundred samples whatever the grid (a 0.3 mm grid under a
+    0.86 mm radius otherwise holds 900 a node, and the operator of a
+    million-node check does not fit in memory). Each sample carries its
+    filled volume, so the ball is cut by the part's surface on its own.
+    Built once per grid as one sparse operator; apply with ()."""
+
+    def __init__(self, node_xyz, enode, fill, pitch: float, radius: float):
+        import scipy.sparse as sp
+        from scipy.spatial import cKDTree
+
+        from .fem import CORNERS
+
+        n, ne = len(node_xyz), len(enode)
+        f = np.ones(ne) if fill is None else np.asarray(fill, float)
+        live = np.nonzero(f > 0)[0]
+        rho = radius / pitch
+        if rho <= 1.5:
+            q = 0.25 + 0.5 * CORNERS                              # the 8 samples of the unit cell
+        else:
+            q = np.full((1, 3), 0.5)
+        ns = len(q)
+        # trilinear weight of each corner at each sample: (samples, 8 corners)
+        wts = np.prod(np.where(CORNERS[None, :, :] > 0.5, q[:, None, :], 1.0 - q[:, None, :]), axis=2)
+        xs = np.einsum("sk,ekd->esd", wts, node_xyz[enode[live]]).reshape(-1, 3)
+        w = np.repeat(f[live] * pitch ** 3 / ns, ns)
+        # samples from nodal values: (samples, nodes)
+        rows = np.repeat(np.arange(len(xs)), 8)
+        cols = np.repeat(enode[live], ns, axis=0).ravel()         # per element: its samples x its 8 corners
+        vals = np.tile(wts.ravel(), len(live))
+        interp = sp.csr_matrix((vals, (rows, cols)), shape=(len(xs), n))
+        blk = int(np.ceil(rho / 3.3))
+        if blk > 1 and len(xs):
+            # blocks of blk^3 cells: one sample at the block's filled centroid
+            key = np.floor((xs - xs.min(axis=0)) / (blk * pitch) + 1e-9).astype(np.int64)
+            _, gid = np.unique(key, axis=0, return_inverse=True)
+            gid = np.asarray(gid).ravel()
+            agg = sp.csr_matrix((w, (gid, np.arange(len(xs)))), shape=(int(gid.max()) + 1, len(xs)))
+            wb = np.asarray(agg.sum(axis=1)).ravel()
+            xs = (agg @ xs) / wb[:, None]
+            interp = (sp.diags(1.0 / wb) @ agg @ interp).tocsr()
+            w = wb
+        pairs = cKDTree(node_xyz).sparse_distance_matrix(cKDTree(xs), radius, output_type="coo_matrix")
+        a = sp.csr_matrix((w[pairs.col], (pairs.row, pairs.col)), shape=(n, len(xs)))
+        tot = np.asarray(a.sum(axis=1)).ravel()
+        # (a node whose ball holds no sample, at the tip of a sliver: its own value)
+        self.lone = tot <= 0
+        # two factors, applied in turn: their product has a row entry for
+        # every node in the ball, the factors one for every sample
+        self.ball = (sp.diags(1.0 / np.where(self.lone, 1.0, tot)) @ a).tocsr()
+        self.interp = interp
+        self.radius = float(radius)
+
+    def __call__(self, sig):
+        out = np.asarray(self.ball @ (self.interp @ sig))
+        if self.lone.any():
+            out[self.lone] = sig[self.lone]
+        return out
 
 
 def nodal_stress(stiff, u, modulus, thermal=None):
@@ -630,7 +714,14 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     us[free] = uf
     from .failure import equivalent_stress
 
-    vm = equivalent_stress(cgrid.nodal_stress(us, mat.E) if cgrid is not None else nodal_stress(st, us, mat.E), ratio)
+    sg = cgrid.nodal_stress(us, mat.E) if cgrid is not None else nodal_stress(st, us, mat.E)
+    if _averaged():
+        from .crosscheck import stress_radius
+
+        # (read as the global grid reads it: over the material's own length)
+        sg = _MaterialAverage(sm.node_xyz, sm.enode, cgrid.fill if cgrid is not None else None, pitch,
+                              stress_radius(study, pitch)[0])(sg)
+    vm = equivalent_stress(sg, ratio)
     if case is not None and fp.any():
         # over the global grid's reach: a finer staircase is no smoother
         vm = _smooth_wetted(sm.node_xyz, vm, np.abs(fp.reshape(-1, 3)).sum(axis=1) > 0, hm.pitch)
@@ -1396,6 +1487,13 @@ def interlayer_readings(study: Study, mesh, builds, max_cells: int = 60_000, min
         if g.on_edge is not None:
             near |= g.on_edge
         bodies.append(~near)
+    if _averaged():
+        from .crosscheck import stress_radius
+
+        average = _MaterialAverage(hm.node_xyz, hm.enode, g.fill, g.pitch, stress_radius(study, g.pitch)[0])
+    else:
+        def average(sig):
+            return sig
     solved = {}
     out = []
     for b, n in zip(builds, vecs):
@@ -1421,13 +1519,13 @@ def interlayer_readings(study: Study, mesh, builds, max_cells: int = 60_000, min
             if len(idx) == 1:
                 u = disp[idx[0]]
             else:
-                s0 = nodal_stress(stiff, disp[idx[0]], mat.E) if idx[0] is not None else None
-                sb = [nodal_stress(stiff, disp[i], mat.E) for i in idx[1:]]
+                s0 = average(nodal_stress(stiff, disp[idx[0]], mat.E)) if idx[0] is not None else None
+                sb = [average(nodal_stress(stiff, disp[i], mat.E)) for i in idx[1:]]
                 direction, _ = worst_stress_direction(spreads[ci], s0, sb, bodies[ci])
                 u = sum(direction[j] * disp[i] for j, i in enumerate(idx[1:]))
                 if idx[0] is not None:
                     u = u + disp[idx[0]]
-            t, _, ti, tn, ts = _layer_bond(nodal_stress(stiff, u, mat.E), n, bodies[ci], None, shear_ratio)
+            t, _, ti, tn, ts = _layer_bond(average(nodal_stress(stiff, u, mat.E)), n, bodies[ci], None, shear_ratio)
             cases.append({"name": case.name, "interlayerStress": t, "interlayerTension": tn,
                           "interlayerShear": ts, "at": hm.node_xyz[ti].tolist()})
             worst = max(worst, t)
@@ -1776,6 +1874,20 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     def solve(moduli, rhs):
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
 
+    # Stress is read against strength as an average over the material's own
+    # length (_MaterialAverage), as the tetrahedral check reads it
+    if _averaged():
+        from .crosscheck import stress_radius
+
+        radius, report["stressReading"] = stress_radius(study, pitch)
+        average = _MaterialAverage(hm.node_xyz, hm.enode, fill, pitch, radius)
+    else:
+        average = None
+
+    def read(stiff, u, modulus, thermal=None):
+        sig = nodal_stress(stiff, u, modulus, thermal)
+        return sig if average is None else average(sig)
+
     # Impact cases (loadCases[].impact): the force is what stops the energy
     # through the crusher and this part together, springs in series. The
     # part's give at the patch is its own f.u / F^2 under the hit as written
@@ -1893,8 +2005,8 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             # the fixed part carries the expansion, the uncertain force none;
             # stress over retention, so the worst direction is the one
             # nearest failure where hot material is weak
-            s0 = nodal_stress(stiff, displacements[idx[0]], moduli, eps) if idx[0] is not None else None
-            sb = [nodal_stress(stiff, displacements[i], moduli) for i in idx[1:]]
+            s0 = read(stiff, displacements[idx[0]], moduli, eps) if idx[0] is not None else None
+            sb = [read(stiff, displacements[i], moduli) for i in idx[1:]]
             if g_node is not None:
                 kn = 1.0 / np.maximum(g_node, 1e-3)[:, None]
                 s0 = s0 * kn if s0 is not None else None
@@ -1910,7 +2022,7 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                                                                extra=stock_k)))
         if stock_on:
             stock_cases.append((case.name, u, f))
-        sig_u = nodal_stress(stiff, u, moduli, eps)
+        sig_u = read(stiff, u, moduli, eps)
         vm = equivalent_stress(sig_u, m_c)
         env = vm if env is None else np.maximum(env, vm)
         if bc.case_pressure_nodes[ci].any():
@@ -2019,8 +2131,8 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                 u_c = sum(direction[j] * disp_c[i] for j, i in enumerate(idx[1:]))
                 if idx[0] is not None:
                     u_c = u_c + disp_c[idx[0]]
-            s_h = nodal_stress(stiff, u, moduli, eps) / np.maximum(g_node, 1e-3)[:, None]
-            s_c = nodal_stress(stiff_c, u_c, mod_c, eps_c) / np.maximum(g_c, 1e-3)[:, None]
+            s_h = read(stiff, u, moduli, eps) / np.maximum(g_node, 1e-3)[:, None]
+            s_c = read(stiff_c, u_c, mod_c, eps_c) / np.maximum(g_c, 1e-3)[:, None]
             util_c = equivalent_stress(s_c, m_c)
             pk_c = int(np.argmax(np.where(body, util_c, -1))) if body.any() else int(np.argmax(util_c))
             sf_c = mat.strength / (util_c[pk_c] * STRESS_ALLOWANCE) if util_c[pk_c] > 0 else np.inf
