@@ -114,6 +114,10 @@ _AUTO_PROBE_OUTER = 0.34
 # constrained part: 17.6 g against 17.2-18.1, tet margin 1.6-2.7; its later
 # parts reached 14.2-15.1 g)
 _PROBE_ROOM = 1.3
+# method auto: a part at its deflection limit with this times the goal's
+# safety factor is deflection-bound, and keeps the search's part
+# (_deflection_bound)
+_DEFLECTION_ROOM = 2.0
 _PROBE_NEAR = 1.1
 # A winning probe runs at least this many parts (up to the box's hard stop,
 # twice the box): the box follows the search's time (3.5x), the parts do
@@ -1504,12 +1508,10 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
         r.choice = choice
         return r
     rep = pick.report
-    sf = rep.get("safetyFactor")
-    if goal.max_deflection and rep.get("cases") \
-            and max(c.get("deflection") or 0.0 for c in rep["cases"]) >= 0.85 * goal.max_deflection \
-            and (goal.safety_factor is None or (sf is not None and sf >= 1.3 * goal.safety_factor)):
-        # stiffness sets the mass (the arm link, the robot-arm upper arm at SF
-        # 11 for 2): the compliance search is already the right design
+    bound, idle = _deflection_bound(study, rep)
+    if idle is not None:
+        choice["idleCompliance"] = round(idle, 3)
+    if bound:
         choice["reason"] = "deflection-bound: the search's compliance design is the right one"
         r.choice = choice
         return r
@@ -1676,6 +1678,53 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     r.choice = choice
     r.seconds += rc.seconds
     return r
+
+
+def _deflection_bound(study: Study, rep: dict):
+    """Is the search's part held by its stiffness, with strength to spare?
+    Then the constrained method is not tried (_run_auto_rest). Returns
+    (bound, idle compliance share or None).
+
+    Deflection-bound: the worst load case sits at the limit (0.85 of it or
+    more) and the part's safety factor has at least _DEFLECTION_ROOM times
+    the goal. On parts like that the constrained method's solve is held by
+    its deflection limit alone, which it reads on its eroded design and the
+    delivered mesh does not keep (verified over optimizer deflection 0.73 to
+    1.03 by layout): the arm link (SF 18 for 3) came out 55.7 g constrained
+    against the search's 54.1 g in four times the time, and the upper arm's
+    (SF 11 for 2) first constrained part weighed 334 g against 204.7 g after
+    51 minutes. The motor mount, whose search part reads SF near 2.6 for 2,
+    gets the constrained run and comes out 27.8 g against 30.0. The cut used
+    to be 1.3 times the goal, and the motor mount's tet reading (2.607
+    against 2.6) fell on either side of it run to run; 2 sits 1.5 times
+    or more from each of those parts.
+
+    The idle compliance share is what the search spent on stiffness a load
+    case does not need: the sum over cases of their share of the compliance
+    times (1 - deflection / the worst case's). The search minimizes the sum
+    of compliances with the cases' weights, while the limit holds only the
+    worst case, so a case that carries much of the compliance far under it
+    is over-stiffened: the motor mount's belt-side push, 46% of the
+    compliance at 0.6 of the belt-up deflection (share 0.19), where the
+    constrained method, which holds only the limit, wins; the arm link's two
+    cases both sit at the limit (0.008). The upper arm reads 0.37 (its axial
+    push binds with 16% of the compliance), so the gap there is in the
+    search's weighting of its cases, not in which method runs. Reported in
+    methodChoice.idleCompliance; not used to decide."""
+    goal = study.goal
+    cases = [c for c in rep.get("cases") or [] if c.get("deflection") is not None]
+    if not goal.max_deflection or not cases:
+        return False, None
+    worst = max(c["deflection"] for c in cases)
+    idle = None
+    weight = {c.name: float(getattr(c, "weight", None) or 1.0) for c in study.load_cases}
+    comp = [max(float(c.get("compliance") or 0.0), 0.0) * weight.get(c.get("name"), 1.0) for c in cases]
+    if worst > 0 and sum(comp) > 0:
+        idle = sum(w * (1.0 - c["deflection"] / worst) for w, c in zip(comp, cases)) / sum(comp)
+    sf = rep.get("safetyFactor")
+    bound = worst >= 0.85 * goal.max_deflection and (
+        goal.safety_factor is None or (sf is not None and sf >= _DEFLECTION_ROOM * goal.safety_factor))
+    return bound, idle
 
 
 def _makeable(study: Study, pick: Outcome, rc: StudyResult, search_mass: float):

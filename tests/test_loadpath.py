@@ -1313,6 +1313,39 @@ def test_auto_method_holds_a_lighter_part_to_the_process_check():
     assert S._makeable(fdm, search, rc, 30.0) == (1, [])
 
 
+def test_deflection_bound_needs_strength_well_to_spare():
+    """The auto method keeps the search's part without a constrained run
+    when the part sits at its deflection limit with twice the goal's
+    safety factor or more (the arm link, SF 18 for 3), and runs it when
+    strength is nearer the goal: the motor mount's search part read 2.607
+    and 2.597 for 2 run to run, either side of the old 1.3x cut, and was
+    delivered at 30.0 or 26-28 g by which. The idle compliance share is
+    what the search spent on a case well under the worst one's
+    deflection."""
+    from loadpath import study as S
+
+    raw = {"name": "two-way", "designSpace": {"type": "box", "min": [0, 0, 0], "max": [40, 10, 10]},
+           "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 11, 11]}}],
+           "loadCases": [{"name": name, "loads": [{"shape": {"type": "box", "min": [39, -1, -1], "max": [41, 11, 11]},
+                                                  "force": f}]}
+                         for name, f in (("side", [25, 0, 0]), ("up", [0, 0, 25]))],
+           "material": "pla", "goal": {"safetyFactor": 2.0, "maxDeflection": 0.5}}
+    st = study_from_dict(raw)
+
+    def rep(sf, d_side, d_up, c_side, c_up):
+        return {"safetyFactor": sf, "cases": [{"name": "side", "deflection": d_side, "compliance": c_side},
+                                              {"name": "up", "deflection": d_up, "compliance": c_up}]}
+
+    for sf in (2.597, 2.607, 3.9):     # the motor mount's readings, and short of 2x
+        bound, idle = S._deflection_bound(st, rep(sf, 0.243, 0.491, 25.6, 28.6))
+        assert not bound and abs(idle - 0.239) < 2e-3, (sf, bound, idle)
+    bound, idle = S._deflection_bound(st, rep(13.6, 0.464, 0.478, 7.0, 19.1))    # the arm link's
+    assert bound and idle < 0.01, (bound, idle)
+    assert S._deflection_bound(st, rep(13.6, 0.2, 0.3, 7.0, 19.1))[0] is False    # well under the limit
+    st.goal.safety_factor = None
+    assert S._deflection_bound(st, rep(1.1, 0.464, 0.478, 7.0, 19.1))[0] is True   # a stiffness goal alone
+
+
 TESTS = [
     test_voxelize_keeps_a_whole_grid_box,
     test_pitch_starts_keep_the_lightest_passing_grid,
@@ -1363,6 +1396,7 @@ TESTS = [
     test_printed_search_does_not_amplify_rounding,
     test_restarts_deliver_the_lightest_confirmed_pick,
     test_auto_method_holds_a_lighter_part_to_the_process_check,
+    test_deflection_bound_needs_strength_well_to_spare,
 ]
 
 
