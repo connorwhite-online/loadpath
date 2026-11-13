@@ -736,20 +736,32 @@ def _material_peak(nodes, trusted, vm, xs, w, sig, radius, ratio=1.0):
         return out
 
     tree = cKDTree(xs)
+    svm = equivalent_stress(sig, ratio)
     first = int(np.argmax(np.where(trusted, vm, -1.0)))
-    a0 = float(avg(np.array([first]))[0])
-    hot = xs[equivalent_stress(sig, ratio) >= a0]
+    best_i, best = first, float(avg(np.array([first]))[0])
     cand = np.nonzero(trusted)[0]
-    if len(hot):
+    # hottest first, a block at a time (a block's balls are a few hundred
+    # samples each), the bar raised after each block: the candidates left
+    # are the nodes near a sample reading at least the best so far
+    cand = cand[np.argsort(-vm[cand], kind="stable")]
+    while len(cand):
+        hot = xs[svm >= best]
+        if not len(hot):
+            break
         d = cKDTree(hot).query(nodes[cand], k=1, distance_upper_bound=radius * (1 + 1e-9))[0]
         cand = cand[d < np.inf]
-    if not len(cand):
-        return first, a0
-    vals = avg(cand)
-    j = int(np.argmax(vals))
-    if vals[j] <= a0:
-        return first, a0
-    return int(cand[j]), float(vals[j])
+        block, cand = cand[:_AVG_BLOCK], cand[_AVG_BLOCK:]
+        if not len(block):
+            break
+        vals = avg(block)
+        j = int(np.argmax(vals))
+        if vals[j] > best:
+            best_i, best = int(block[j]), float(vals[j])
+    return best_i, best
+
+
+# nodes averaged at once in _material_peak (memory: nodes x samples per ball)
+_AVG_BLOCK = 2000
 
 
 
