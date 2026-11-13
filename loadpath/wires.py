@@ -963,29 +963,50 @@ def motion_report(w: Laid, limits=None) -> dict:
 # --- channels -----------------------------------------------------------------
 
 def channel_mesh(wires_or_points, radius: float | None = None, clearance: float = 0.5, tol: float = 0.15):
-    """The space cables occupy, as one closed mesh (trimesh): a tube round
-    each centreline (every step of a Laid's history when it has one), grown
-    by `clearance`. A flat cable gets a tube of its half width. For the
-    interior's keep-out, and for a shroud to hide."""
+    """The space cables occupy, as one closed mesh (trimesh): each cable's
+    own section swept along its centreline (every step of a Laid's history
+    when it has one), grown by `clearance`. A round cable's is a tube; a
+    flat cable's is its flat section turned with the cable's own frame (its
+    width along the rod's d1), not a tube of its half width, which kept
+    clear a channel as tall as the cable is wide (an 8 mm FFC 0.3 mm thick
+    got an 8 mm round bore). For the interior's keep-out, and for a shroud
+    to hide."""
     import manifold3d as m3d
     import trimesh
 
+    from .rods import quat_matrix
     lines = []
     for w in wires_or_points if isinstance(wires_or_points, (list, tuple)) else [wires_or_points]:
         if isinstance(w, Laid):
-            r = w.cable.half_width + clearance
-            snaps = [h["points"] for h in w.history] or [w.rod.x]
+            c = w.cable
+            flat = c.kind != "round" and c.half_width > c.radius + 1e-9
+            r = (c.radius if flat else c.half_width) + clearance
+            a = (c.half_width - c.radius) if flat else 0.0
+            snaps = [(h["points"], h.get("quats")) for h in w.history] or [(w.rod.x, w.rod.q)]
             if len(snaps) > 12:
                 snaps = [snaps[i] for i in np.unique(np.linspace(0, len(snaps) - 1, 12).astype(int))]
-            lines += [(s, r) for s in snaps]
+            for pts, q in snaps:
+                d1 = None
+                if flat and q is not None:
+                    d1 = quat_matrix(np.asarray(q, float))[:, :, 0]     # per edge: the width axis
+                lines.append((np.asarray(pts, float), r, a, d1))
         else:
-            lines.append((np.asarray(w, float), float(radius) + clearance))
+            lines.append((np.asarray(w, float), float(radius) + clearance, 0.0, None))
     parts = []
-    for pts, r in lines:
-        pts = _simplify(pts, tol)
+    for pts, r, a, d1 in lines:
         ball = m3d.Manifold.sphere(r, 16)
-        balls = [ball.translate(tuple(p)) for p in pts]
-        parts += [m3d.Manifold.batch_hull([balls[i], balls[i + 1]]) for i in range(len(pts) - 1)]
+        if d1 is None or a <= 0:
+            P = pts[_simplify_index(pts, tol)]
+            balls = [ball.translate(tuple(p)) for p in P]
+            parts += [m3d.Manifold.batch_hull([balls[i], balls[i + 1]]) for i in range(len(P) - 1)]
+            continue
+        # the flat section (a stadium: the width less its rounded edges, then
+        # the thickness round it, as the rod's contact feels it) swept edge by
+        # edge at that edge's own frame, so a twist is followed exactly
+        for e in range(len(pts) - 1):
+            u = a * d1[e] / max(np.linalg.norm(d1[e]), 1e-12)
+            parts.append(m3d.Manifold.batch_hull([ball.translate(tuple(p + sg * u))
+                                                  for p in (pts[e], pts[e + 1]) for sg in (1.0, -1.0)]))
     man = m3d.Manifold.batch_boolean(parts, m3d.OpType.Add)
     m = man.to_mesh()
     # as the boolean left it: merging vertices by position (trimesh's default) can weld two sheets
@@ -993,8 +1014,8 @@ def channel_mesh(wires_or_points, radius: float | None = None, clearance: float 
     return trimesh.Trimesh(np.asarray(m.vert_properties)[:, :3], np.asarray(m.tri_verts), process=False)
 
 
-def _simplify(pts, tol):
-    """Douglas-Peucker."""
+def _simplify_index(pts, tol):
+    """The indices Douglas-Peucker keeps."""
     pts = np.asarray(pts, float)
     keep = np.zeros(len(pts), bool)
     keep[[0, -1]] = True
@@ -1011,7 +1032,7 @@ def _simplify(pts, tol):
         if d[k] > tol:
             keep[i + 1 + k] = True
             stack += [(i, i + 1 + k), (i + 1 + k, j)]
-    return pts[keep]
+    return np.flatnonzero(keep)
 
 
 # --- a whole harness ------------------------------------------------------------

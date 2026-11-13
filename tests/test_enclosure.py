@@ -556,6 +556,32 @@ def test_a_connector_is_centred_on_its_port_by_its_mating_face():
     assert np.allclose(fp, [0.0, 0.0, 1.63]), fp
 
 
+def test_a_cradle_follows_a_round_cell():
+    """A cylinder cell lying on its side is cradled by a saddle that meets
+    it along its curve, a layer of the cradle's thickness under its own
+    underside and inside its own footprint; the bounding box's slab only
+    touched it along its lowest line."""
+    import trimesh
+
+    from loadpath.enclosure import _conforming_cradle
+    from loadpath.sharp import exact_manifold
+    from loadpath.shapes import shape_from_spec, trimesh_from_manifold
+    cell = trimesh.creation.cylinder(radius=9.0, height=65.0, sections=96)
+    cell.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+    ext = {"type": "box", "min": [-50, -30, -30], "max": [50, 30, 30]}
+    spec = _conforming_cradle([cell], cell.bounds, np.array([0.0, 0.0, -1.0]), 1.2, ext,
+                              os.path.join(_DIR, "cradle-cell.stl"))
+    assert spec is not None
+    m = trimesh_from_manifold(exact_manifold(shape_from_spec(spec)))
+    zc = lambda y: -np.sqrt(81.0 - y * y)              # the cell's underside at y
+    # under the cell's lowest line and up its curve, 0.6 mm under its skin
+    assert m.contains([[0, 0, zc(0) - 0.6], [10, 6.0, zc(6.0) - 0.6], [-20, -7.0, zc(7.0) - 0.6]]).all()
+    # not the flat slab: under the curve at the slab's depth, nothing
+    assert not m.contains([[0, 6.0, -9.0 - 0.6], [0, -7.0, -9.0 - 0.6]]).any()
+    # nothing past the footprint, nor in the cell
+    assert not m.contains([[0, 9.6, -8.0], [0, 0, -8.5], [40.0, 0, -9.6]]).any()
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

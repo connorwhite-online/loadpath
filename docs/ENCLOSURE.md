@@ -98,8 +98,13 @@ can follow (`assembly.steps`), each part's moves in the order they go in.
 **3. It mounts what has mass.** Each part with a mass gets a preserved
 cradle under one face: the side given (`mount.side`), else the side it is
 pushed against, else the side it comes to rest on as it goes in, else its
-nearest wall; and never a side that sits in another part's way in. The
-cradles are printed, so every path is checked again with them in place.
+nearest wall; and never a side that sits in another part's way in. A
+cradle follows the part: a layer its thickness deep under the part's own
+underside (read by rays every 0.5 mm) and inside its own outline, so a
+cylinder cell on its side sits in a saddle that meets its curve and an
+L-shaped board gets no slab past its outline (the bounding box's slab did
+both). The cradles are printed, so every path is checked again with them
+in place.
 
 **4. It writes the loads.** `drop: {g, faces}` adds a case per face the
 product can land on: every part's mass at `g` toward that face, carried

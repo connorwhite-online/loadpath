@@ -112,6 +112,26 @@ def test_flat_cable():
     print(f"flat cable ok: S bend {ok['minBendRadius']:.1f} mm; a quarter turn in 30 mm is {tw['maxTwist']:.0f} deg/m, refused")
 
 
+def test_a_flat_cables_channel_is_its_flat_section():
+    """A flat cable's channel is its own section swept with its frame, the
+    clearance round it: an FFC laid flat (width along y) keeps clear its
+    thickness and clearance through it, not a round bore of its half width
+    plus clearance."""
+    cab = W.cable("ffc-8x0.5")
+    hw, t2 = cab.half_width, cab.radius                 # half its width, half its thickness
+    lw = W.lay(cab, _port((0, 0, 0), "+x", up="+z"), _port((30, 0, 0), "-x", up="+z"), slack=0.02)
+    ch = W.channel_mesh([lw], clearance=0.5)
+    assert ch.is_watertight
+    mid = lw.rod.x[len(lw.rod.x) // 2]
+    # across its width it is all there, edge to edge plus clearance
+    assert ch.contains([mid + [0, hw + 0.3, 0], mid - [0, hw + 0.3, 0]]).all()
+    # through its thickness only the thickness and clearance
+    assert ch.contains([mid + [0, 0, t2 + 0.4]]).all()
+    assert not ch.contains([mid + [0, 0, t2 + 0.7], mid - [0, 0, t2 + 0.7]]).any()
+    L = lw.report()["length"]
+    assert ch.volume < 1.3 * L * (2 * hw + 1.0) * (2 * t2 + 1.0) < np.pi * (hw + 0.5) ** 2 * L, ch.volume
+
+
 def test_motion():
     brief = {"wires": [{"id": "w", "cable": {"type": "wire", "awg": 24, "insulation": "silicone"},
                         "from": _port((-30, 0, 0), "+x"), "to": _port((30, 0, 0), "-x", body="arm"), "slack": 0.0}],

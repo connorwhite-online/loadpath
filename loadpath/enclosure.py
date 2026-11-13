@@ -109,6 +109,79 @@ def _cradle(bounds, side: np.ndarray, thickness: float, ext_spec) -> dict:
     return {"type": "intersect", "shapes": [{"type": "box", "min": _r(blo), "max": _r(bhi)}, ext_spec]}
 
 
+def _conforming_cradle(meshes, bounds, side: np.ndarray, thickness: float, ext_spec, path: str,
+                       step: float = 0.5):
+    """A cradle that follows the part: a layer `thickness` mm deep under the
+    part's own underside on `side` (its lowest surface there, read by rays
+    every `step` mm), over the part's own footprint, clipped to the
+    exterior. A board gets the slab under its outline; a cylinder cell on
+    its side a saddle that meets it along its curve. The bounding box's
+    slab touched a round part along one line and stood off it everywhere
+    else, and ran out past an L-shaped board's outline. The spec, or None
+    when it cannot be built (the slab then stands)."""
+    import manifold3d as m3d
+    import trimesh
+
+    from .shapes import manifold_from_trimesh, trimesh_from_manifold
+    from .spec import _frame
+    try:
+        if not meshes:
+            return None
+        body = trimesh.util.concatenate(list(meshes))
+        d = np.asarray(side, float) / np.linalg.norm(side)
+        n = -d                                            # up, from the cradle into the part
+        R = _frame(n)                                     # rows e1, e2, n
+        e1, e2 = R[0], R[1]
+        V = np.asarray(body.vertices, float)
+        uv = V @ R[:2].T
+        lo, hi = uv.min(0), uv.max(0)
+        nu = max(int(np.ceil((hi[0] - lo[0]) / step)) + 1, 2)
+        nv = max(int(np.ceil((hi[1] - lo[1]) / step)) + 1, 2)
+        U = lo[0] + np.arange(nu) * step
+        W = lo[1] + np.arange(nv) * step
+        uu, ww = np.meshgrid(U, W, indexing="ij")
+        z0 = float((V @ n).min()) - 1.0
+        org = uu.reshape(-1, 1) * e1 + ww.reshape(-1, 1) * e2 + z0 * n
+        loc, ray, _ = body.ray.intersects_location(org, np.tile(n, (len(org), 1)), multiple_hits=False)
+        if len(ray) == 0:
+            return None
+        H = np.full(len(org), np.nan)
+        H[ray] = loc @ n
+        H = H.reshape(nu, nv)
+        if np.isnan(H).all():
+            return None
+        # past the footprint (no hit) the nearest hit's height: the footprint
+        # prism below clips the layer to the part's own outline
+        from scipy import ndimage
+        miss = np.isnan(H)
+        if miss.any():
+            idx = ndimage.distance_transform_edt(miss, return_distances=False, return_indices=True)
+            H = H[tuple(idx)]
+        # the part's footprint along n, exact: its shadow, extruded
+        T = np.hstack([R, np.zeros((3, 1))])
+        man = manifold_from_trimesh(body) if body.is_watertight else m3d.Manifold.batch_boolean(
+            [manifold_from_trimesh(m) for m in meshes], m3d.OpType.Add)
+        shadow = man.transform(T).project()
+        hz0, hz1 = float(H.min()) - thickness - 1.0, float(H.max()) + 1.0
+        prism = m3d.Manifold.extrude(shadow, hz1 - hz0).translate((0.0, 0.0, hz0))
+        prism = prism.transform(np.hstack([R.T, np.zeros((3, 1))]))
+        if prism.volume() <= 1e-6:
+            return None
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        trimesh_from_manifold(prism).export(path)
+        if not trimesh.load(path, force="mesh").is_watertight:
+            return None
+    except Exception:  # noqa: BLE001 - the bounding slab stands in
+        return None
+    hf = {"type": "heightfield", "normal": _r(n, 6), "axes": [_r(e1, 6), _r(e2, 6)],
+          "origin": _r(lo, 4), "step": step, "heights": np.round(H, 4).tolist()}
+    return {"type": "intersect", "shapes": [
+        {"type": "mesh", "path": os.path.abspath(path)},
+        {**hf, "side": "below", "depth": round(float(thickness) + 1.0, 4)},
+        {**hf, "side": "above", "offset": -round(float(thickness), 4), "depth": round(float(thickness) + 1.0, 4)},
+        ext_spec]}
+
+
 def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None) -> dict:
     """Brief in; a study, a placement and a report out (files under
     out_dir: cad/<component>.stl in product coordinates, the study). See the
@@ -284,12 +357,14 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         if split:
             paths = {o: {"insertFrom": None, "how": "split: set by shells.apply_split"} for o in a_order
                      if not byid[o].get("installedOn")}
-            mounts, mwarn = _mounts(comps, byid, root, lay, {}, comp_shapes, exterior, ext_spec, min_member, t_skin)
+            mounts, mwarn = _mounts(comps, byid, root, lay, {}, comp_shapes, exterior, ext_spec, min_member, t_skin,
+                                    cad=os.path.join(cad, f"layout{li}"))
             chosen = (lay, mounts, paths, [], mwarn)
             break
         paths = _paths(a_order, byid, root, comp_shapes, lay, [("skin", skin_grid)] + fixed_grids, [], (lo, hi),
                        tol, on_progress, tilt_of)
-        mounts, mwarn = _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member, t_skin)
+        mounts, mwarn = _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member, t_skin,
+                                cad=os.path.join(cad, f"layout{li}"))
         if mounts:
             # the cradles are printed: every path is checked again with them in
             mount_grids = [(f"mount-{k}", _GridShape(shape_from_spec(v["shape"]))) for k, v in mounts.items()]
@@ -985,7 +1060,7 @@ def _first_way(legs, centre):
     return ("+" if d[k] > 0 else "-") + "xyz"[k]
 
 
-def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member, skin=1.0):
+def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member, skin=1.0, cad=None):
     """A cradle under each component with a mass: on the side given, else
     the side it is pushed against (`against`, unless it leaves that way),
     else the side it comes to rest on as it goes in (opposite its first
@@ -1039,7 +1114,13 @@ def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_
         for side in dict.fromkeys(prefs):
             if side == first and not mt.get("side"):
                 continue
-            spec = _cradle(rb, _axis_vec(side), th, ext_spec)
+            spec = None
+            if cad is not None:
+                spec = _conforming_cradle([lay["meshes"][m] for m in groups[c["id"]] if m in lay["meshes"]],
+                                          rb, _axis_vec(side), th, ext_spec,
+                                          os.path.join(cad, f"cradle-{c['id']}-{side.replace('+', 'p').replace('-', 'm')}.stl"))
+            if spec is None:
+                spec = _cradle(rb, _axis_vec(side), th, ext_spec)
             try:
                 sh = shape_from_spec(spec)
                 lo_, hi_ = sh.bounds()
@@ -1048,6 +1129,19 @@ def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_
             ax = [np.linspace(lo_[i], hi_[i], 7) for i in range(3)]
             P = np.stack(np.meshgrid(*ax, indexing="ij"), -1).reshape(-1, 3)
             P = P[sh.sdf(P) <= 0]
+            if spec["shapes"][0].get("type") == "mesh":
+                # a conforming cradle is thin and curved: its own surface,
+                # not a 7-point grid across its bounds, is what may be hit
+                import trimesh
+
+                from .sharp import exact_manifold
+                from .shapes import trimesh_from_manifold
+                try:
+                    tm = trimesh_from_manifold(exact_manifold(sh))
+                    P = np.vstack([tm.vertices, trimesh.sample.sample_surface(tm, 2000, seed=0)[0]]) \
+                        if len(tm.faces) else np.zeros((0, 3))
+                except Exception:  # noqa: BLE001 - the grid's points stand
+                    pass
             if len(P) == 0:
                 continue
             clash = None

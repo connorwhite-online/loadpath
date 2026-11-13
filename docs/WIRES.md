@@ -98,7 +98,9 @@ cable asked to turn a corner in its own plane fails here); whether it is
 too short (pulled taut) or pinched; the pull, side load and moment on
 each connector, against `maxPull`, `maxSide`, `maxMoment` where given;
 voltage drop and self-heating for its `current`. `channels/<id>.stl` is
-the space the cable needs, as a solid to keep clear, and `wires.html` is
+the space the cable needs, as a solid to keep clear (its own section
+swept along it, the clearance round it: a flat cable's flat section turned
+with its frame, not a round tube of its half width), and `wires.html` is
 a viewer: each cable coloured by how close it is to its limit.
 
 ## Through a joint
