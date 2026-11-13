@@ -128,6 +128,20 @@ def test_dipole():
     assert abs(fr - 2.347e9) / 2.347e9 < 0.025, fr
     assert abs(R - 73.0) < 5.0, R
     assert np.all(np.abs(eff - 1.0) < 0.01), (eff.min(), eff.max())
+    # the far field from the box: a half-wave dipole's pattern (Balanis eq.
+    # 4-64) and 2.15 dBi, and the power in it equals the power through the box
+    from loadpath import antenna as A
+    pt = A.pattern(sim, out)
+    th = pt["theta"][:, 0]
+    for i, r in enumerate(pt["byFrequency"]):
+        assert abs(r["farOverFlux"] - 1) < 0.02, r["farOverFlux"]
+        kl = math.pi * r["f"] * L / rf.C0
+        ana = ((np.cos(kl * np.cos(th)) - np.cos(kl)) / np.maximum(np.sin(th), 1e-9)) ** 2
+        g = pt["byFrequency"][i]["gain"][:, 0]
+        assert np.abs(g / g.max() - ana / ana.max())[2:-2].max() < 0.05     # thin-wire sine current, 1.5 to 3.3 GHz
+    mid = pt["byFrequency"][len(pt["byFrequency"]) // 2]
+    assert abs(mid["skyRhcp"] - (mid["skyGain"] - 3.01)) < 0.05      # a linear wave is half right-hand
+    assert abs(mid["directivity"] - 2.2) < 0.2 and abs(mid["upperHemisphere"] - 0.5) < 0.01, {k: v for k, v in mid.items() if k != "gain"}
     print("dipole ok: resonance %.3f GHz (NEC-2 2.347), %.1f ohm, radiated / accepted %.4f to %.4f"
           % (fr / 1e9, R, eff.min(), eff.max()))
 

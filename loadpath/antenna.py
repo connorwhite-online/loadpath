@@ -1604,3 +1604,54 @@ def both_judges(first, second):
     if quicks:
         judge.quick = lambda *a: sum(q(*a) for q in quicks)
     return judge
+
+
+ETA0 = 376.730313668
+
+
+def pattern(sim, out, up=(0.0, 0.0, 1.0), n_theta=37, n_phi=72, sky=10.0):
+    """Radiation pattern after a run (`sim.far_field` on the flux box), read
+    the way an over-the-air test reports it, at each monitor frequency.
+
+    up: the direction the product points at the sky in use (scene
+    coordinates); sky: the elevation above the horizon (degrees) a GPS
+    receiver needs satellites at. Returns per frequency: "directivity"
+    (dBi, peak), "peakGain" (realized: of the power available from the
+    radio, so it carries the match and every loss), "trp" (total radiated
+    over available, dB: what a chamber's TRP divided by the conducted
+    power is), "farOverFlux" (the far field's power over the box's flux:
+    1 when the box is clean), "upperHemisphere" (share of radiated power
+    above the horizon), "skyGain" and "skyRhcp" (mean realized gain, total
+    and right-hand circular, above `sky` degrees elevation, dBi), and the
+    gridded realized gain "gain" (linear) on "theta", "phi" (radians,
+    scene frame)."""
+    th = np.linspace(0.0, np.pi, n_theta)
+    ph = np.linspace(0.0, 2 * np.pi, n_phi, endpoint=False)
+    T, P = np.meshgrid(th, ph, indexing="ij")
+    ff = sim.far_field(T, P)
+    # solid angle of each sample: trapezoid in theta (half at the poles)
+    wt = np.full(n_theta, th[1] - th[0])
+    wt[[0, -1]] *= 0.5
+    dO = (np.sin(T) * wt[:, None]) * (2 * np.pi / n_phi)
+    r = np.stack([np.sin(T) * np.cos(P), np.sin(T) * np.sin(P), np.cos(T)], -1)
+    upv = np.asarray(up, float) / np.linalg.norm(up)
+    elev = np.degrees(np.arcsin(np.clip(r @ upv, -1, 1)))
+    db = lambda v: float(10 * np.log10(max(float(v), 1e-12)))
+    res = []
+    for i in range(len(ff["f"])):
+        U = ff["U"][i]
+        prad = float((U * dO).sum())
+        pav = float(out["available"][i])
+        G = 4 * np.pi * U / pav
+        # right-hand circular for a wave leaving along r (IEEE, e^{jwt})
+        er = (ff["E_theta"][i] - 1j * ff["E_phi"][i]) / math.sqrt(2)
+        Gr = 4 * np.pi * (np.abs(er) ** 2 / (2 * ETA0)) / pav
+        skym = elev >= sky
+        res.append({"f": float(ff["f"][i]), "directivity": db(4 * np.pi * U.max() / prad),
+                    "peakGain": db(G.max()), "trp": db(prad / pav),
+                    "farOverFlux": round(prad / float(out["radiated"][i]), 4),
+                    "upperHemisphere": round(float((U * dO * (0.5 + 0.5 * np.sign(np.round(elev, 6)))).sum()) / prad, 3),
+                    "skyGain": db((G * dO)[skym].sum() / dO[skym].sum()),
+                    "skyRhcp": db((Gr * dO)[skym].sum() / dO[skym].sum()),
+                    "gain": G})
+    return {"theta": T, "phi": P, "elevation": elev, "byFrequency": res}

@@ -325,9 +325,8 @@ checking them, and the rest of that path uses what is already here:
    (laser direct structuring, plated or inked onto a printed surface)
    need the conductor off the grid's planes: a conformal sheet model on
    the same cut-cell treatment.
-4. **Far field.** The radiated power is already integrated over a closed
-   box; transforming that box's fields gives gain and pattern, so "which
-   way does it radiate with the hand on it" has an answer.
+4. **Far field.** Done: `Sim.far_field` and `antenna.pattern` (below,
+   under Metal loss).
 5. **KiCad in.** `loadpath kicad` already reads a board's outline and
    parts ([KICAD.md](KICAD.md)); reading its copper layers makes any
    board's antenna the brief, with no redrawing.
@@ -484,6 +483,25 @@ Checked against a 29 mm square-rod monopole on a 60 mm plate, both at
 quarter-wave cosine current on the rod plus the plate's radial spread
 (7%, `tests/test_frameband.py`). On aluminium at 0.8 to 2.5 GHz it is a
 fraction of a percent of the power; plastic and a hand dominate.
+
+### Radiation pattern
+
+`sim.far_field(theta, phi)` transforms the fields on the flux box into
+the far field (surface equivalence: J = n x H, M = -n x E radiating in
+free space; Balanis, Advanced Engineering Electromagnetics, sec. 6.7).
+`antenna.pattern(sim, out, up=...)` reads it the way an over-the-air
+chamber reports: peak directivity and realized gain, total radiated
+power over the radio's available power, the share above the horizon,
+and the mean realized gain above 10 degrees elevation, total and
+right-hand circular (what a GPS receiver sees from the sky). `farOverFlux`
+compares the far field's power with the flux through the box; it is 1
+when the box is clean (everything lossy inside it).
+
+Checked on the half-wave dipole of `tests/test_rf.py`: 2.147 dBi against
+2.15, the pattern within 0.7% of the thin-wire one at resonance (within
+5% from 1.5 to 3.3 GHz, where the current is no longer a sine), the far
+field's power 0.5% off the box's, half the power in each hemisphere, and
+the right-hand share of a linear wave exactly half.
 
 ## A bench test
 

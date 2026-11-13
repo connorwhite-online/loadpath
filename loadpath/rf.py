@@ -693,6 +693,60 @@ class Sim:
             out["dissipated"] = heat.sum(axis=(1, 2, 3))
         return out
 
+    def far_field(self, theta, phi, which=None):
+        """The far field from the fields on the flux box (surface
+        equivalence: J = n x H, M = -n x E on each face, radiated in free
+        space; Balanis, Advanced Engineering Electromagnetics, 2nd ed.,
+        sec. 6.7). Needs a finished `run`; the box must be in air.
+
+        theta, phi: angles in radians (any matching shapes); which: monitor
+        indices (default all). Returns {"f", "theta", "phi", "E_theta",
+        "E_phi" (complex, r * E in V, with the e^-jkr dropped), "U" (W per
+        steradian)} with the monitor axis first."""
+        th, ph = np.broadcast_arrays(np.asarray(theta, float), np.asarray(phi, float))
+        shape = th.shape
+        th, ph = th.ravel(), ph.ravel()
+        idx = range(len(self.monitor)) if which is None else np.atleast_1d(which)
+        k = 2 * math.pi * np.asarray([self.monitor[i] for i in idx]) / C0
+        st, ct, sp, cp = np.sin(th), np.cos(th), np.sin(ph), np.cos(ph)
+        rhat = np.stack([st * cp, st * sp, ct], 1)
+        that = np.stack([ct * cp, ct * sp, -st], 1)
+        phat = np.stack([-sp, cp, np.zeros_like(sp)], 1)
+        nodes = (self.x, self.y, self.z)
+        N = np.zeros((len(k), len(th), 3), complex)
+        L = np.zeros_like(N)
+        for (ax, side), a, dA in self.near:
+            u, v = (ax + 1) % 3, (ax + 2) % 3
+            sgn = 1.0 if side else -1.0
+            cu = 0.5 * (nodes[u][self.box[u][0]:self.box[u][1]] + nodes[u][self.box[u][0] + 1:self.box[u][1] + 1])
+            cv = 0.5 * (nodes[v][self.box[v][0]:self.box[v][1]] + nodes[v][self.box[v][0] + 1:self.box[v][1] + 1])
+            pos = np.zeros((len(cu), len(cv), 3))
+            pos[..., ax] = nodes[ax][self.box[ax][side]]
+            pos[..., u] = cu[:, None]
+            pos[..., v] = cv[None, :]
+            pos = pos.reshape(-1, 3)
+            w = dA.ravel()
+            for m, i in enumerate(idx):
+                Eu, Ev, Hu, Hv = (a[q][i].ravel().astype(complex) * w for q in range(4))
+                J = np.zeros((len(w), 3), complex)
+                M = np.zeros_like(J)
+                J[:, v], J[:, u] = sgn * Hu, -sgn * Hv           # n x H
+                M[:, v], M[:, u] = -sgn * Eu, sgn * Ev           # -n x E
+                for c0 in range(0, len(th), 512):
+                    sl = slice(c0, c0 + 512)
+                    e = np.exp(1j * k[m] * (rhat[sl] @ pos.T))     # (dirs, points)
+                    N[m, sl] += e @ J
+                    L[m, sl] += e @ M
+        Nt, Np = np.einsum("fdc,dc->fd", N, that), np.einsum("fdc,dc->fd", N, phat)
+        Lt, Lp = np.einsum("fdc,dc->fd", L, that), np.einsum("fdc,dc->fd", L, phat)
+        c = 1j * k[:, None] / (4 * math.pi)
+        Eth = -c * (Lp + ETA0 * Nt)
+        Eph = c * (Lt - ETA0 * Np)
+        U = (np.abs(Eth) ** 2 + np.abs(Eph) ** 2) / (2 * ETA0)
+        r = lambda a: a.reshape((len(k),) + shape)
+        return {"f": k * C0 / (2 * math.pi), "theta": th.reshape(shape), "phi": ph.reshape(shape),
+                "E_theta": r(Eth), "E_phi": r(Eph), "U": r(U)}
+
     def conductors(self):
         """Which pieces of metal are one conductor: an integer per grid node
         (0 where no metal touches it), equal for nodes joined through
