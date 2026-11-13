@@ -391,6 +391,95 @@ def _flip_needles(mesh, rel=1e-10):
     return trimesh.Trimesh(V, F, process=False)
 
 
+def _collapse_short(mesh, length):
+    """`mesh` with its edges shorter than `length` collapsed to their
+    midpoints (the two triangles on each go), where that keeps the surface
+    a closed manifold (the ends share exactly the two corners opposite the
+    edge). A boolean of near-coincident surfaces leaves edges of 1e-7 mm,
+    whose ends OpenCascade takes for one point."""
+    import trimesh
+
+    V = np.array(mesh.vertices, float)
+    F = np.array(mesh.faces, np.int64)
+    T = V[F]
+    L = np.linalg.norm(T[:, [1, 2, 0]] - T, axis=2)
+    if L.min() >= length:
+        return mesh
+    alive = np.ones(len(F), bool)
+    vf = {}
+    for i, f in enumerate(F):
+        for v in f:
+            vf.setdefault(int(v), set()).add(i)
+    short = np.argwhere(L < length)
+    for i, k in short[np.argsort(L[short[:, 0], short[:, 1]])]:
+        if not alive[i]:
+            continue
+        a, b = int(F[i][k]), int(F[i][(k + 1) % 3])
+        if a == b or np.linalg.norm(V[a] - V[b]) >= length:
+            continue
+        both = [t for t in vf[a] & vf[b] if alive[t]]
+        na = {int(x) for t in vf[a] if alive[t] for x in F[t]} - {a, b}
+        nb = {int(x) for t in vf[b] if alive[t] for x in F[t]} - {a, b}
+        opp = {int(x) for t in both for x in F[t]} - {a, b}
+        if len(both) != 2 or na & nb != opp:
+            continue
+        V[a] = 0.5 * (V[a] + V[b])
+        for t in both:
+            alive[t] = False
+        for t in vf[b]:
+            if alive[t]:
+                F[t][F[t] == b] = a
+                vf[a].add(t)
+        vf[b] = set()
+    out = trimesh.Trimesh(V, F[alive], process=False)
+    out.remove_unreferenced_vertices()
+    return out if out.is_watertight and out.is_winding_consistent else mesh
+
+
+def _split_needles(mesh, rel=1e-9):
+    """`mesh` without triangles whose corners lie on a line (a needle the
+    flips of _flip_needles could not remove): the neighbour across the long
+    edge is split at the middle corner and the needle dropped, so the
+    surface stays closed. OpenCascade's mesh-to-shape leaves such a face
+    out, and the shell then has a slit."""
+    import trimesh
+
+    F = [list(map(int, f)) for f in np.asarray(mesh.faces)]
+    V = np.asarray(mesh.vertices, float)
+    for _ in range(8):
+        T = V[np.array(F)]
+        L = np.linalg.norm(T[:, [1, 2, 0]] - T, axis=2)
+        a = np.linalg.norm(np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]), axis=1) / 2
+        bad = set(np.flatnonzero(a <= rel * L.max(1) ** 2).tolist())
+        if not bad:
+            break
+        owner = {}
+        for i, f in enumerate(F):
+            for k in range(3):
+                owner[(f[k], f[(k + 1) % 3])] = i
+        gone, out = set(), []
+        for i in sorted(bad):
+            if i in gone:
+                continue
+            f = F[i]
+            k = int(np.argmax(L[i]))                 # long edge f[k] -> f[k+1], middle corner f[k+2]
+            p, q, m = f[k], f[(k + 1) % 3], f[(k + 2) % 3]
+            j = owner.get((q, p))
+            if j is None or j in gone or j in bad:
+                continue
+            g = F[j]
+            d = [x for x in g if x not in (p, q)]
+            if len(d) != 1:
+                continue
+            d = d[0]
+            gone.update((i, j))
+            out += [[q, m, d], [m, p, d]]            # the neighbour (q, p, d) split at m
+        if not gone:
+            break
+        F = [f for i, f in enumerate(F) if i not in gone] + out
+    return trimesh.Trimesh(V, np.array(F, np.int64), process=False)
+
+
 def _drop_specks(mesh, share=1e-5):
     """`mesh` without the bodies under `share` of its volume: the folded
     zero-volume slivers decimation leaves, each a solid of its own in a
@@ -583,7 +672,7 @@ def _normal(plan, budget, faces, notes):
                 return None
             for q in _flat(kid.shape):
                 if _primitive(q):
-                    tools.append(([_exact(q, faces)], exact_manifold(q)))
+                    tools.append(([_exact(q, faces)], exact_manifold(q), q))
                 else:
                     body = body - exact_manifold(q)
             continue
@@ -596,7 +685,7 @@ def _normal(plan, budget, faces, notes):
         if other[1]:                          # union: (A - T) | B = (A | B) - (T - B)
             return None
         kept = []
-        for occ, man in tools:
+        for occ, man, q in tools:
             shared = (man ^ other[0]).volume()
             if shared > OVERLAP * min(man.volume(), other[0].volume()):
                 less = man - other[0]
@@ -605,7 +694,7 @@ def _normal(plan, budget, faces, notes):
                 pads = [x for b in other[0].decompose() for x in _solids(_on_float32(_mesh_of(b)))]
                 occ = [_referee("subtract", [_fuse_all(occ)], pads, less, notes)]
                 man = less
-            kept.append((occ, man))
+            kept.append((occ, man, q))
         body, tools = body + other[0], kept
     return body, tools
 
@@ -628,7 +717,385 @@ def _build_normal(plan, budget, faces, notes):
     clean = body.simplify(1e-4)               # slivers the booleans left: each would be a degenerate face
     if not clean.is_empty():
         body = clean
-    return _cut_exact(body, [t for t in tools if (t[1] ^ body).volume() > 1e-9], notes)
+    tools = [t for t in tools if (t[1] ^ body).volume() > 1e-9]
+    if not tools:
+        return _body_shape(body)
+    try:
+        return _cut_on_mesh(body, tools, notes)
+    except RuntimeError as e:
+        notes.append({"warning": f"exact faces on the finished mesh failed ({e}); cut by OpenCascade instead"})
+    return _cut_exact(body, [t[:2] for t in tools], notes)
+
+
+LABEL_TOL = 0.005     # mm: a triangle with its corners this close to a cutter's cylinder lies on it (brep.TOL)
+WELD = 2e-3           # mm: edges the cut leaves shorter than this collapse (slivers where a drawn hole meets its cutter)
+EDGE_TOL = 1e-3       # mm: a seam edge's chord against the cylinder (CHORD_TOL sag, welded)
+
+
+def _cut_on_mesh(body, tools, notes):
+    """The manifold `body` less the exact cutters `tools`, as an OpenCascade
+    solid built from the finished mesh: no OpenCascade boolean at all.
+
+    manifold3d makes the cut (body less each cutter at CHORD_TOL, 2 um, the
+    same mesh the STL is). Each connected stretch of the result lying on a
+    cutter's cylinder (a bore wall, a counterbore) becomes one face on that
+    exact cylinder, bounded by its seam edges with the facets next to it;
+    every other triangle is a planar face sharing those edges, and coplanar
+    ones merge into planes afterwards (UnifySameDomain). The geometry is the
+    mesh's, so the solid is the STL's to within the chord, whatever the
+    body looks like near the cutter. OpenCascade's own cut of a faceted body
+    by an exact cylinder fails where the body's facets lie on the cutter (a
+    drawn pad's screw hole drilled by its own screw's keep-out, a counterbore
+    floor on the pad's top, a drive clearance coaxial with the counterbore):
+    which of them failed changed with the optimized body, so how many bores
+    came out exact changed from machine to machine. Raises RuntimeError when
+    the result is not valid solids of the cut's volume."""
+    import manifold3d as m3d
+
+    from .shapes import Box
+    from .sharp import CHORD_TOL, exact_manifold
+
+    # the cutters a quarter of the STL's chord: a seam edge then sags under
+    # the 2 um a fine triangulation of the file is read at (shape_to_trimesh),
+    # so it meets the facets beside it node for node. A cutter trimmed by a
+    # kept pad (_normal's union) stays as it is.
+    cut = []
+    for t in tools:
+        man = t[1]
+        if not isinstance(t[2], Box):
+            fine = exact_manifold(t[2], CHORD_TOL / 4)
+            if abs(exact_manifold(t[2]).volume() - man.volume()) <= 1e-9 * max(man.volume(), 1.0):
+                man = fine
+        cut.append(man)
+    part = body - m3d.Manifold.batch_boolean(cut, m3d.OpType.Add)
+    clean = part.simplify(WELD)
+    if not clean.is_empty():
+        part = clean
+    pieces = part.decompose()
+    if len(pieces) > 1:                   # zero-volume specks the cut leaves, each a solid of its own
+        total = sum(abs(p.volume()) for p in pieces)
+        pieces = [p for p in pieces if abs(p.volume()) >= 1e-5 * total]
+        part = m3d.Manifold.batch_boolean(pieces, m3d.OpType.Add) if len(pieces) > 1 else pieces[0]
+    mesh = _split_needles(_flip_needles(_collapse_short(_mesh_of(part), WELD)))
+    return _mesh_solid(mesh, [t[2] for t in tools], part.volume(), notes)
+
+
+def _mesh_solid(mesh, cutters, want, notes):
+    """The closed `mesh` (`want` mm^3) as an OpenCascade solid, a compound
+    of solids if it is several bodies: its triangles lying on the
+    `cutters`' cylinders as faces on those cylinders, the rest planar
+    facets (_cut_on_mesh)."""
+    import scipy.sparse as sp
+    import trimesh
+    from OCP.BRep import BRep_Builder, BRep_Tool
+    from OCP.BRepBuilderAPI import (
+        BRepBuilderAPI_MakeShapeOnMesh,
+        BRepBuilderAPI_MakeSolid,
+    )
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.Poly import Poly_Triangle, Poly_Triangulation
+    from OCP.ShapeFix import ShapeFix_Solid
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_VERTEX
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS, TopoDS_Shell
+    from scipy.sparse.csgraph import connected_components
+
+    from .brep import ISLAND, _shape_surfaces, _uv, islands, label
+
+    if not len(mesh.faces) or not mesh.is_watertight:
+        raise RuntimeError("the cut mesh is not closed")
+    surfs = []
+    for q in cutters:
+        _shape_surfaces(q, surfs)
+    surfs = [s for s in surfs if s.kind == "cylinder"]
+    keys, geo = {}, {}
+    for k, s in enumerate(surfs):
+        lk = keys.setdefault(s.key(), k + 1)
+        geo.setdefault(lk, s)
+    lab = label(mesh, surfs, LABEL_TOL) if surfs else np.zeros(len(mesh.faces), np.int64)
+    lab = islands(mesh, lab, ISLAND, geo, tol=LABEL_TOL)
+    V = np.asarray(mesh.vertices, float)
+    F = np.asarray(mesh.faces, np.int64)
+
+    # every triangle a planar face, all sharing their edges and vertices
+    tri = Poly_Triangulation(len(V), len(F), False)
+    for i, v in enumerate(V):
+        tri.SetNode(i + 1, _pnt(v))
+    for i, f in enumerate(F):
+        tri.SetTriangle(i + 1, Poly_Triangle(int(f[0]) + 1, int(f[1]) + 1, int(f[2]) + 1))
+    mk = BRepBuilderAPI_MakeShapeOnMesh(tri)
+    mk.Build()
+    # each face's triangle, by its corners (MakeShapeOnMesh leaves out a
+    # triangle with no area: three corners on a line)
+    index = {tuple(v): i for i, v in enumerate(V.tolist())}
+    tri_index = {tuple(sorted(f)): i for i, f in enumerate(F.tolist())}
+    faces = [None] * len(F)
+    ex = TopExp_Explorer(mk.Shape(), TopAbs_FACE)
+    while ex.More():
+        fc = TopoDS.Face(ex.Current())
+        got = set()
+        ee = TopExp_Explorer(fc, TopAbs_VERTEX)
+        while ee.More():
+            got.add(index.get(BRep_Tool.Pnt_s(TopoDS.Vertex(ee.Current())).Coord()))
+            ee.Next()
+        i = tri_index.get(tuple(sorted(got))) if None not in got else None
+        if i is None:
+            raise RuntimeError("a face is not one of the mesh's triangles")
+        faces[i] = fc
+        ex.Next()
+
+    def ends(e):
+        a = BRep_Tool.Pnt_s(TopoDS.Vertex(_first_vertex(e)))
+        b = BRep_Tool.Pnt_s(TopoDS.Vertex(_last_vertex(e)))
+        return np.array([a.X(), a.Y(), a.Z()]), np.array([b.X(), b.Y(), b.Z()])
+
+    A = np.asarray(mesh.face_adjacency)
+    same = (lab[A[:, 0]] == lab[A[:, 1]]) & (lab[A[:, 0]] > 0)
+    keep = np.ones(len(F), bool)
+    region_faces, region_tri, fell = [], [], []
+    # each stretch in sectors of a third of a turn, so no face wraps the
+    # cylinder (a ring round a bore closes in 3-D but not in its (u, v): it
+    # would need a seam edge); UnifySameDomain joins the sectors again
+    C = V[F].mean(axis=1)
+    sector = np.full(len(F), -1)
+    for lk, s in geo.items():
+        on = lab == lk
+        u = _uv(s, C[on])[:, 0]
+        sector[on] = np.floor((u + np.pi) / (2 * np.pi / 3)).clip(0, 2).astype(int)
+    same = same & (sector[A[:, 0]] == sector[A[:, 1]])
+    G = sp.coo_matrix((np.ones(same.sum()), (A[same, 0], A[same, 1])), shape=(len(F), len(F)))
+    _, comp = connected_components(G, directed=False)
+    comp = np.where(lab > 0, comp, -1)
+    work = [np.flatnonzero(comp == c) for c in np.unique(comp[comp >= 0])]
+    tries = 0
+    while work:
+        tris = work.pop()
+        s = geo[int(lab[tris[0]])]
+        try:
+            region_faces.append(_cylinder_region(s, tris, V, F, faces, ends))
+            region_tri.append(int(tris[0]))
+            keep[tris] = False
+        except _Crossing as e:
+            # the triangles at the crossing stay facets, the rest is tried again
+            tries += 1
+            rest = tris[~np.isin(F[tris], e.verts).any(axis=1)]
+            if not e.verts or tries > 200 or len(rest) == len(tris):
+                fell.append(f"{len(tris)} triangles: {e}")
+                continue
+            if len(rest):
+                sub = np.isin(A, rest).all(axis=1) & same
+                G = sp.coo_matrix((np.ones(sub.sum()), (A[sub, 0], A[sub, 1])), shape=(len(F), len(F)))
+                _, cc = connected_components(G, directed=False)
+                work += [rest[cc[rest] == k] for k in np.unique(cc[rest])]
+        except RuntimeError as e:
+            fell.append(f"{len(tris)} triangles: {e}")
+    # one solid per separate body: one shell holding several closed
+    # surfaces is not a valid solid (fragments are dropped by the caller)
+    body_of = trimesh.graph.connected_component_labels(A, node_count=len(F))
+    groups = {}
+    for i in np.flatnonzero(keep):
+        if faces[i] is not None:
+            groups.setdefault(int(body_of[i]), []).append(faces[i])
+    for f, t in zip(region_faces, region_tri):
+        groups.setdefault(int(body_of[t]), []).append(f)
+    bb = BRep_Builder()
+    solids = []
+    for k in sorted(groups):
+        shell = TopoDS_Shell()
+        bb.MakeShell(shell)
+        for f in groups[k]:
+            bb.Add(shell, f)
+        shell.Closed(True)
+        sol = BRepBuilderAPI_MakeSolid(shell).Solid()
+        if not BRepCheck_Analyzer(sol).IsValid():
+            fx = ShapeFix_Solid(sol)
+            fx.Perform()
+            sol = fx.Solid()
+        if not BRepCheck_Analyzer(sol).IsValid():
+            raise RuntimeError(f"the solid from the cut mesh is not valid (body {k}, {len(groups[k])} faces)")
+        solids.append(sol)
+    if len(solids) == 1:
+        solid = solids[0]
+    else:
+        from OCP.TopoDS import TopoDS_Compound
+
+        solid = TopoDS_Compound()
+        bb.MakeCompound(solid)
+        for sol in solids:
+            bb.Add(solid, sol)
+    if abs(_volume(solid) - want) > 1e-3 * want + 1e-6:
+        raise RuntimeError(f"the solid's volume {_volume(solid):.3f} is not the cut mesh's {want:.3f}")
+    if fell:
+        notes.append({"warning": f"{len(fell)} stretch(es) of cutter surface would not make a face on the "
+                                 "exact cylinder and are facets in the file", "why": fell[:5]})
+    return solid
+
+
+def _first_vertex(e):
+    from OCP.TopExp import TopExp
+    from OCP.TopoDS import TopoDS
+
+    return TopExp.FirstVertex_s(TopoDS.Edge(e))
+
+
+def _last_vertex(e):
+    from OCP.TopExp import TopExp
+    from OCP.TopoDS import TopoDS
+
+    return TopExp.LastVertex_s(TopoDS.Edge(e))
+
+
+def _cylinder_region(s, tris, Vx, F, faces, ends):
+    """One face on the exact cylinder `s` over the triangles `tris`, bounded
+    by the edges those triangles share with the rest (the edges of `faces`,
+    the triangles' own planar faces, so the solid stays one piece). Each
+    edge gets a line in the cylinder's (u, v) between its ends, the angle
+    unwrapped along its loop (the caller hands over pieces under a third of
+    a turn, so no loop wraps the cylinder and no seam edge is needed).
+    RuntimeError unless the face is valid; _Crossing when its boundary
+    crosses itself, naming the corners where."""
+    from OCP.BRep import BRep_Builder, BRep_Tool
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.BRepLib import BRepLib
+    from OCP.Geom2d import Geom2d_BSplineCurve
+    from OCP.gp import gp_Pnt2d
+    from OCP.OCP.collections import Array1_double, Array1_gp_Pnt2d, Array1_int
+    from OCP.ShapeFix import ShapeFix_Face
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FORWARD, TopAbs_REVERSED
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS, TopoDS_Face, TopoDS_Wire
+
+    from .brep import _uv
+
+    tri_of = {}
+    for t in tris:
+        f = [int(x) for x in F[t]]
+        for k in range(3):
+            tri_of[(f[k], f[(k + 1) % 3])] = int(t)
+    # boundary half-edges a -> b (counterclockwise about the part's outside)
+    nxt = {}
+    for (a, b_), t in tri_of.items():
+        if (b_, a) not in tri_of:
+            nxt.setdefault(a, []).append(b_)
+    if not nxt:
+        raise RuntimeError("no boundary")
+    # the triangles' own edges, by their ends
+    edge = {}
+    for t in tris:
+        f = [int(x) for x in F[int(t)]]
+        if faces[int(t)] is None:
+            continue
+        ee = TopExp_Explorer(faces[int(t)], TopAbs_EDGE)
+        while ee.More():
+            e = TopoDS.Edge(ee.Current().Oriented(TopAbs_FORWARD))
+            i, j = (f[int(np.argmin(np.linalg.norm(Vx[f] - p, axis=1)))] for p in ends(e))
+            edge[(i, j)] = (e, False)
+            edge[(j, i)] = (e, True)
+            ee.Next()
+    loops = []
+    while nxt:
+        a0 = next(iter(nxt))
+        loop, a = [], a0
+        while True:
+            outs = nxt.get(a)
+            if not outs:
+                raise RuntimeError("boundary does not close")
+            b_ = outs.pop()
+            if not outs:
+                del nxt[a]
+            loop.append((a, b_))
+            a = b_
+            if a == a0:
+                break
+        loops.append(loop)
+    T = Vx[F[tris]]
+    tn = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+    # the part's outside against the surface's own normal (a bore): the loops
+    # run the other way round the surface, and the face is reversed
+    flip = float(np.einsum("ij,ij->", tn, s.normal(T.mean(axis=1)))) < 0
+    if flip:
+        loops = [[(b_, a) for a, b_ in reversed(lp)] for lp in loops]
+    geom = s.geom()
+    bb = BRep_Builder()
+    face = TopoDS_Face()
+    bb.MakeFace(face, geom, 1e-7)
+    ref = None
+    for loop in sorted(loops, key=len, reverse=True):
+        P = []
+        for a, b_ in loop:
+            if (a, b_) not in edge:
+                raise RuntimeError("a seam edge has no face")
+            e, rev = edge[(a, b_)]
+            p = BRep_Tool.Pnt_s(TopoDS.Vertex(_first_vertex(e) if not rev else _last_vertex(e)))
+            P.append((p.X(), p.Y(), p.Z()))
+        P = np.array(P + [P[0]])
+        UV = _uv(s, P)
+        UV[:, 0] = np.unwrap(UV[:, 0])
+        if abs(UV[-1, 0] - UV[0, 0]) > np.pi:
+            raise RuntimeError("a loop wraps the cylinder")
+        if ref is None:
+            ref = float(UV[:, 0].mean())
+        UV[:, 0] += 2 * np.pi * np.round((ref - UV[:, 0].mean()) / (2 * np.pi))   # holes inside the outer loop
+        wire = TopoDS_Wire()
+        bb.MakeWire(wire)
+        for k, (a, b_) in enumerate(loop):
+            e, rev = edge[(a, b_)]
+            p, q = UV[k], UV[k + 1]
+            if rev:
+                p, q = q, p
+            d = q - p
+            L = float(np.hypot(*d))
+            if L < 1e-12:
+                raise RuntimeError("a degenerate seam edge")
+            c0, c1 = BRep_Tool.Range_s(e)
+            poles = Array1_gp_Pnt2d(1, 2)
+            poles.SetValue(1, gp_Pnt2d(float(p[0]), float(p[1])))
+            poles.SetValue(2, gp_Pnt2d(float(q[0]), float(q[1])))
+            knots, mults = Array1_double(1, 2), Array1_int(1, 2)
+            knots.SetValue(1, float(c0))
+            knots.SetValue(2, float(c1))
+            mults.SetValue(1, 2)
+            mults.SetValue(2, 2)
+            pc = Geom2d_BSplineCurve(poles, knots, mults, 1)
+            bb.UpdateEdge(e, pc, face, EDGE_TOL)
+            bb.Add(wire, e.Oriented(TopAbs_REVERSED) if rev else e)
+        bb.Add(face, wire)
+    BRepLib.SameParameter_s(face, EDGE_TOL)
+    fx = ShapeFix_Face(face)
+    fx.Perform()
+    out = fx.Face()
+    if not BRepCheck_Analyzer(out).IsValid():
+        raise _crossing(out, Vx, np.unique(F[tris]), ends)
+    return out.Reversed() if flip else out
+
+
+class _Crossing(RuntimeError):
+    """A cylinder face whose boundary crosses itself in (u, v) within the
+    edges' tolerance: two seam edges a micron apart, where the cut's slivers
+    meet (a drawn hole's rim on the counterbore floor). `verts` are their
+    ends."""
+
+    def __init__(self, msg, verts=()):
+        super().__init__(msg)
+        self.verts = list(verts)
+
+
+def _crossing(face, Vx, near, ends):
+    from OCP.BRepCheck import BRepCheck_Wire
+    from OCP.TopAbs import TopAbs_WIRE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS, TopoDS_Edge
+
+    verts = []
+    ex = TopExp_Explorer(face, TopAbs_WIRE)
+    while ex.More():
+        e1, e2 = TopoDS_Edge(), TopoDS_Edge()
+        if "Self" in str(BRepCheck_Wire(TopoDS.Wire(ex.Current())).SelfIntersect(face, e1, e2, True)):
+            for e in (e1, e2):
+                for p in ends(e):
+                    verts.append(int(near[np.argmin(np.linalg.norm(Vx[near] - p, axis=1))]))
+        ex.Next()
+    return _Crossing("cylinder face is not valid", verts)
 
 
 SCREEN_PAD = 2.0            # mm of the body kept around a cutter when it is tried alone (_screen)
@@ -1046,6 +1513,41 @@ def _smooth_shape(part, plan, patches, notes, degree=None):
     return solid
 
 
+def _unify(shape):
+    """Coplanar facets merged into planes, pieces of one cylinder into one
+    face (ShapeUpgrade_UnifySameDomain), kept only if the result is valid.
+    A bore's faces built on the mesh (_cut_on_mesh) sit on their seam edges
+    within EDGE_TOL; merging them, or the edges along them, can leave a
+    face OpenCascade rejects, and then they stay as built (a bore in three
+    sectors) while the planes still merge."""
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.GeomAbs import GeomAbs_Plane
+    from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    valid = BRepCheck_Analyzer(shape).IsValid()
+    for planes_only in (False, True):
+        u = ShapeUpgrade_UnifySameDomain(shape, not planes_only, True, False)
+        u.SetLinearTolerance(1e-5)
+        if planes_only:
+            fe = TopExp_Explorer(shape, TopAbs_FACE)
+            while fe.More():
+                if BRepAdaptor_Surface(TopoDS.Face(fe.Current())).GetType() != GeomAbs_Plane:
+                    ee = TopExp_Explorer(fe.Current(), TopAbs_EDGE)
+                    while ee.More():
+                        u.KeepShape(ee.Current())
+                        ee.Next()
+                fe.Next()
+        u.Build()
+        out = u.Shape()
+        if not valid or BRepCheck_Analyzer(out).IsValid():
+            return out
+    return shape
+
+
 def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=True, surface="facets",
                 patches=DEFAULT_PATCHES, degree=None, tolerance=None):
     """Write `part` (a trimesh from a field graph or a study, or a CSG plan)
@@ -1093,12 +1595,7 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
             keep_with = _exact(keep, faces)
             shape, dropped = _keep_bodies(shape, keep_with)
         if unify:
-            from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
-
-            u = ShapeUpgrade_UnifySameDomain(shape, True, True, False)
-            u.SetLinearTolerance(1e-5)
-            u.Build()
-            shape = u.Shape()
+            shape = _unify(shape)
     else:
         dropped = 0
     valid = bool(BRepCheck_Analyzer(shape).IsValid()) if check else None

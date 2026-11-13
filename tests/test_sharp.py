@@ -364,21 +364,25 @@ def test_step_of_a_part_with_meshed_pads_is_one_valid_solid_with_exact_holes():
 
 
 def test_step_boolean_that_does_not_finish_is_written_as_facets():
-    """An OpenCascade boolean runs under a clock; one that does not come
-    back in time leaves its cutters to manifold3d (facets), noted, and the
-    file is still one valid solid of the right volume."""
+    """The OpenCascade cut (used when the exact faces cannot be built on the
+    finished mesh) runs under a clock; a boolean that does not come back in
+    time leaves its cutters to manifold3d (facets), noted, and the file is
+    still one valid solid of the right volume."""
     if not available():
         print("  (OpenCascade not installed: skipped)")
         return
     from loadpath import step
 
-    old = step.BOOL_INLINE, os.environ.get("LOADPATH_STEP_BOOL_SECONDS")
-    step.BOOL_INLINE, os.environ["LOADPATH_STEP_BOOL_SECONDS"] = 0, "0.01"
+    def refuse(*a, **k):
+        raise RuntimeError("refused for the test")
+
+    old = step.BOOL_INLINE, os.environ.get("LOADPATH_STEP_BOOL_SECONDS"), step._cut_on_mesh
+    step.BOOL_INLINE, os.environ["LOADPATH_STEP_BOOL_SECONDS"], step._cut_on_mesh = 0, "0.01", refuse
     try:
         with tempfile.TemporaryDirectory() as td:
             rep = export_step(_padded_plan(), os.path.join(td, "padded.step"), faces=4000)
     finally:
-        step.BOOL_INLINE = old[0]
+        step.BOOL_INLINE, step._cut_on_mesh = old[0], old[2]
         if old[1] is None:
             del os.environ["LOADPATH_STEP_BOOL_SECONDS"]
         else:
@@ -391,6 +395,94 @@ def test_step_boolean_that_does_not_finish_is_written_as_facets():
     assert abs(rep["volume"] / want - 1) < 2e-3, (rep["volume"], want)
 
 
+def _drilled_pad_plan():
+    """The step-import elbow's bolt seats: pads that come from the drawn
+    part with their screw holes already in them (a coarser polygon than the
+    cutter's), each drilled again by its screw's keep-out, a counterbore
+    whose floor is the pad's top, and a drive clearance coaxial with the
+    counterbore running out of the part. Every one of those cutter
+    surfaces lies on a surface the body already has."""
+    import manifold3d as m3d
+    import trimesh
+
+    from loadpath.shapes import Cylinder, MeshShape, Union, trimesh_from_manifold
+    from loadpath.sharp import Exact, Op, Organic
+
+    pads = []
+    for x in (-14.0, 14.0):
+        pad = m3d.Manifold.cube((8.0, 8.0, 3.0)).translate((x - 4.0, -4.0, 0.0))
+        pad = pad - m3d.Manifold.cylinder(5.0, 1.7, 1.7, 40).translate((x, 0.0, -1.0))
+        pads.append(pad)
+    pm = trimesh_from_manifold(m3d.Manifold.batch_boolean(pads, m3d.OpType.Add))
+    pads = MeshShape(trimesh.Trimesh(np.array(pm.vertices, float), np.array(pm.faces), process=False))
+    body = trimesh.creation.icosphere(subdivisions=4, radius=1.0)
+    body.apply_scale([22.0, 12.0, 9.0])
+    env = trimesh.creation.box(extents=[40, 20, 12])
+    env.apply_translation([0, 0, 6])
+    cut = []
+    for x in (-14.0, 14.0):
+        cut += [Cylinder([x, 0, -0.5], [x, 0, 3.0], 1.7), Cylinder([x, 0, 3.0], [x, 0, 6.5], 3.0),
+                Cylinder([x, 0, 40.0], [x, 0, 3.0], 3.0)]
+    p = Op("intersect", [Organic(None, ["organic"], mesh=body), Exact(MeshShape(env), "envelope")])
+    p = Op("union", [p, Exact(pads, "preserve")])
+    return Op("subtract", [p, Exact(Union(cut), "keep-out")])
+
+
+def test_step_bores_exact_where_the_body_already_lies_on_them():
+    """Bores drilled through drawn holes, counterbores on a pad's top and
+    a coaxial clearance all come out as exact cylinders, in one valid solid
+    of the cut's volume. OpenCascade's cut of the faceted body by these
+    cylinders failed or came back uncut on some bodies and not others (the
+    step-import tutorial passed on one machine and lost every bore on
+    another); the faces are now made on manifold3d's cut."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    from loadpath import step
+
+    with tempfile.TemporaryDirectory() as td:
+        rep = export_step(_drilled_pad_plan(), os.path.join(td, "drilled.step"), faces=4000)
+    assert rep["valid"] and rep["solids"] == 1 and rep.get("readBackValid", True), rep
+    assert rep["faces"].get("cylinder", 0) >= 4, rep["faces"]          # two screw bores, two counterbores
+    assert not [n for n in rep.get("decimated", []) if "warning" in n], rep["decimated"]
+    body, tools = step._normal(_drilled_pad_plan(), {}, 4000, [])
+    import manifold3d as m3d
+
+    want = (body - m3d.Manifold.batch_boolean([t[1] for t in tools], m3d.OpType.Add)).volume()
+    assert abs(rep["volume"] / want - 1) < 1e-3, (rep["volume"], want)
+
+
+def test_step_bores_exact_on_the_elbow_bolt_seat():
+    """A bolt seat cut out of the step-import elbow's optimized body (one
+    that lost every exact bore on main: OpenCascade's cut of these facets by
+    the screw bore came back invalid, the counterbore and its drive
+    clearance uncut, at every fuzz): the screw bore and the counterbore wall
+    are exact cylinders, and the solid is the cut's volume."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    import manifold3d as m3d
+    import trimesh
+
+    from loadpath import step
+    from loadpath.shapes import Cylinder, Union
+    from loadpath.sharp import Exact, Op, Organic
+
+    z = np.load(os.path.join(os.path.dirname(__file__), "data", "elbow-bolt-seat.npz"))
+    seat = trimesh.Trimesh(z["V"], z["F"], process=False)
+    cut = [Cylinder([8, 8, -0.5], [8, 8, 3.0], 1.7), Cylinder([8, 8, 3.0], [8, 8, 6.5], 3.0),
+           Cylinder([8, 8, 83.92], [8, 8, 3.0], 3.0), Cylinder([8, 8, -0.25], [8, 8, -80.9], 1.69)]
+    plan = Op("subtract", [Organic(None, ["organic"], mesh=seat), Exact(Union(cut), "keep-out")])
+    with tempfile.TemporaryDirectory() as td:
+        rep = export_step(plan, os.path.join(td, "seat.step"), faces=100000)
+    assert rep["valid"] and rep["solids"] == 1, rep
+    assert rep["faces"].get("cylinder", 0) >= 2, rep["faces"]
+    assert not [n for n in rep.get("decimated", []) if "warning" in n], rep["decimated"]
+    body, tools = step._normal(plan, {}, 100000, [])
+    want = (body - m3d.Manifold.batch_boolean([t[1] for t in tools], m3d.OpType.Add)).volume()
+    assert abs(rep["volume"] / want - 1) < 1e-3, (rep["volume"], want)
+
+
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
          test_mesh_distance_matches_trimesh, test_step_keeps_the_bore_a_cylinder,
          test_study_part_exports_exact_interfaces, test_run_field_reports_edges_and_writes_step,
@@ -399,7 +491,9 @@ TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact
          test_write_step_keeps_points_unrounded_when_rounding_breaks_the_part,
          test_step_keeps_a_gyroid_cores_tunnels, test_flip_needles_removes_zero_area_faces,
          test_step_of_a_part_with_meshed_pads_is_one_valid_solid_with_exact_holes,
-         test_step_boolean_that_does_not_finish_is_written_as_facets]
+         test_step_boolean_that_does_not_finish_is_written_as_facets,
+         test_step_bores_exact_where_the_body_already_lies_on_them,
+         test_step_bores_exact_on_the_elbow_bolt_seat]
 
 
 def main():
