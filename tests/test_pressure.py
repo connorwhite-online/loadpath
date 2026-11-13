@@ -56,8 +56,25 @@ def test_thick_sphere_matches_lame():
     rep = verify_part(st, mesh, max_cells=30_000, refine=1)
     c = rep["cases"][0]
     assert c["pressureImbalance"] < 1e-9
-    # measured (2026-10-29): 22.4 MPa vs 21.3, bulge 0.068 vs 0.062 mm
-    assert 0.95 * vm < c["peakStress"] < 1.15 * vm, (c["peakStress"], vm)
+    # The check reads stress averaged over the material's length (the
+    # stress the material answers to, verify._MaterialAverage), so the
+    # reference is Lame's field averaged over the same ball at the bore,
+    # cut by the bore: 20.3 MPa against 21.3 at the point for PLA's 0.86 mm.
+    # measured (2026-11-13): 19.6 MPa; point reading (2026-10-29) 22.4
+    rad = rep["stressReading"]["radius"]
+    g = np.linspace(-rad, rad, 41)
+    q = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
+    q = q[np.linalg.norm(q, axis=1) <= rad] + [a, 0, 0]
+    r = np.linalg.norm(q, axis=1)
+    q, r = q[r >= a], r[r >= a]
+    k = p * a ** 3 / (b ** 3 - a ** 3)
+    sr, st_ = k * (1 - b ** 3 / r ** 3), k * (1 + b ** 3 / (2 * r ** 3))
+    nn = q / r[:, None]
+    s = (st_[:, None, None] * np.eye(3) + (sr - st_)[:, None, None] * nn[:, :, None] * nn[:, None, :]).mean(0)
+    dev = s - np.trace(s) / 3 * np.eye(3)
+    vm_avg = float(np.sqrt(1.5 * (dev * dev).sum()))
+    assert vm_avg < vm
+    assert 0.95 * vm_avg < c["peakStress"] < 1.15 * vm_avg, (c["peakStress"], vm_avg, vm)
     assert 0.95 * ua < c["deflection"] < 1.15 * ua, (c["deflection"], ua)
 
 
