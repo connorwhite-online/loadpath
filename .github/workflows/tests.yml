@@ -41,8 +41,8 @@ jobs:
             files: tests/test_casting.py tests/test_slipcast.py tests/test_castfeed.py
           - group: enclosure       # ~11 min
             files: tests/test_enclosure.py
-          - group: vibration       # vibration 9.5 min, direct 2
-            pytest: tests/test_pools.py tests/test_bucklingopt.py tests/test_direct.py tests/test_vibration.py
+          - group: vibration       # vibration 9.5 min, direct 2, tetsolve 0.5
+            pytest: tests/test_pools.py tests/test_bucklingopt.py tests/test_direct.py tests/test_vibration.py tests/test_tetsolve.py
           - group: analysis        # ~12 min (study_limits 3, reactions 2)
             pytest: >-
               tests/test_mass_properties.py tests/test_inertia_relief.py tests/test_point_maps.py

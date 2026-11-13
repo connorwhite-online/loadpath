@@ -735,6 +735,31 @@ except ImportError:  # pragma: no cover - numba is a dependency
     pass
 
 
+def _threads() -> int:
+    """Threads for the confirm's numpy work: LOADPATH_THREADS, else the
+    cores this process may use."""
+    env = os.environ.get("LOADPATH_THREADS", "").strip()
+    try:
+        if env:
+            return max(1, int(env))
+    except ValueError:
+        pass
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+def _element_matrices(nodes, cc, c):
+    """P2 stiffness matrices (ne, 30, 30) of elements `cc`, elasticity `c`."""
+    vol, g = _grads(nodes, cc)
+    ke = np.zeros((len(cc), 30, 30))
+    for q in _QUAD:
+        b = _b_matrices(_shape_grads(g, q))
+        ke += np.einsum("eki,kl,elj->eij", b, c, b, optimize=True) * (vol / 4.0)[:, None, None]
+    return ke
+
+
 def _assemble(nodes, conn, E, nu, chunk=20_000, extra=()):
     """Global stiffness, vectorized over elements in chunks (skfem's
     assembly took 117 of 644 s on the wrist yoke), added straight into the
@@ -764,14 +789,25 @@ def _assemble(nodes, conn, E, nu, chunk=20_000, extra=()):
         indices[idx] = cols3
     del cols3
     data = np.zeros(len(indices))
-    for s0 in range(0, len(conn), chunk):
-        cc = conn[s0:s0 + chunk]
-        vol, g = _grads(nodes, cc)
-        ke = np.zeros((len(cc), 30, 30))
-        for q in _QUAD:
-            b = _b_matrices(_shape_grads(g, q))
-            ke += np.einsum("eki,kl,elj->eij", b, c, b, optimize=True) * (vol / 4.0)[:, None, None]
-        _scatter(np.ascontiguousarray(cc, np.int64), ke, nptr, nind, data)
+    # element matrices on threads (numpy's loops release the GIL), a
+    # quarter chunk each; the scatter on every core, rows split among them
+    # (tetsolve.scatter). Each entry is summed in element order either way:
+    # the same bits as one thread. (The turret's 325k tets: 22.3 s, 15.1.)
+    from . import tetsolve
+    from .pools import pool
+
+    parts = _threads()
+    sub = max(1, -(-chunk // parts))
+    with pool(parts) as ex:
+        for s0 in range(0, len(conn), chunk):
+            cc = np.ascontiguousarray(conn[s0:s0 + chunk], np.int64)
+            kes = list(ex.map(lambda a, cc=cc: _element_matrices(nodes, cc[a:a + sub], c), range(0, len(cc), sub)))
+            ke = kes[0] if len(kes) == 1 else np.concatenate(kes)
+            del kes
+            if tetsolve.available():
+                tetsolve.scatter(cc, ke, nptr, nind, data)
+            else:  # pragma: no cover - numba is a dependency
+                _scatter(cc, ke, nptr, nind, data)
     for idx, blocks in extra:
         idx = np.asarray(idx, np.int64)
         _scatter(idx[:, None], np.ascontiguousarray(blocks, np.float64), nptr, nind, data)
@@ -783,29 +819,42 @@ def _assemble(nodes, conn, E, nu, chunk=20_000, extra=()):
 
 
 def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
-    """P2 elasticity by CG with a p-multigrid preconditioner: symmetric
+    """P2 elasticity by CG with a two-level preconditioner: symmetric
     Gauss-Seidel on the quadratic system, and a coarse correction on the
-    linear (vertex-only) problem, Galerkin-projected and solved by node-
-    blocked smoothed-aggregation AMG with the six rigid-body modes.
-    Aggregation AMG coarsens the quadratic system's edge nodes badly: on the
-    wrist yoke it took 166 iterations directly and 82 this way (22 s vs 38 s
-    per case). `fixed_dof` marks held dofs; `springs` (or None; _pin_springs)
-    is added to the stiffness (pins)."""
+    linear (vertex-only) problem, Galerkin-projected. (Aggregation AMG on
+    the quadratic system itself coarsens its edge nodes badly: on the
+    wrist yoke it took 166 iterations directly and 82 this way.) The
+    coarse problem is factored once (PARDISO) when the factor fits
+    (_coarse_factor), else solved by one V-cycle of node-blocked smoothed
+    aggregation AMG with the six rigid-body modes: on the robot-arm upper
+    arm 19-21 iterations factored against 65-71. Every load case runs in
+    the same CG loop (tetsolve.cg: each its own CG), so one coarse solve
+    and one pass over the matrix serve them all, and the Gauss-Seidel goes
+    by node colours on every core (tetsolve). The whole native check
+    (assembly, solve, stress read) of the upper arm (2.25M dofs, 3 cases):
+    137 s against 337; the turret (1.44M dofs): 86 s against 116, the same
+    safety factors to 9 digits.
+    `fixed_dof` marks held dofs; `springs` (or None; _pin_springs) is
+    added to the stiffness (pins)."""
     import scipy.sparse as sp
-    import scipy.sparse.linalg as spla
-    from pyamg.relaxation.relaxation import gauss_seidel
 
-    from .fem import amg_solver
+    from . import tetsolve
 
-    k = _assemble(nodes, conn, E, nu, extra=springs or ())
     n = len(nodes)
+    fixed_dof = np.asarray(fixed_dof, bool)
+    # nodes renumbered by colour (tetsolve.color_order) before assembly, so
+    # each colour is a run of rows and the matrix is made once, in order
+    q, bounds = tetsolve.color_order(*_node_pattern(conn, n))
+    inv = np.empty(n, np.int64)
+    inv[q] = np.arange(n)
+    qd = (3 * q[:, None] + np.arange(3)).ravel()          # new dof -> old dof
+    extra = [(inv[np.asarray(idx, np.int64)], b) for idx, b in (springs or ())]
+    k = _assemble(nodes[q], inv[conn], E, nu, extra=extra)
     # held dofs eliminated in place, not by slicing out the free block (a
     # second copy of the matrix): their rows and columns zeroed and a unit
     # diagonal. With zero load there, CG and the smoother keep them at zero,
     # and every other dof sees exactly the free block.
-    kff = k
-    del k
-    _eliminate(kff.indptr, kff.indices, kff.data, fixed_dof)
+    _eliminate(k.indptr, k.indices, k.data, fixed_dof[qd])
     free_mask = ~fixed_dof
     # P1 -> P2 prolongation: vertices copy, edge nodes average their ends
     nv = n_vertices
@@ -822,53 +871,89 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     p = (sp.diags(free_mask.astype(float)) @ p).tocsr()
     p.eliminate_zeros()
     used = np.asarray(p.sum(axis=0)).ravel() > 0
-    p = p[:, used].tocsr()
+    p = p[:, used][qd].tocsr()
+    pt = p.T.tocsr()
     # the Galerkin product by blocks of rows: P^T K whole is about as big as
     # K itself (2.5 GB more on the upper arm, the solve's peak)
     a1 = None
-    step = max(1, -(-kff.shape[0] // 16))
-    for r0 in range(0, kff.shape[0], step):
-        part = (p[r0:r0 + step].T @ (kff[r0:r0 + step] @ p)).tocsr()
+    step = max(1, -(-k.shape[0] // 16))
+    for r0 in range(0, k.shape[0], step):
+        part = (p[r0:r0 + step].T @ (k[r0:r0 + step] @ p)).tocsr()
         a1 = part if a1 is None else a1 + part
     a1 = a1.tocsr()
-    cn = np.nonzero(used)[0]
-    blocked = a1.shape[0] % 3 == 0 and np.all(np.bincount(cn // 3, minlength=nv)[np.unique(cn // 3)] == 3)
-    # seeded (fem.amg_solver): pyamg draws its setup from np.random
-    ml = amg_solver(a1.tobsr(blocksize=(3, 3)) if blocked else a1,
-                    B=_rigid_modes(nodes[cn // 3], cn % 3), coarse_solver="splu", max_coarse=3000)
+    coarse = _coarse_factor(a1, len(conn))
+    if coarse is None:
+        cn = np.nonzero(used)[0]
+        blocked = a1.shape[0] % 3 == 0 and np.all(np.bincount(cn // 3, minlength=nv)[np.unique(cn // 3)] == 3)
+        # seeded (fem.amg_solver): pyamg draws its setup from np.random
+        from .fem import amg_solver
+
+        ml = amg_solver(a1.tobsr(blocksize=(3, 3)) if blocked else a1,
+                        B=_rigid_modes(nodes[cn // 3], cn % 3), coarse_solver="splu", max_coarse=3000)
+
+        def coarse(c1):
+            out = np.empty_like(c1)
+            for j in range(c1.shape[1]):
+                out[:, j] = ml.solve(np.ascontiguousarray(c1[:, j]), maxiter=1, cycle="V", tol=1e-12)
+            return out
+    del a1
+    op = tetsolve.Blocked(k, bounds)
 
     def precond(r):
-        r = np.asarray(r, dtype=np.float64).ravel()
-        x = np.zeros_like(r)
         # one symmetric sweep each side: 106 iterations at 0.17 s beat two
         # sweeps' 82 at 0.28 s (wrist yoke)
-        gauss_seidel(kff, x, r, iterations=1, sweep="symmetric")
-        x += p @ ml.solve(p.T @ (r - kff @ x), maxiter=1, cycle="V", tol=1e-12)
-        gauss_seidel(kff, x, r, iterations=1, sweep="symmetric")
+        x = np.zeros_like(r)
+        op.sgs(x, r)
+        x += p @ coarse(pt @ (r - op.mv(x)))
+        op.sgs(x, r)
         return x
-    m = spla.LinearOperator(kff.shape, matvec=precond)
 
-    def one(f):
+    fs = []
+    for _n, f, _ in loads:
         fn = np.zeros((n, 3))
         fn[: len(f)] = f
-        # 1e-7 is six digits of stress; 1e-9 cost a third more iterations
-        u, _info = spla.cg(kff, np.where(free_mask, fn.ravel(), 0.0), M=m, rtol=1e-7, maxiter=2000)
+        fs.append(np.where(free_mask, fn.ravel(), 0.0)[qd])
+    # 1e-7 is six digits of stress; 1e-9 cost a third more iterations
+    x, _its = tetsolve.cg(np.ascontiguousarray(np.stack(fs, axis=1)), precond, op.mv, rtol=1e-7, maxiter=2000)
+    fac = getattr(coarse, "factor", None)
+    if fac is not None:
+        fac.close()           # its gigabyte back before the stress read
+    out = []
+    for j in range(x.shape[1]):
+        u = np.empty(3 * n)
+        u[qd] = x[:, j]
         u[fixed_dof] = 0.0
-        return u.reshape(n, 3)
-    fs = [f for _n, f, _ in loads]
-    from . import amgfast
+        out.append(u.reshape(n, 3))
+    return out
 
-    if len(fs) < 2 or not amgfast.installed():
-        # pyamg's own Gauss-Seidel holds the GIL: threads would only contend
-        return [one(f) for f in fs]
-    # cases on threads (amgfast's smoother releases the GIL), each its own
-    # CG, so the same numbers; one cycle first factors the coarsest level
-    # once (pyamg does it lazily, and each thread would make its own)
-    precond(np.zeros(kff.shape[0]))
-    from .pools import pool
 
-    with pool(min(len(fs), 4)) as ex:   # serial under numba's workqueue layer
-        return list(ex.map(one, fs))
+def _coarse_factor(a1, n_tets):
+    """The coarse problem's solve (block of right-hand sides -> block) by
+    one PARDISO factor, or None when PARDISO is not installed or cannot
+    factor it, or when the factor does not fit beside the rest of the solve
+    in the tet solve's memory_budget (the machine's, so the choice, and the
+    answer's last digits, are the same run to run) or in what is free now.
+    Upper arm: 311k dofs, 1.3 GB, 3 s; AMG's setup took 16 s."""
+    from .nonlinear import _have_pardiso, _Pardiso
+    from .study import _available_bytes
+
+    if not _have_pardiso() or os.environ.get("LOADPATH_TET_COARSE", "") == "amg":
+        return None
+    room = memory_budget() - _BYTES_PER_TET * n_tets
+    free = _available_bytes()
+    if free:
+        room = min(room, 0.85 * free)
+    if room <= 0:
+        return None
+    try:
+        fac = _Pardiso(a1, budget=room)
+    except (MemoryError, RuntimeError):
+        return None
+
+    def solve(c1):
+        return np.asarray(fac.solve(c1)).reshape(c1.shape)
+    solve.factor = fac
+    return solve
 
 
 # a pin's stiffness per node, per unit modulus times element size, radially
@@ -961,7 +1046,7 @@ def stress_radius(study: Study, size: float) -> tuple:
     return reading_radius(study.material, size, getattr(study, "min_member", None) or None)
 
 
-def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=50_000):
+def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=20_000):
     """Per displacement field in `us`: the stress tensor at each vertex
     (n_vertices, 6), averaged over the material within `radius` of it.
 
@@ -987,7 +1072,8 @@ def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=50_000):
     xs = np.einsum("sk,ekd->esd", _SAMPLES, pts[conn[:, :4]]).reshape(-1, 3)
     w = np.empty(len(conn) * ns)
     sigs = [np.empty((len(conn) * ns, 6)) for _ in us]
-    for s0 in range(0, len(conn), chunk):
+
+    def one(s0):
         cc = conn[s0:s0 + chunk]
         vol, g = _grads(nodes, cc)
         w[s0 * ns:(s0 + len(cc)) * ns] = np.repeat(np.abs(vol) / ns, ns)
@@ -996,6 +1082,14 @@ def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=50_000):
             cb = np.einsum("kl,eli->eki", c, _b_matrices(_shape_grads(g, lam)), optimize=True)
             for sig, ue in zip(sigs, ues):
                 sig[s0 * ns + k:(s0 + len(cc)) * ns:ns] = np.einsum("eki,ei->ek", cb, ue)
+    # chunks on threads (each writes its own rows): the same bits; the
+    # turret's 325k tets 13.3 s against 17.2 (3.5 s of either is the ball
+    # search below, and numpy's small steps hold the GIL)
+    from .pools import pool
+
+    starts = range(0, len(conn), chunk)
+    with pool(min(_threads(), len(starts))) as ex:
+        list(ex.map(one, starts))
     import scipy.sparse as sp
 
     pairs = cKDTree(pts).sparse_distance_matrix(cKDTree(xs), radius, output_type="coo_matrix")
