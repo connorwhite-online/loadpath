@@ -171,7 +171,18 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e ".[render,flow,mcp,step,exterior]"
-      - run: python tests/test_tutorials.py ${{ matrix.tutorial }}
+      - run: python tests/test_tutorials.py ${{ matrix.tutorial }} --keep "$RUNNER_TEMP/tutorial"
+      # a failed tutorial's report, study and fields, small enough to keep: the
+      # optimized part differs by CPU, so this is the only way to rebuild it
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tutorial-${{ matrix.tutorial }}
+          path: |
+            ${{ runner.temp }}/tutorial/**/*.json
+            ${{ runner.temp }}/tutorial/**/*.field.npz
+          retention-days: 7
+          if-no-files-found: ignore
 
   # the field editor: its server, and its GPU preview against fields.py in
   # headless Chromium (SwiftShader)

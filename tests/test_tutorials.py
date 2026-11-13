@@ -89,6 +89,15 @@ def check(name, work, tier):
         print(("  ok   " if ok else "  FAIL ") + line + f"  (want {_want(c)})", flush=True)
         if not ok:
             failures.append(line)
+    if failures:
+        # what the tutorial says to print when a check fails (a CI run keeps no files)
+        for c in exp.get("onFail", []):
+            try:
+                with open(os.path.join(work, c["file"])) as fh:
+                    v = _value(c["value"], json.load(fh))
+            except Exception as exc:  # noqa: BLE001
+                v = f"{type(exc).__name__}: {exc}"
+            print(f"  note {c.get('what', c['value'])}: {json.dumps(v, default=str)[:4000]}", flush=True)
     return failures
 
 

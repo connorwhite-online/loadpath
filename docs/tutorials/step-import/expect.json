@@ -13,6 +13,10 @@
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['step']['valid']", "equals": true, "what": "STEP is a valid solid"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['step']['faces']['cylinder'] >= 5", "equals": true, "what": "STEP keeps the bores as exact cylinders"}
   ],
+  "onFail": [
+    {"file": "out/report.json", "value": "{k: v for k, v in r['outcomes'][r['best']].get('step', {}).items() if k != 'path'}", "what": "best outcome's STEP report"},
+    {"file": "out/report.json", "value": "[[o.get('stl'), round(o.get('mass') or 0, 2), (o.get('step') or {}).get('faces')] for o in r['outcomes']]", "what": "every outcome's STEP faces"}
+  ],
   "full": [
     {"file": "features.json", "value": "[r['bolts'], r['bores'], r['boltedFaces']]", "equals": [4, 1, 1], "what": "bolts, bores, bolted faces found"},
     {"file": "compare.json", "value": "r['changed']", "equals": ["description", "loadCases"], "what": "what study.json changes in the draft"},
