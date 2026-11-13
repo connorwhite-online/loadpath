@@ -53,14 +53,16 @@ def exterior_report(study, mesh) -> dict | None:
     openings; None when the design space is not one mesh or there is no
     skin (a part designed to be cut away anywhere has no exterior to keep)."""
     from .enclosure import exterior_check
-    from .shapes import MeshShape, shape_from_spec
+    from .shapes import MeshShape
+    from .spec import skin_openings
     if len(study.design_space) != 1 or not isinstance(study.design_space[0], MeshShape):
         return None
     sk = study.raw.get("skin")
     if not sk or (isinstance(sk, dict) and sk.get("open")):
         return None
     base = getattr(study, "base_dir", None)
-    openings = [shape_from_spec(o["shape"], base) for o in (sk.get("openings") or [])] if isinstance(sk, dict) \
+    # the cuts the openings made (a box round a drawn port opens the port only)
+    openings = skin_openings(sk.get("openings") or [], study.design_space[0], base) if isinstance(sk, dict) \
         else []
     drawn = [r.shape for r in study.preserve if r.id != "skin"]
     out = exterior_check(mesh, study.design_space[0], openings=openings, drawn=drawn)

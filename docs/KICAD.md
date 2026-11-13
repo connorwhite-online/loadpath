@@ -51,7 +51,7 @@ are the board's and which are estimates.
 | thickness | the stackup's copper and dielectric layers, else `general.thickness` |
 | board mass | FR-4 (1850 kg/m³) for the dielectric, copper (8960 kg/m³) at `copperFill` of each layer (default 0.5) |
 | board conductivity | copper (390 W/(m K)) and FR-4 (0.8) in parallel by thickness: the in-plane value a cooling block spreads heat with |
-| part body | its 3D model when the file is found (STEP with the `step` extra, or VRML), placed exactly as KiCad's 3D viewer places it, the convex hull of what stands off the board; else its fab outline (else courtyard, else pads) stood up to its height |
+| part body | its 3D model when the file is found (STEP with the `step` extra, or VRML), placed exactly as KiCad's 3D viewer places it, its solids as modelled (each open sheet its own hull), less what is through the board; else its fab outline (else courtyard, else pads) stood up to its height |
 | part height | the brief's `heights`, else a `Height` field on the footprint, else the 3D model, else the package's standard maximum seated height read off its library name (JEDEC SOIC, SSOP, TSSOP, MSOP, QFN, QFP, PLCC, DIP, SOT, TO outlines; MLCC and chip-resistor thicknesses by size; axial bodies by diameter; 2.54 mm headers; USB-C, micro-B, USB-A, JST SH/PH/XH; ESP32 modules; `kicad._HEIGHTS` lists each with its source), else `defaultHeight` (3 mm), listed as assumed |
 | leads | through-hole pins stand `leadProtrusion` (1.5 mm; IPC-A-610 allows up to 2.5) out of the far face |
 | part mass | a `Mass` field (g), else body volume at its family's effective density (moulded ICs 2.0 g/cm³, MLCCs 5.5, resistors 3.5, electrolytics 1.25, connectors 1.2): estimates, labelled so |
@@ -129,9 +129,12 @@ with the drop and the four USB-C plug cases going through them.
 
 ## Limits
 
-- The body of a part with a model is its convex hull above the board: a
-  connector's notches and an L-shaped part's empty corner are kept clear
-  too.
+- The body of a part with a model is its model's solids, not the hull of
+  the whole model (a USB-C socket's hull took in its tabs and legs, and
+  its keep-out and way in came out a squared block). A solid the model
+  leaves open (a sheet, not a closed shell) stands as its own convex hull,
+  so the notches inside one such sheet are still kept clear. A mid-mount
+  socket's shell below the board, in its slot or past the edge, is kept.
 - No power is guessed. Heat is only what a field or the brief says.
 - Part masses without a `Mass` field are envelope estimates; on most
   boards the battery and the laminate dominate a drop case anyway.

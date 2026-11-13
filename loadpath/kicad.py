@@ -36,8 +36,9 @@ What is read, and where each number comes from (every part says, in
   be found (STEP through the `step` extra, or VRML), placed the way KiCad
   places it (the model's offset, scale and rotation, the footprint's
   position, rotation and side; a back-side model mirrored as the 3D viewer
-  does); the convex hull of the model is the part's
-  body. Without a model the body is the footprint's fab outline (the body
+  does); the model's solids are the part's body, each as modelled where it
+  is closed and its own hull where it is open (model_body), never the hull
+  of the whole model (a USB-C socket's took in its tabs and legs). Without a model the body is the footprint's fab outline (the body
   as drawn; else its courtyard, else its pads) stood up to the part's height: a `Height`
   field on the footprint, else the package's standard maximum seated
   height read off its library name (JEDEC outlines, chip sizes, headers,
@@ -491,23 +492,82 @@ def _read_wrl(path):
 _MODEL_CACHE: dict = {}
 
 
-def _model_points(path):
-    """A model's vertices in mm, or None when it cannot be read."""
+def _model_mesh(path):
+    """A model's (vertices in mm, triangles), or None when it cannot be read."""
     if path in _MODEL_CACHE:
         return _MODEL_CACHE[path]
-    pts = None
+    out = None
     try:
         ext = os.path.splitext(path)[1].lower()
         if ext == ".wrl":
-            r = _read_wrl(path)
-            pts = None if r is None else r[0]
+            out = _read_wrl(path)
         elif ext in (".step", ".stp"):
             from .cadimport import load_part
-            pts = np.asarray(load_part(path).mesh.vertices, float)
+            m = load_part(path).mesh
+            out = (np.asarray(m.vertices, float), np.asarray(m.faces, int))
     except Exception:
-        pts = None
-    _MODEL_CACHE[path] = pts
-    return pts
+        out = None
+    _MODEL_CACHE[path] = out
+    return out
+
+
+def _model_points(path):
+    """A model's vertices in mm, or None when it cannot be read."""
+    r = _model_mesh(path)
+    return None if r is None else r[0]
+
+
+def model_body(V, F, face_z: float, side: str = "top", board=None):
+    """A part's body from its placed 3D model (vertices, triangles): each
+    solid of the model as modelled where it is closed, the hull of that
+    solid alone where it is not (a model's shells are often open sheets),
+    less what is through or behind the board on its far side (pins through
+    it are the leads'). `board` (outline, cut-outs) bounds that: a
+    mid-mount socket's shell hanging in a slot or past the board's edge is
+    the body's, where a cut at the face dropped it.
+
+    Not the hull of the whole model: a USB-C receptacle's hull ran from its
+    stadium shell out over its solder tabs and legs, a block 2-3 mm wider
+    and squared off, and every keep-out, way in and cutout made from the
+    part took that block's shape instead of the socket's."""
+    import manifold3d as m3d
+    import trimesh
+
+    from .shapes import manifold_from_trimesh
+    tm = trimesh.Trimesh(np.asarray(V, float), np.asarray(F, int), process=True)
+    mans = []
+    for c in tm.split(only_watertight=False):
+        if len(c.vertices) < 4:
+            continue
+        man = None
+        if c.is_watertight:
+            try:
+                trimesh.repair.fix_normals(c)
+                man = manifold_from_trimesh(c)
+                if man.volume() <= 1e-9:
+                    man = None
+            except Exception:  # noqa: BLE001 - an unreadable solid falls back to its own hull
+                man = None
+        if man is None:
+            man = m3d.Manifold.hull_points(np.asarray(c.vertices, float).tolist())
+        if man.volume() > 1e-9:
+            mans.append(man)
+    if not mans:
+        return None
+    body = m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
+    lo, hi = (np.asarray(b, float) for b in (body.bounding_box()[:3], body.bounding_box()[3:]))
+    big = float(np.max(hi - lo)) + 10.0
+    z0 = float(face_z) - big if side == "top" else float(face_z)
+    if board is not None:
+        outline, cutouts = board
+        loops = [np.asarray(outline, float)] + [np.asarray(c, float) for c in cutouts or []]
+        plan = m3d.CrossSection([lp.tolist() for lp in loops], m3d.FillRule.EvenOdd)
+    else:
+        c = 0.5 * (lo[:2] + hi[:2])
+        plan = m3d.CrossSection.square((2 * big, 2 * big)).translate((float(c[0] - big), float(c[1] - big)))
+    behind = m3d.Manifold.extrude(plan, big).translate((0.0, 0.0, z0))
+    cut = body - behind
+    return cut if cut.volume() > 1e-9 else None
 
 
 @__import__("functools").lru_cache(maxsize=1)
@@ -678,7 +738,7 @@ def read_board(path, *, models=None, heights=None, power=None, max_temp=None, ma
     parts, holes = [], []
     for fp in fps:
         parts_or_hole = _footprint(fp, to_board, t, bdir, models, heights, power, max_temp, masses,
-                                   default_height, lead_protrusion, use_models, warnings)
+                                   default_height, lead_protrusion, use_models, warnings, (outer, cut))
         if parts_or_hole is None:
             continue
         kind, rec = parts_or_hole
@@ -750,7 +810,7 @@ def _props(fp):
 
 
 def _footprint(fp, to_board, t, bdir, models, heights, power, max_temp, masses, default_height,
-               lead_protrusion, use_models, warnings):
+               lead_protrusion, use_models, warnings, board_plan=None):
     name = str(fp[1])
     lname = name.split(":")[-1]
     at = _one(fp, "at")
@@ -832,21 +892,22 @@ def _footprint(fp, to_board, t, bdir, models, heights, power, max_temp, masses, 
 
     # height: the brief, the footprint's field, its 3D model, its package
     height, h_from, hull = None, None, None
-    model_file = None
+    model_file, body_mesh = None, None
     if ref in heights:
         height, h_from = float(heights[ref]), "brief"
     elif pr.get("Height") is not None and _quantity(pr["Height"], "mm") is not None:
         height, h_from = _quantity(pr["Height"], "mm"), "footprint Height field"
     if use_models:
         Ms = [m for m in _all(fp, "model") if not _flag(m, "hide")]
-        P3 = []
+        P3, M3 = [], []
         for mnode in Ms:
             fpath = _resolve_model(str(mnode[1]), bdir, models)
             if fpath is None:
                 continue
-            pts = _model_points(fpath)
-            if pts is None or len(pts) == 0:
+            mr = _model_mesh(fpath)
+            if mr is None or len(mr[0]) == 0:
                 continue
+            pts, tris = mr
             sc, R, off = _model_transform(mnode)
             q = (R @ (pts * sc).T).T + off
             if side == "bottom":
@@ -860,8 +921,22 @@ def _footprint(fp, to_board, t, bdir, models, heights, power, max_temp, masses, 
             c0 = to_board(np.array([[X0, Y0]]))[0]
             z = q[:, 2] + (t if side == "top" else 0.0)
             P3.append(np.column_stack([xy + c0, z]))
+            M3.append(np.asarray(tris, int))
             model_file = fpath
         if P3:
+            # the body as modelled (model_body), solid by solid
+            off_, tris_ = 0, []
+            for q_, f_ in zip(P3, M3):
+                tris_.append(f_ + off_)
+                off_ += len(q_)
+            try:
+                bman = model_body(np.concatenate(P3), np.concatenate(tris_), t if side == "top" else 0.0, side,
+                                  board_plan)
+            except Exception:  # noqa: BLE001 - the hull below still stands for it
+                bman = None
+            if bman is not None:
+                bm = bman.to_mesh()
+                body_mesh = (np.asarray(bm.vert_properties, float)[:, :3], np.asarray(bm.tri_verts, int))
             hull = np.concatenate(P3)
             # the body is what stands off its face: pins through the board
             # are the leads' (below), and the hull of the whole model would
@@ -886,7 +961,10 @@ def _footprint(fp, to_board, t, bdir, models, heights, power, max_temp, masses, 
     # body volume, mass
     a_plan = abs(_area(plan_b))
     vol = a_plan * height                                   # mm3
-    if hull is not None:
+    if body_mesh is not None:
+        import trimesh
+        vol = float(abs(trimesh.Trimesh(*body_mesh, process=False).volume))
+    elif hull is not None:
         try:
             import trimesh
             vol = float(trimesh.convex.convex_hull(hull).volume)
@@ -925,6 +1003,8 @@ def _footprint(fp, to_board, t, bdir, models, heights, power, max_temp, masses, 
     if hull is not None:
         rec["model"] = model_file
         rec["_hull"] = hull
+        if body_mesh is not None:
+            rec["_body"] = body_mesh
     if watts:
         rec["watts"], rec["wattsFrom"] = round(float(watts), 5), w_from
     if tmax is not None:
@@ -1014,7 +1094,11 @@ def _prism(poly, z0, z1):
 def part_manifold(p, leads=True):
     """A part's body (and its leads through the board) as a manifold."""
     import manifold3d as m3d
-    if p.get("_hull") is not None:
+    if p.get("_body") is not None:
+        from .shapes import manifold_from_trimesh
+        import trimesh
+        body = manifold_from_trimesh(trimesh.Trimesh(*p["_body"], process=False))
+    elif p.get("_hull") is not None:
         body = m3d.Manifold.hull_points(np.asarray(p["_hull"], float).tolist())
     else:
         body = _prism(p["plan"], *p["z"])

@@ -149,7 +149,12 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
             o["inward"] = _axis_name(v)
         o.setdefault("depth", round(t_skin + 0.2, 3))
         ops.append(o)
-        op_place.append({"id": oid, "shape": osh, "inward": o["inward"], "depth": float(o["depth"])})
+        # a part aligned to the opening is centred on the port the exterior
+        # draws there, not on the opening's box (spec.drawn_aperture)
+        from .spec import _leg_direction, drawn_aperture
+        ap = drawn_aperture(exterior, osh, _leg_direction(o["inward"], f"openings[{j}].inward"), float(o["depth"]))
+        op_place.append({"id": oid, "shape": ap if ap is not None else osh, "inward": o["inward"],
+                         "depth": float(o["depth"])})
     if ops:
         sk["openings"] = list(sk.get("openings") or []) + ops
     _, skin_shape = _skin(sk, [exterior])
@@ -1373,7 +1378,10 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
     else:
         ext = study.design_space[0]
     openings = [o for o in ((raw.get("skin") or {}).get("openings") or []) if isinstance(raw.get("skin"), dict)]
-    ops = [shape_from_spec(o["shape"], base) for o in openings]
+    # the cuts the openings made, not their whole shapes: an opening drawn
+    # as a box round a drawn port only opens the port (spec.skin_openings)
+    from .spec import skin_openings
+    ops = skin_openings(openings, ext, base)
     if on_progress:
         on_progress({"stage": "check", "message": "exterior against the delivered surface"}, None)
     ex = exterior_check(mesh, ext, ops, region=region)

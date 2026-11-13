@@ -485,6 +485,77 @@ def test_keep_out_insert_from_a_vector_is_one_straight_way_out():
     assert len(legs) == 1 and legs[0][1] is None
 
 
+def _stadium_port_exterior(flare=False, pocket=True):
+    """A 40 x 30 x 12 mm block with a 9.4 x 3.8 mm stadium port 4 mm into its
+    +y face (a USB-C mouth), optionally with a 0.5 mm deep 10.4 x 4.8 mm
+    lead-in at its mouth."""
+    import manifold3d as m3d
+    import trimesh
+
+    from loadpath.shapes import MeshShape
+
+    def stadium(w, h, depth):
+        r = h / 2
+        cs = (m3d.CrossSection.square([w - 2 * r, h]).translate([-(w - 2 * r) / 2, -r])
+              + m3d.CrossSection.circle(r, 96).translate([-(w - 2 * r) / 2, 0])
+              + m3d.CrossSection.circle(r, 96).translate([(w - 2 * r) / 2, 0]))
+        # extruded on +z, turned so it runs in from the +y face along -y
+        return m3d.Manifold.extrude(cs, depth).rotate([90, 0, 0]).translate([0, 15.001, 0])
+    ext = m3d.Manifold.cube([40, 30, 12], center=True)
+    if pocket:
+        ext = ext - stadium(9.4, 3.8, 4.0)
+        if flare:
+            ext = ext - stadium(10.4, 4.8, 0.5)
+    m = ext.to_mesh()
+    return MeshShape(trimesh.Trimesh(np.asarray(m.vert_properties)[:, :3], np.asarray(m.tri_verts)))
+
+
+def test_a_box_opening_keeps_the_drawn_ports_rounded_wall():
+    """An opening drawn as a box round a drawn USB-C stadium opens the
+    stadium only: the skin keeps the port's rounded wall (it used to be cut
+    back to the box, a 12 x 6 mm square hole), the membrane across the
+    port's inner end goes, and a lead-in flare at the mouth does not widen
+    the cut through the walls below it."""
+    from loadpath.shapes import trimesh_from_manifold
+    from loadpath.sharp import exact_manifold
+    from loadpath.spec import _skin
+    box = {"type": "box", "min": [-6, 8, -3], "max": [6, 16, 3]}
+    stadium_area = 9.4 * 3.8 - (4 - np.pi) * 1.9 ** 2
+    for flare in (False, True):
+        ds = _stadium_port_exterior(flare=flare)
+        _, skin = _skin({"thickness": 1.0, "openings": [{"shape": box, "inward": "-y", "depth": 1.2}]}, [ds])
+        m = trimesh_from_manifold(exact_manifold(skin))
+        # the drawn wall just outside the stadium, at the mouth and deeper
+        wall = np.array([[0, 13.0, 2.3], [5.1, 13.0, 0.0], [4.4, 13.0, 1.65], [0, 14.2, 2.3]])
+        assert m.contains(wall).all(), (flare, m.contains(wall))
+        # the membrane across the port's floor (y 11 to 10) is cut, in the stadium
+        assert not m.contains(np.array([[0, 10.5, 0], [4.0, 10.5, 0.0]])).any()
+        # and only in the stadium: beside it, at the floor, the skin stays
+        assert m.contains(np.array([[0, 10.5, 2.4], [5.2, 10.5, 0.0]])).all()
+        sec = m.section(plane_origin=[0, 12.0, 0], plane_normal=[0, 1, 0]).to_2D()[0]
+        from shapely.geometry import Polygon
+        # (the section also has the skin's inner cavity, 380 mm^2)
+        holes = [h for p in sec.polygons_full for h in p.interiors if Polygon(h).area < 100]
+        assert len(holes) == 1 and abs(Polygon(holes[0]).area - stadium_area) < 0.1, \
+            [Polygon(h).area for h in holes]
+    # nothing drawn there: the opening's own shape is the cut, as before
+    ds = _stadium_port_exterior(pocket=False)
+    _, skin = _skin({"thickness": 1.0, "openings": [{"shape": box, "inward": "-y", "depth": 1.2}]}, [ds])
+    m = trimesh_from_manifold(exact_manifold(skin))
+    assert not m.contains(np.array([[5.5, 14.5, 2.5]])).any()
+
+
+def test_a_connector_is_centred_on_its_port_by_its_mating_face():
+    """A socket aligned to a port is centred by its front (the stadium
+    shell), not by its bounding box: a solder tab out to one side behind
+    the front used to pull the shell 1.3 mm off the port's centre."""
+    from loadpath.placement import _face_point
+    shell = np.array([[x, y, z] for x in (-4.47, 4.47) for y in (0.0, 7.35) for z in (0.0, 3.26)])
+    tab = np.array([[x, y, z] for x in (4.9, 7.1) for y in (5.0, 7.0) for z in (0.0, 1.0)])
+    fp = _face_point(np.vstack([shell, tab]), np.array([0.0, -1.0, 0.0]))
+    assert np.allclose(fp, [0.0, 0.0, 1.63]), fp
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

@@ -1104,7 +1104,7 @@ def _skin(v, design, base_dir=None):
     skin thick across the cavity behind it (the touch microphone's first
     study had one, 0.4 mm thick, across its board bay). The skin is not
     kept inside an opening, swept `depth` mm `inward` when given."""
-    from .shapes import Shell, Union, shrink, sweep
+    from .shapes import Shell, Union, shrink
 
     if isinstance(v, (int, float)):
         v = {"thickness": v}
@@ -1140,20 +1140,131 @@ def _skin(v, design, base_dir=None):
         inner = _zoned(ds, float(t), faces, zones)
         # the thinnest skin is the one the grid has to resolve
         t = min([float(t)] + [z[1] for z in zones])
-    holes = []
-    for j, o in enumerate(v.get("openings") or []):
-        if not isinstance(o, dict) or "shape" not in o:
-            raise ValueError(f"skin.openings[{j}] is {{shape, inward?, depth?}}")
-        sh = shape_from_spec(o["shape"], base_dir)
-        if o.get("depth") is not None:
-            sh = sweep(sh, _leg_direction(o.get("inward", "+z"), f"skin.openings[{j}].inward"), float(o["depth"]))
-        holes.append(sh)
+    holes = skin_openings(v.get("openings") or [], ds, base_dir)
     if holes:
         inner = Union([inner] + holes)
     if part is not ds:
         from .shapes import Boolean
         return float(t), Boolean("intersect", [Shell(ds, inner), part])
     return float(t), Shell(ds, inner)
+
+
+def skin_openings(openings, exterior, base_dir=None) -> list:
+    """The cuts `skin.openings` make through the skin, one per opening.
+
+    An opening says where the exterior opens into the interior; the
+    exterior's own surfacing says what shape that opening is. Where the
+    exterior has the port drawn (a USB-C mouth, a window recessed into its
+    face), the cut through the skin is the port's own section, swept
+    `depth` mm on `inward`: the membrane across its inner end goes and the
+    walls round it stay. An opening drawn as a box round a 9.4 x 3.8 mm
+    stadium used to take the skin out to the box, so the port came out a
+    12 x 6 mm square hole with the stadium's rounded wall gone. Where the
+    exterior has nothing drawn inside the opening, the opening's own shape
+    is the cut, as before (see drawn_aperture)."""
+    from .shapes import sweep
+    holes = []
+    for j, o in enumerate(openings):
+        if not isinstance(o, dict) or "shape" not in o:
+            raise ValueError(f"skin.openings[{j}] is {{shape, inward?, depth?}}")
+        sh = shape_from_spec(o["shape"], base_dir)
+        if o.get("depth") is not None:
+            d = _leg_direction(o.get("inward", "+z"), f"skin.openings[{j}].inward")
+            ap = drawn_aperture(exterior, sh, d, float(o["depth"]))
+            sh = ap if ap is not None else sweep(sh, d, float(o["depth"]))
+        holes.append(sh)
+    return holes
+
+
+def _frame(d):
+    """A rotation (rows u, v, d) taking `d` to +z."""
+    d = np.asarray(d, float) / np.linalg.norm(d)
+    a = np.eye(3)[int(np.argmin(np.abs(d)))]
+    u = np.cross(a, d)
+    u /= np.linalg.norm(u)
+    return np.vstack([u, np.cross(d, u), d])
+
+
+def _polygons(cs):
+    """A manifold CrossSection as a shapely geometry (even-odd contours)."""
+    from shapely.geometry import Polygon
+    g = None
+    for c in cs.to_polygons():
+        c = np.asarray(c, float)
+        if len(c) < 3:
+            continue
+        p = Polygon(c).buffer(0)
+        g = p if g is None else g.symmetric_difference(p)
+    from shapely.geometry import GeometryCollection
+    return g if g is not None else GeometryCollection()
+
+
+def drawn_aperture(exterior, opening, inward, depth: float, step: float = 0.2):
+    """The port the exterior has drawn inside `opening`, as the cut through
+    the skin: its narrowest section, swept from the opening's outer end to
+    `depth` mm past its inner end along `inward`. None when the exterior is
+    not a mesh or has no port drawn there (the opening's shape stands).
+
+    Read on the exact meshes, in sections across `inward` every `step` mm
+    through the opening: a port is a hole in the exterior's section that
+    the opening's section surrounds (outside air reaches the opening's own
+    edge, a port's void does not). The narrowest one over the port's depth
+    is the throat a plug passes; cutting that never removes drawn wall,
+    where the widest (a rounded mouth's flare) would cut the walls below
+    it back to the flare."""
+    from shapely.geometry import Polygon  # noqa: F401 - shapely is a hard need here
+    from shapely.ops import unary_union
+
+    from .shapes import MeshShape, manifold_from_trimesh, trimesh_from_manifold
+    from .sharp import exact_manifold
+    if not isinstance(exterior, MeshShape):
+        return None
+    import manifold3d as m3d
+    R = _frame(inward)
+    T = np.hstack([R, np.zeros((3, 1))])
+    try:
+        O = exact_manifold(opening).transform(T)
+    except Exception:  # noqa: BLE001 - a shape with no exact solid keeps its own cut
+        return None
+    if O.volume() <= 0:
+        return None
+    olo, ohi = (np.asarray(b, float) for b in (O.bounding_box()[:3], O.bounding_box()[3:]))
+    pad = 1.0
+    crop = m3d.Manifold.cube(tuple(ohi - olo + 2 * pad)).translate(tuple(olo - pad))
+    M = manifold_from_trimesh(exterior.mesh).transform(T) ^ crop
+    if M.volume() <= 0:
+        return None
+    n = max(int(np.ceil((ohi[2] - olo[2]) / step)), 1)
+    tol = 1e-3
+    throat = None
+    for z in olo[2] + (np.arange(n) + 0.5) * (ohi[2] - olo[2]) / n:
+        so = _polygons(O.slice(float(z)))
+        if so.is_empty:
+            continue
+        void = so.difference(_polygons(M.slice(float(z))))
+        edge = so.boundary
+        ports = [g for g in getattr(void, "geoms", [void])
+                 if g.geom_type == "Polygon" and g.area > tol and g.distance(edge) > tol]
+        if not ports:
+            continue
+        here = unary_union(ports)
+        throat = here if throat is None else throat.intersection(here)
+    if throat is None or throat.is_empty or throat.area <= tol:
+        return None
+    from shapely.geometry.polygon import orient
+    contours = []
+    for g in getattr(throat, "geoms", [throat]):
+        if g.geom_type != "Polygon" or g.area <= tol:
+            continue
+        g = orient(g, 1.0)
+        contours.append(np.asarray(g.exterior.coords)[:-1])
+        contours += [np.asarray(r.coords)[:-1] for r in g.interiors]
+    if not contours:
+        return None
+    z0, z1 = olo[2] - tol, ohi[2] + float(depth)
+    prism = m3d.Manifold.extrude(m3d.CrossSection(contours), z1 - z0).translate((0.0, 0.0, z0))
+    back = np.hstack([R.T, np.zeros((3, 1))])
+    return MeshShape(trimesh_from_manifold(prism.transform(back)), "drawn port")
 
 
 def _zoned(ds, t, faces, zones):

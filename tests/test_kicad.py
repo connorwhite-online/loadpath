@@ -120,6 +120,74 @@ def test_model_placement_rotated_and_flipped():
     assert np.allclose(bot.min(0), [0, 0, -2]) and np.allclose(bot.max(0), [1, 4, 0]), (bot.min(0), bot.max(0))
 
 
+def _wrl(meshes):
+    """VRML 2.0 (0.1 inch units) of trimesh solids, one Shape each."""
+    out = ["#VRML V2.0 utf8"]
+    for m in meshes:
+        pts = ", ".join(f"{x / 2.54} {y / 2.54} {z / 2.54}" for x, y, z in m.vertices)
+        idx = ", ".join(f"{a}, {b}, {c}, -1" for a, b, c in m.faces)
+        out.append(f"Shape {{ geometry IndexedFaceSet {{ coord Coordinate {{ point [ {pts} ] }} "
+                   f"coordIndex [ {idx} ] }} }}")
+    return "\n".join(out) + "\n"
+
+
+def test_a_sockets_body_is_its_model_not_the_models_hull():
+    """A USB-C socket's body is its model's solids: the 8.94 x 3.26 mm
+    stadium shell with its solder tabs and through pins apart, not the hull
+    of all of them (a squared block over the tabs that every keep-out, way
+    in and cutout then took). Mid-mount, the shell below the board's face
+    in its slot is the body's too; only what is through the board goes."""
+    import manifold3d as m3d
+    import trimesh
+
+    from loadpath.shapes import trimesh_from_manifold
+
+    def stadium(w, h, L, z0):
+        r = h / 2
+        cs = (m3d.CrossSection.square([w - 2 * r, h]).translate([-(w - 2 * r) / 2, -r])
+              + m3d.CrossSection.circle(r, 64).translate([-(w - 2 * r) / 2, 0])
+              + m3d.CrossSection.circle(r, 64).translate([(w - 2 * r) / 2, 0]))
+        # its axis along y (the plug's), wide along x, centred at z0 + h/2
+        return trimesh_from_manifold(m3d.Manifold.extrude(cs, L).rotate([-90, 0, 0])
+                                     .translate([0, 0, z0 + r]))
+
+    def box(lo, hi):
+        b = trimesh.creation.box(extents=np.subtract(hi, lo))
+        b.apply_translation(0.5 * (np.add(lo, hi)))
+        return b
+    for mid in (False, True):
+        d = tempfile.mkdtemp()
+        z0 = -1.6 if mid else 0.0                          # mid-mount: shell 1.6 mm down in a slot
+        shell = stadium(8.94, 3.26, 7.35, z0)
+        tabs = [box((sx * 5.6, 1.0, 0.0), (sx * 4.9, 3.0, 1.2)) if sx > 0 else box((-5.6, 1.0, 0.0), (-4.9, 3.0, 1.2))
+                for sx in (1, -1)]
+        pins = [box((sx * 4.4 - 0.3, 5.0, -2.5), (sx * 4.4 + 0.3, 5.6, 0.2)) for sx in (1, -1)]
+        Path(d, "usbc.wrl").write_text(_wrl([shell] + tabs + pins))
+        fp = ('(footprint "Connector_USB:USB_C_Receptacle_X" (layer "F.Cu") (at 20 30) (property "Reference" "J1") '
+              '(fp_rect (start -5.6 -7.35) (end 5.6 0) (layer "F.Fab")) (pad "1" smd rect (at 0 -6) (size 1 1) '
+              '(layers "F.Cu")) (model "${KIPRJMOD}/usbc.wrl"))')
+        slot = '(gr_rect (start 15 22) (end 25 31) (layer "Edge.Cuts"))' if mid else ""
+        Path(d, "b.kicad_pcb").write_text('(kicad_pcb (general (thickness 1.6)) (gr_rect (start 0 0) (end 40 40) '
+                                          '(layer "Edge.Cuts")) ' + slot + fp + ")")
+        P = _parts(kicad.read_board(os.path.join(d, "b.kicad_pcb")))
+        body = trimesh_from_manifold(kicad.part_manifold(P["J1"], leads=False))
+        c = np.array(P["J1"]["at"])
+        zc = 1.6 + z0 + 1.63                               # the shell's axis height on the board
+        # the corner the hull filled, between the shell's round end and a tab:
+        # outside the shell, so not in the body
+        # (above the tab's top, 2.8 mm, under the hull's face from the shell to it)
+        assert not body.contains([[c[0] + 5.0, c[1] + 2.0, 2.85 if mid else 3.0]])[0]
+        # the shell is
+        assert body.contains([[c[0], c[1] + 2.0, zc], [c[0] + 4.0, c[1] + 2.0, zc]]).all()
+        # the hull's volume was the block over the tabs; the body is the shell and tabs
+        v_shell = (8.94 * 3.26 - (4 - np.pi) * 1.63 ** 2) * 7.35
+        assert body.volume < 1.1 * v_shell + 2 * 0.7 * 2.0 * 1.2, body.volume
+        if mid:
+            # the shell below the board's face, in the slot, is kept
+            assert body.contains([[c[0], c[1] + 2.0, 0.3]])[0]
+            assert body.bounds[0][2] < 0.01, body.bounds
+
+
 def test_enclosure_components():
     spec = {"id": "main", "rotate": "z", "kicad": {"file": BOARD, "connectors": {"J1": {"opening": "usb"}},
                                                    "power": {"U2": 0.4}}}

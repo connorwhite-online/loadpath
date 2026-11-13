@@ -58,7 +58,7 @@ zero is a fit. Among the fits the rules choose:
 | rule | what it does |
 |---|---|
 | `against: "-z"` | pushed to that side of the cavity: a battery on the floor |
-| `alignTo: {opening, face, recess}` | that face of the part out through the opening, on its axis, `recess` mm short of the exterior: a connector in its port |
+| `alignTo: {opening, face, recess}` | that face of the part out through the opening, on its axis, `recess` mm short of the exterior: a connector in its port, centred by its mating face (what stands within 0.3 mm of its front, not its bounding box) on the port the exterior draws there |
 | `under: {at, direction, gap}` | that face on the line through `at`, `gap` under the skin: a switch under the spot a finger presses |
 | `near: [ids]` | close to other parts |
 | `ports` and `wires` | the cables between parts, laid as elastic rods for each candidate position: one whose cable is too short or bent past its radius is not a position ([WIRES.md](WIRES.md)) |
@@ -145,7 +145,9 @@ socket's solder joints are not flexed. The cases are named
 load target where the board bears on the part.
 
 **5. It writes an ordinary study**: the exterior as its `skin` (preserved,
-never edited, with no skin across the openings), the whole interior as
+never edited, with no skin across the openings; where the exterior draws
+the port inside an opening, a USB-C stadium in a box drawn round it, only
+the port's own section is cut, so its rounded wall stays), the whole interior as
 design space, components as keep-outs with their paths, cradles as
 preserves, supports on a small patch of the rest face (the drop and
 squeeze cases balance themselves; the patch only holds the part still).

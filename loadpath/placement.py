@@ -135,13 +135,21 @@ class _Grid:
         return np.stack(np.meshgrid(*self.axes, indexing="ij"), -1).reshape(-1, 3)
 
 
-def _face_point(verts: np.ndarray, normal: np.ndarray) -> np.ndarray:
+def _face_point(verts: np.ndarray, normal: np.ndarray, depth: float = 0.3) -> np.ndarray:
     """The centre of a part's face that looks along `normal` (in the same
-    frame as verts): its bounding box's face centre."""
-    lo, hi = verts.min(axis=0), verts.max(axis=0)
-    c = 0.5 * (lo + hi)
+    frame as verts): the centre of what stands within `depth` mm of its
+    front, on the front plane. A connector's front is its mating face (a
+    USB-C socket's stadium shell): its solder tabs and legs, behind it and
+    off to one side on many sockets, no longer pull it off its port the
+    way the whole bounding box's centre did."""
     k = int(np.argmax(np.abs(normal)))
-    c[k] = hi[k] if normal[k] > 0 else lo[k]
+    x = verts[:, k] * (1.0 if normal[k] > 0 else -1.0)
+    front = verts[x >= x.max() - depth]
+    if len(front) < 3:
+        front = verts
+    lo, hi = front.min(axis=0), front.max(axis=0)
+    c = 0.5 * (lo + hi)
+    c[k] = verts[:, k].max() if normal[k] > 0 else verts[:, k].min()
     return c
 
 
