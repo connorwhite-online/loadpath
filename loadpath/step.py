@@ -29,6 +29,7 @@ cadquery-ocp).
 """
 from __future__ import annotations
 
+import itertools
 import os
 
 import numpy as np
@@ -391,6 +392,37 @@ def _flip_needles(mesh, rel=1e-10):
     return trimesh.Trimesh(V, F, process=False)
 
 
+def _sew_slits(shell, tol=1e-6):
+    """The solid of `shell` with its slits closed, or None. A triangle with
+    no area that no flip or split could take out (a fold in a flat face:
+    the trim of a feather-thin wedge of the field onto a mounting face)
+    is left out by MakeShapeOnMesh, and its three edges, one long and two
+    along it, then each have one face. They lie on one another to within
+    `tol` (well under a micron), so sewing them is joining an edge to the
+    same line in two pieces: no geometry moves."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.TopAbs import TopAbs_SHELL
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    sw = BRepBuilderAPI_Sewing(tol)
+    sw.Load(shell)
+    sw.Perform()
+    if sw.NbFreeEdges() or sw.NbMultipleEdges():
+        return None
+    out = sw.SewedShape()
+    shells = []
+    ex = TopExp_Explorer(out, TopAbs_SHELL)
+    while ex.More():
+        shells.append(TopoDS.Shell(ex.Current()))
+        ex.Next()
+    if len(shells) != 1:
+        return None
+    sol = BRepBuilderAPI_MakeSolid(shells[0]).Solid()
+    return sol if BRepCheck_Analyzer(sol).IsValid() else None
+
+
 def _collapse_short(mesh, length):
     """`mesh` with its edges shorter than `length` collapsed to their
     midpoints (the two triangles on each go), where that keeps the surface
@@ -457,6 +489,7 @@ def _split_needles(mesh, rel=1e-9):
         for i, f in enumerate(F):
             for k in range(3):
                 owner[(f[k], f[(k + 1) % 3])] = i
+        made = set()                                 # edges this pass's splits add
         gone, out = set(), []
         for i in sorted(bad):
             if i in gone:
@@ -472,6 +505,12 @@ def _split_needles(mesh, rel=1e-9):
             if len(d) != 1:
                 continue
             d = d[0]
+            # the split adds the edge m-d: where m and d already share an
+            # edge (a pinch, two sheets of the surface meeting along it) it
+            # would sit on four triangles and the surface would not be closed
+            if m == d or (m, d) in owner or (d, m) in owner or (min(m, d), max(m, d)) in made:
+                continue
+            made.add((min(m, d), max(m, d)))
             gone.update((i, j))
             out += [[q, m, d], [m, p, d]]            # the neighbour (q, p, d) split at m
         if not gone:
@@ -776,8 +815,20 @@ def _cut_on_mesh(body, tools, notes):
         total = sum(abs(p.volume()) for p in pieces)
         pieces = [p for p in pieces if abs(p.volume()) >= 1e-5 * total]
         part = m3d.Manifold.batch_boolean(pieces, m3d.OpType.Add) if len(pieces) > 1 else pieces[0]
-    mesh = _split_needles(_flip_needles(_collapse_short(_mesh_of(part), WELD)))
-    return _mesh_solid(mesh, [t[2] for t in tools], part.volume(), notes)
+    return _mesh_solid(_clean_cut(_mesh_of(part)), [t[2] for t in tools], part.volume(), notes)
+
+
+def _clean_cut(mesh):
+    """The cut's mesh with the edges it left too short to be OpenCascade
+    edges collapsed and its needles flipped or split (_mesh_solid). Each
+    cleanup is kept only where it leaves the surface closed and
+    consistently wound, as manifold3d's mesh is: one that does not (a
+    pinch it cannot see) would fail the whole solid."""
+    for clean in (lambda x: _collapse_short(x, WELD), _flip_needles, _split_needles):
+        nxt = clean(mesh)
+        if nxt is not mesh and nxt.is_watertight and nxt.is_winding_consistent:
+            mesh = nxt
+    return mesh
 
 
 def _mesh_solid(mesh, cutters, want, notes):
@@ -827,18 +878,29 @@ def _mesh_solid(mesh, cutters, want, notes):
     mk.Build()
     # each face's triangle, by its corners (MakeShapeOnMesh leaves out a
     # triangle with no area: three corners on a line)
-    index = {tuple(v): i for i, v in enumerate(V.tolist())}
+    # A point can be two of the mesh's vertices: where two sheets of the
+    # surface touch (a pinch, the cut's edge meeting the floor), manifold3d
+    # keeps one vertex for each, so a corner is any vertex at its point.
+    index = {}
+    for i, v in enumerate(V.tolist()):
+        index.setdefault(tuple(v), []).append(i)
     tri_index = {tuple(sorted(f)): i for i, f in enumerate(F.tolist())}
     faces = [None] * len(F)
     ex = TopExp_Explorer(mk.Shape(), TopAbs_FACE)
     while ex.More():
         fc = TopoDS.Face(ex.Current())
-        got = set()
+        got = {}
         ee = TopExp_Explorer(fc, TopAbs_VERTEX)
         while ee.More():
-            got.add(index.get(BRep_Tool.Pnt_s(TopoDS.Vertex(ee.Current())).Coord()))
+            p = BRep_Tool.Pnt_s(TopoDS.Vertex(ee.Current())).Coord()
+            got[p] = index.get(p, [])
             ee.Next()
-        i = tri_index.get(tuple(sorted(got))) if None not in got else None
+        i = None
+        for c in itertools.product(*got.values()):
+            j = tri_index.get(tuple(sorted(c))) if len(set(c)) == 3 else None
+            if j is not None and faces[j] is None:
+                i = j
+                break
         if i is None:
             raise RuntimeError("a face is not one of the mesh's triangles")
         faces[i] = fc
@@ -907,6 +969,8 @@ def _mesh_solid(mesh, cutters, want, notes):
             bb.Add(shell, f)
         shell.Closed(True)
         sol = BRepBuilderAPI_MakeSolid(shell).Solid()
+        if not BRepCheck_Analyzer(sol).IsValid():
+            sol = _sew_slits(shell) or sol
         if not BRepCheck_Analyzer(sol).IsValid():
             fx = ShapeFix_Solid(sol)
             fx.Perform()
@@ -1368,7 +1432,10 @@ def _keep_bodies(shape, keep_with=None):
         ex.Next()
     if len(solids) <= 1:
         return shape, 0
-    vols = [_volume(s) for s in solids]
+    # by the material in each: a solid whose shell came out inside out has
+    # a negative volume and is still the part (it is turned right below)
+    vols = [abs(_volume(s)) for s in solids]
+    solids = [s if _volume(s) >= 0 else s.Reversed() for s in solids]
     order = np.argsort(vols)[::-1]
     kept = [solids[order[0]]]
     for i in order[1:]:
@@ -1602,10 +1669,23 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     if check and not valid:
         from OCP.ShapeFix import ShapeFix_Shape
 
+        before = _volume(shape)
         fx = ShapeFix_Shape(shape)
         fx.Perform()
-        shape = fx.Shape()
-        valid = bool(BRepCheck_Analyzer(shape).IsValid())
+        fixed = fx.Shape()
+        valid = bool(BRepCheck_Analyzer(fixed).IsValid())
+        # a repair is the part only if it holds the part's material: ShapeFix
+        # can drop faces until what is left is valid and empty (the elbow
+        # bracket: 22 faces, 0 mm^3, reported valid)
+        if valid and abs(_volume(fixed) - before) <= 1e-3 * abs(before) + 1e-6:
+            shape = fixed
+        elif mesh_volume is not None:
+            notes.append({"warning": f"the solid was not valid and its repair {'lost material' if valid else 'not valid either'}"
+                                     "; written as the mesh's facets"})
+            shape = _build_normal(Organic(None, ["mesh"], mesh=part), {}, faces, [])
+            valid = bool(BRepCheck_Analyzer(shape).IsValid())
+        else:
+            shape = fixed
     planes = []
     for lf in _leaves(plan):
         if isinstance(lf, Exact):

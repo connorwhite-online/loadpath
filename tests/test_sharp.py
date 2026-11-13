@@ -452,6 +452,56 @@ def test_step_bores_exact_where_the_body_already_lies_on_them():
     assert abs(rep["volume"] / want - 1) < 1e-3, (rep["volume"], want)
 
 
+def test_step_bores_exact_through_a_pinch_on_the_mount_face():
+    """A bolt seat of the step-import elbow as cut (main since 81b42dd): the
+    field's surface dips to the mounting face beside the screw hole, and the
+    trim to the face leaves a feather-thin wedge whose rim touches the hole
+    along a line (two vertices at one point) and a fold with a triangle of
+    no area that nothing can flip or split away. The bores are still exact
+    cylinders and the solid is closed, valid and the mesh's volume (it was
+    "not closed", then the OpenCascade fallback wrote an empty file)."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    import trimesh
+
+    from loadpath import step
+    from loadpath.shapes import Cylinder
+
+    z = np.load(os.path.join(os.path.dirname(__file__), "data", "elbow-pinch.npz"))
+    mesh = step._clean_cut(trimesh.Trimesh(z["V"], z["F"], process=False))
+    cutters = [Cylinder(c[:3], c[3:6], c[6]) for c in z["cutters"]]
+    notes = []
+    solid = step._mesh_solid(mesh, cutters, float(mesh.volume), notes)
+    assert step._faces_report(solid, [])["faces"].get("cylinder", 0) >= 3, step._faces_report(solid, [])
+    assert abs(step._volume(solid) / mesh.volume - 1) < 1e-3, (step._volume(solid), mesh.volume)   # exact walls vs chords
+    assert not notes, notes
+
+
+def test_step_keeps_an_inside_out_main_body():
+    """_keep_bodies keeps the largest body by its material: a solid whose
+    shell came out inside out (negative volume) is still the part, not a
+    speck to drop for the fragment beside it."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    from OCP.TopoDS import TopoDS_Compound
+
+    from loadpath import step
+
+    big = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 10, 10, 10).Solid().Reversed()
+    speck = BRepPrimAPI_MakeBox(gp_Pnt(20, 0, 0), 0.1, 0.1, 0.1).Solid()
+    b, comp = BRep_Builder(), TopoDS_Compound()
+    b.MakeCompound(comp)
+    b.Add(comp, big)
+    b.Add(comp, speck)
+    kept, dropped = step._keep_bodies(comp)
+    assert dropped == 1 and abs(step._volume(kept) - 1000) < 1e-6, (dropped, step._volume(kept))
+
+
 def test_step_bores_exact_on_the_elbow_bolt_seat():
     """A bolt seat cut out of the step-import elbow's optimized body (one
     that lost every exact bore on main: OpenCascade's cut of these facets by
@@ -493,7 +543,8 @@ TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact
          test_step_of_a_part_with_meshed_pads_is_one_valid_solid_with_exact_holes,
          test_step_boolean_that_does_not_finish_is_written_as_facets,
          test_step_bores_exact_where_the_body_already_lies_on_them,
-         test_step_bores_exact_on_the_elbow_bolt_seat]
+         test_step_bores_exact_on_the_elbow_bolt_seat, test_step_bores_exact_through_a_pinch_on_the_mount_face,
+         test_step_keeps_an_inside_out_main_body]
 
 
 def main():
