@@ -377,7 +377,14 @@ buckling, printability) you can report to the user.
    `killed` (a signal), or `died` (the process is gone without a word: out of
    memory, or killed outright); each outcome is written to
    `out/partial/` (STL plus a line in `outcomes.jsonl`) as the search finds
-   it, so a run killed late still leaves its verified parts.
+   it, so a run killed late still leaves its verified parts. A run that
+   `died` or was `killed` (a container reset, a closed laptop) is not lost:
+   `loadpath run --resume OUT` (MCP: `loadpath_resume`) continues it with
+   its own study and options. The optimizations it finished come back from
+   `OUT/checkpoint` at no cost, the one it was in goes on from its last
+   checkpoint (every 8 iterations), and the result is the one the
+   uninterrupted run would have delivered, to the bit. Relaunch it detached,
+   as the first time.
    Progress is JSON lines on stderr. A `safetyFactor` goal runs several
    optimizations plus a fine re-check of the pick: at 20k cells on one core
    expect 10-30 minutes (a fixed `volumeFraction` is a few minutes).

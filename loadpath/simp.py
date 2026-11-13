@@ -28,6 +28,7 @@ import scipy.sparse as sp
 
 from scipy import ndimage
 
+from . import checkpoint as _checkpoint
 from .directions import collapse, expand
 from .domain import Domain
 from .fem import HexMesh, Solver, Stiffness, hex8_ke
@@ -1037,6 +1038,28 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
 
 
 def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_stop=None) -> SimpResult:
+    """One optimization, checkpointed when LOADPATH_CHECKPOINT names a folder
+    (checkpoint.py): a call this run already finished returns its stored
+    result, and one a reset interrupted continues from its last loop state."""
+    ck = _checkpoint.Call.open("simp", domain, nu, opts)
+    if ck is None:
+        return _optimize_run(domain, nu, opts, on_iter, should_stop, None)
+    res = ck.done()
+    if res is not None:
+        return res
+    res = _optimize_run(domain, nu, opts, on_iter, should_stop, ck)
+    ck.finish(res)
+    return res
+
+
+# The loop's state between two iterations, as checkpoint.Call saves and
+# restores it: everything a later iteration reads that an earlier one wrote.
+_LOOP_STATE = ("x", "beta", "since_beta", "us", "dc_prev", "weights", "history", "c0", "change", "heat_state",
+               "mma_s", "warp_state", "buck_last", "buck_age", "buck_nu", "modal_last", "modal_age", "modal_nu",
+               "mu", "tool_fill", "com_state", "feed_state", "lam_last", "move_k", "step_prev")
+
+
+def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_stop, ck) -> SimpResult:
     t0 = time.time()
     mesh = domain.mesh
     n = mesh.n_elem
@@ -1205,7 +1228,31 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     move_k = opts.move
     lam_last = None
     vol_evals = 0
-    for it in range(1, opts.max_iterations + 1):
+    it0 = 0
+    if ck is not None:
+        ck.add_helpers(buck=buck, thick=thick, am_b=am_b, am_e=am_e, am_v=am_v)
+        st = ck.restore()
+        if st is not None:
+            (x, beta, since_beta, us, dc_prev, weights, history, c0, change, heat_state, mma_s, warp_state,
+             buck_last, buck_age, buck_nu, modal_last, modal_age, modal_nu, mu, tool_fill, com_state,
+             feed_state, lam_last, move_k, step_prev) = (st[k] for k in _LOOP_STATE)
+            it0 = it = st["it"]
+            t0 -= st["seconds"]
+            _checkpoint.set_flags(fe, st["fe"])
+    for it in range(it0 + 1, opts.max_iterations + 1):
+        if ck is not None and ck.boundary(it - 1):
+            # A checkpoint iteration. The solver's caches (a reduced system
+            # reused while the live cells stay inside it, a preconditioner
+            # built on an earlier iteration's matrix) start over here, as a
+            # resumed run's do, its flags (a fallback it settled on) kept: the
+            # uninterrupted run and a resumed one go on from the same state,
+            # to the bit.
+            fe = _checkpoint.fresh(fe, lambda: _Analysis(domain, nu, opts.solve_rtol))
+            if it - 1 != it0 and ck.due():
+                ck.save({"it": it - 1, "seconds": time.time() - t0, "fe": _checkpoint.flags(fe), **dict(zip(_LOOP_STATE, (
+                x, beta, since_beta, us, dc_prev, weights, history, c0, change, heat_state, mma_s, warp_state,
+                buck_last, buck_age, buck_nu, modal_last, modal_age, modal_nu, mu, tool_fill, com_state,
+                feed_state, lam_last, move_k, step_prev)))})
         if should_stop is not None and should_stop():
             break
         if opts.build_direction is not None and opts.adaptive_move:

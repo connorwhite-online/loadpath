@@ -24,6 +24,7 @@ Tools:
   checks on any STL an agent already holds (wall thickness, overhangs,
   trapped powder; two-fluid isolation; does a component fit its cavity)
 - loadpath_status / loadpath_jobs / loadpath_cancel: follow jobs
+- loadpath_resume: continue a study job that died partway (a restart)
 
 Jobs run in a child process, the same `python -m loadpath ...` the CLI
 uses, under LOADPATH_HOME (default ~/.loadpath/jobs). Each job folder holds
@@ -1027,6 +1028,32 @@ def cancel(job_id: str) -> dict:
     return {"status": "cancelled"}
 
 
+def resume(job_id: str) -> dict:
+    """Continue a study job whose process died partway (a machine restart,
+    an out-of-memory kill): `loadpath run --resume` in the job's folder, from
+    the optimizations it finished and the last checkpoint of the one it was in."""
+    d = _job_dir(job_id)
+    meta = _meta(d)
+    if _alive(job_id, meta):
+        return {"ok": False, "error": "the job is still running"}
+    if meta.get("kind") != "study":
+        return {"ok": False, "error": f"only study jobs resume (this one is {meta.get('kind')!r})"}
+    if os.path.exists(os.path.join(d, "out", "report.json")):
+        return {"ok": False, "error": "the job finished: nothing to resume"}
+    if not os.path.exists(os.path.join(d, "out", "checkpoint", "run.json")):
+        return {"ok": False, "error": "the job left no checkpoint to resume from: start it again"}
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
+    env["PYTHONPATH"] = os.path.dirname(_HERE) + os.pathsep + env.get("PYTHONPATH", "")
+    with open(os.path.join(d, "progress.jsonl"), "ab") as err, open(os.path.join(d, "stdout.json"), "wb") as out:
+        proc = subprocess.Popen([sys.executable, "-m", "loadpath", "run", "--resume", os.path.join(d, "out")],
+                                stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=env, cwd=d)
+    _procs[job_id] = proc
+    meta.update(pid=proc.pid, resumed=meta.get("resumed", 0) + 1, resumedAt=time.time())
+    with open(os.path.join(d, "job.json"), "w") as fh:
+        json.dump(meta, fh)
+    return {"ok": True, "jobId": job_id, "status": "running", "next": _POLL_HINT}
+
+
 def serve():
     try:
         from mcp.server.mcpserver import Image, MCPServer
@@ -1509,6 +1536,14 @@ def serve():
     def loadpath_cancel(job_id: str) -> dict:
         """Stop a running job."""
         return cancel(job_id)
+
+    @tool
+    def loadpath_resume(job_id: str) -> dict:
+        """Continue a study job that died partway (status 'died' or 'failed' after a machine restart or an
+        out-of-memory kill): the optimizations it finished are kept and the one it was in continues from its
+        last checkpoint (every 8 iterations), delivering what the uninterrupted run would have. Poll
+        loadpath_status as before."""
+        return resume(job_id)
 
     server.run("stdio")
 

@@ -31,6 +31,7 @@ from .domain import Domain
 from .fem import elastic_c, hex8_b, hex8_b_center
 from .manufacture import tie_groups
 from .mma import MMA
+from . import checkpoint as _checkpoint
 from .simp import (E_MIN, PENALTY, SimpOptions, SimpResult, _Analysis, _dproject, _extrude, _pad,
                    _project, _symmetrize, density_filter)
 
@@ -137,6 +138,26 @@ def _bond_form(normal):
 
 def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: Limits,
                          on_iter=None, should_stop=None) -> SimpResult:
+    """Checkpointed as simp._optimize is (checkpoint.py)."""
+    ck = _checkpoint.Call.open("constrained", domain, nu, opts, limits)
+    if ck is None:
+        return _constrained_run(domain, nu, opts, limits, on_iter, should_stop, None)
+    res = ck.done()
+    if res is not None:
+        return res
+    res = _constrained_run(domain, nu, opts, limits, on_iter, should_stop, ck)
+    ck.finish(res)
+    return res
+
+
+# the loop's state between two iterations (checkpoint.Call)
+_LOOP_STATE = ("x", "mma", "move_cap", "worst_prev", "kappa", "us", "lams", "beta", "since_beta", "history",
+               "buck_last", "buck_age", "modal_last", "modal_age", "buck_beta", "buck_vol", "crisp_ratio", "crisp_beta",
+               "crisp_age", "best", "trail")
+
+
+def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limits, on_iter, should_stop,
+                     ck) -> SimpResult:
     t0 = time.time()
     mesh = domain.mesh
     n = mesh.n_elem
@@ -256,7 +277,30 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     best = None
     trail = []
 
-    for it in range(1, opts.max_iterations + 1):
+    it0 = 0
+    if ck is not None:
+        ck.add_helpers(buck=buck, buck_crisp=buck_crisp, am_b=am_b, am_e=am_e)
+        st = ck.restore()
+        if st is not None:
+            (x, mma, move_cap, worst_prev, kappa, us, lams, beta, since_beta, history, buck_last, buck_age,
+             modal_last, modal_age, buck_beta, buck_vol, crisp_ratio, crisp_beta, crisp_age, best,
+             trail) = (st[k] for k in _LOOP_STATE)
+            it0 = it = st["it"]
+            t0 -= st["seconds"]
+            _checkpoint.set_flags(fe, st["fe"])
+    for it in range(it0 + 1, opts.max_iterations + 1):
+        if ck is not None and ck.boundary(it - 1):
+            # A checkpoint iteration. The solver's caches (a reduced system
+            # reused while the live cells stay inside it, a preconditioner
+            # built on an earlier iteration's matrix) start over here, as a
+            # resumed run's do, its flags (a fallback it settled on) kept: the
+            # uninterrupted run and a resumed one go on from the same state,
+            # to the bit.
+            fe = _checkpoint.fresh(fe, lambda: _Analysis(domain, nu, opts.solve_rtol))
+            if it - 1 != it0 and ck.due():
+                ck.save({"it": it - 1, "seconds": time.time() - t0, "fe": _checkpoint.flags(fe), **dict(zip(_LOOP_STATE, (
+                x, mma, move_cap, worst_prev, kappa, us, lams, beta, since_beta, history, buck_last, buck_age,
+                modal_last, modal_age, buck_beta, buck_vol, crisp_ratio, crisp_beta, crisp_age, best, trail)))})
         if should_stop is not None and should_stop():
             break
         x_now = x

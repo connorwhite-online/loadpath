@@ -647,20 +647,82 @@ def run_status(out: str) -> dict:
             pass
         if not alive:
             st["state"] = "died"
-            st["hint"] = ("the process is gone without writing an end: killed (out of memory, or by the shell "
-                          "that launched it). Outcomes found so far are in out/partial/. Relaunch detached "
-                          "(setsid nohup ... > run.log 2>&1 < /dev/null &); if it was memory, set "
-                          "LOADPATH_CONFIRM_CELLS lower or resolution.maxElements")
+            st["hint"] = ("the process is gone without writing an end: killed (out of memory, a machine "
+                          "restart, or the shell that launched it). Outcomes found so far are in out/partial/. "
+                          "Continue it detached with `setsid nohup loadpath run --resume OUT > run.log 2>&1 "
+                          "< /dev/null &`: finished optimizations are kept and the one in progress goes on "
+                          "from its last checkpoint; if it was memory, set LOADPATH_CONFIRM_CELLS lower or "
+                          "resolution.maxElements and start fresh")
+            if os.path.exists(os.path.join(out, "checkpoint", "run.json")):
+                st["resumable"] = True
     if st.get("started") and st.get("state") == "running":
         st["elapsedSeconds"] = round(time.time() - float(st["started"]))
     return st
+
+
+def _run_checkpoint(p, args, argv):
+    """`run`: checkpoints under OUT/checkpoint (checkpoint.py), and with
+    --resume OUT the interrupted run's own arguments, read back from there."""
+    import hashlib
+
+    from . import checkpoint
+
+    if args.resume:
+        out = os.path.abspath(args.resume)
+        try:
+            with open(os.path.join(out, "checkpoint", checkpoint.RUN_FILE)) as fh:
+                saved = json.load(fh)
+        except (OSError, ValueError):
+            print(json.dumps({"ok": False, "error": f"{out} holds no resumable run "
+                                                    f"(no checkpoint/{checkpoint.RUN_FILE})"}))
+            return None
+        args = p.parse_args(saved["argv"])
+        cwd = saved["cwd"]
+        args.study = os.path.join(cwd, args.study)
+        args.base_dir = args.base_dir and os.path.join(cwd, args.base_dir)
+        args.out = out
+        args.resume = out
+        try:
+            with open(args.study, "rb") as fh:
+                sha = hashlib.sha256(fh.read()).hexdigest()
+        except OSError:
+            sha = None
+        if sha != saved.get("studySha256"):
+            # every optimization's key holds its design problem, so a changed
+            # study runs fresh where it changed; still worth saying
+            print(f"loadpath: {args.study} changed since the run started: optimizations of a changed "
+                  "problem run again", file=sys.stderr)
+        if saved.get("code") != checkpoint.code_version():
+            print("loadpath: loadpath's code changed since the run started: the optimizations it finished are "
+                  "kept as the older code made them, the rest run on the new code", file=sys.stderr)
+        checkpoint.start(out, resume=True)
+        return args
+    if args.study is None:
+        p.error("run: give a study, or --resume OUT")
+    if args.no_checkpoint:
+        return args
+    root = checkpoint.start(args.out, resume=False)
+    with open(args.study, "rb") as fh:
+        sha = hashlib.sha256(fh.read()).hexdigest()
+    saved = [a for a in argv if a != "--no-checkpoint"]
+    with open(os.path.join(root, checkpoint.RUN_FILE), "w") as fh:
+        json.dump({"argv": saved, "cwd": os.getcwd(), "studySha256": sha, "code": checkpoint.code_version(),
+                   "started": time.time()}, fh, indent=1)
+    return args
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="loadpath", description="Generative design for printed parts.")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="optimize, mesh and verify a study")
-    r.add_argument("study")
+    r.add_argument("study", nargs="?", help="the study JSON (not with --resume: the run's own is used)")
+    r.add_argument("--resume", metavar="OUT",
+                   help="continue a run that was killed partway (a container reset): OUT is its --out folder. "
+                        "Optimizations it finished are taken from OUT/checkpoint, the one it was in continues "
+                        "from its last checkpoint (written every few minutes), with the run's own study and "
+                        "options; the result is the one the uninterrupted run would have delivered")
+    r.add_argument("--no-checkpoint", action="store_true",
+                   help="do not write OUT/checkpoint (the run then cannot be resumed)")
     r.add_argument("--out", default="loadpath-out")
     r.add_argument("--no-render", action="store_true")
     r.add_argument("--viewer", choices=["best", "all", "none"], default="best",
@@ -1228,6 +1290,10 @@ def main(argv=None):
         if argv[i] in ("--direction", "--span") and argv[i + 1][:1] == "-" and argv[i + 1][1:2] in ("x", "y", "z"):
             argv[i:i + 2] = [f"{argv[i]}={argv[i + 1]}"]
     args = p.parse_args(argv)
+    if args.cmd == "run":
+        args = _run_checkpoint(p, args, argv)
+        if args is None:
+            return 2
     if getattr(args, "quick", False):
         from . import quick
         quick.enable()
@@ -1422,7 +1488,7 @@ def main(argv=None):
         try:
             _status("killed", signal=signal.Signals(signum).name, stage=seen.get("stage"),
                     partial=os.environ.get("LOADPATH_PARTIAL_DIR"),
-                    hint="relaunch detached: setsid nohup loadpath run ... > run.log 2>&1 < /dev/null &")
+                    hint="continue it detached: setsid nohup loadpath run --resume OUT > run.log 2>&1 < /dev/null &")
         finally:
             os._exit(128 + signum)
 
@@ -1588,6 +1654,9 @@ def main(argv=None):
                                  "files": [f["path"] for f in man["files"]]}
         except Exception as exc:  # noqa: BLE001
             summary.setdefault("warnings", []).append(f"bundle not written: {type(exc).__name__}: {exc}")
+    if os.environ.get("LOADPATH_CHECKPOINT"):
+        from . import checkpoint
+        summary["checkpoint"] = checkpoint.summary()
     _write_report(args.out, summary)
     _status("done", report=os.path.join(os.path.abspath(args.out), "report.json"))
     return 0
