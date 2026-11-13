@@ -26,14 +26,36 @@ capped force.
 
 - `region` is the preserved region where the breakaway part's loads act on this part. Every load that
   names it runs through the fuse, so the force through the link comes from statics, not from a guess.
-- `holds` lists the service cases. By default it's every case without an `impact` block. The link is sized
-  to the largest force it carries in them: the shear across a pin, or the pull along a tension link.
+- `holds` lists the cases the link must survive. By default it's every case without an `impact` block. The
+  link is sized to the largest of force × safety factor over them, each case at its own `safetyFactor`
+  (`serviceSafetyFactor` on the fuse overrides them all). The force is the shear across a pin, or the pull
+  along a tension link.
 - `breaks` lists the crash cases. By default it's every impact case with a load on the region. Each gets
   `impact.maxForce` set to the top of the window, so the impact model's peak force (spring in series with
   the crusher) is held to it. A plain force case that would exceed the window is scaled down to it.
 - `report.fuses` gives, for each link, its size, its break force (nominal, low and high), the window's
   width, what sized it (service or the printable minimum), and which cases it capped. When an impact
   case is capped, its `report.cases[].impact` shows `cappedAt` and the `uncappedForce` it would have been.
+
+## Where the energy goes
+
+Breaking a pin stops almost nothing: a brittle shear takes a few millijoules. A link that lets go at force F
+has only absorbed what the crusher in front of it and the part's own give hold up to F, and the rest of the
+hit is still moving. That rest arrives at the next contact. So the report gives, for each capped case, the
+hit's energy, `releaseEnergy` (what was taken before the link went) and `energyPastRelease` (what is left),
+and it warns when the hit is not stopped. The verify report gives the same numbers with the part's
+compliance included.
+
+That leaves two ways to use a fuse:
+
+- **Release low.** The link is sized just above service and lets go early, and the next contact gets its
+  own crusher and its own case. This fits a part that is in the way rather than one that absorbs, such as
+  a bracket a child hangs from, a tool handle, or a camera that should come off before its mount breaks.
+- **Ride out the rating, release above it.** Put the rated crash cases in `holds` and give an overload
+  case (the same hit, harder) in `breaks`. The crusher stops the rated hit with the link intact, each held
+  case at its own `safetyFactor`. A harder hit lets go at the window's top, and the part behind is
+  designed for that force. This fits a bumper or a duct: the energy is absorbed where it was meant to be,
+  and the link keeps an overload from reaching the core.
 
 `impact.maxForce` can also be set by hand, for anything else in the load path that lets go: a slip
 clutch, a magnetic mount, a friction joint.
@@ -79,5 +101,5 @@ carry and still protect it.
   rate, treat the window as ±15%.
 
 Tests: `tests/test_fuse.py` covers the break forces against their closed forms, sizing that holds service
-on the weakest print, the window's width by process, the capping of crash cases through a study, and a
-watertight pin.
+on the weakest print, the window's width by process, the capping of crash cases through a study, the energy
+left moving when a link lets go, held cases at their own factors, and a watertight pin.

@@ -615,6 +615,32 @@ def series_impact(energy: float, compliance: float, distance=None, force=None, p
             "structureShare": es / float(energy) if energy > 0 else 0.0, "bottomedOut": False}
 
 
+def release_energy(cap: float, compliance: float, distance=None, force=None, points: int = 4000) -> float:
+    """What a crusher in series with the part has taken (N mm) when the force through them first reaches
+    `cap`: the crush integral to that point plus the part's spring energy 1/2 compliance cap^2.
+
+    A link that lets go at `cap` (a fuse, a slip clutch) stops the hit only if this is at least the hit's
+    energy. Otherwise it breaks with the rest still moving, and that rest arrives at the next contact
+    (energy is not lost by breaking a pin: a brittle shear absorbs only a few mJ)."""
+    c = max(float(compliance), 0.0)
+    e = 0.5 * c * float(cap) ** 2
+    if distance is None or force is None or len(distance) < 2:
+        return e
+    d = np.asarray(distance, float)
+    fc = np.maximum(np.asarray(force, float), 0.0)
+    dd = np.unique(np.concatenate([np.linspace(d[0], d[-1], points), d]))
+    ff = np.interp(dd, d, fc)
+    ec = np.concatenate([[0.0], np.cumsum(0.5 * (ff[1:] + ff[:-1]) * np.diff(dd))])
+    over = np.flatnonzero(ff >= cap)
+    if len(over) == 0:
+        return float(ec[-1]) + e          # the crusher never reaches the cap before it is used up
+    k = int(over[0])
+    if k == 0:
+        return e
+    t = (cap - ff[k - 1]) / max(ff[k] - ff[k - 1], 1e-300)
+    return float(ec[k - 1] + t * (ec[k] - ec[k - 1])) + e
+
+
 def impact_response(curve: CrushCurve, energy: float, mass: float | None = None) -> dict:
     """Where a mass carrying `energy` (N mm) stops on the curve: crush
     distance, peak force and (with `mass`, kg) peak deceleration in g. If

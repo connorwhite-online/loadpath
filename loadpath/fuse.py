@@ -219,6 +219,15 @@ def _through(kind, f, axis):
     return max(along, 0.0), along
 
 
+def _hit_energy(imp: dict) -> float | None:
+    """An impact block's energy in N mm (J x 1000), when it is given or follows from mass and velocity."""
+    if imp.get("energy") is not None:
+        return float(imp["energy"]) * 1000.0
+    if imp.get("velocity") is not None and imp.get("mass") is not None:
+        return 0.5 * float(imp["mass"]) * float(imp["velocity"]) ** 2 * 1000.0
+    return None
+
+
 def expand_fuses(d: dict) -> dict:
     """The study with each fuse sized from its service cases and every crash case through it capped at the
     window's top (`impact.maxForce`); the sizing is recorded in d["_fuses"] (report.fuses). A fuse:
@@ -258,18 +267,24 @@ def expand_fuses(d: dict) -> dict:
         for nm in list(holds) + list(breaks):
             if nm not in by_name:
                 raise ValueError(f"{lab}: no load case named {nm!r}")
-        service, axial = 0.0, 0.0
+        # each held case at its own safety factor (a crash case the link must ride out usually carries a
+        # lower one than flight); an explicit serviceSafetyFactor applies to all of them
+        sf_all = fz.get("serviceSafetyFactor")
+        service, service_sf, axial, need = 0.0, float(sf_all or goal_sf), 0.0, 0.0
         for nm in holds:
-            f, _ = _region_force(by_name[nm], reg)
+            c = by_name[nm]
+            f, _ = _region_force(c, reg)
             work, along = _through(kind, f, axis)
-            service = max(service, work)
+            sf_c = float(sf_all or c.get("safetyFactor") or goal_sf)
+            if sf_c * work > need:
+                need, service, service_sf = sf_c * work, work, sf_c
             axial = max(axial, abs(along))
         sized = size_fuse(kind, service, fz.get("material") or d.get("material") or "pa12", proc,
-                          float(fz.get("serviceSafetyFactor") or goal_sf), int(fz.get("planes", 1)),
+                          service_sf, int(fz.get("planes", 1)),
                           int(fz.get("count", 1)), bool(fz.get("acrossLayers", False)), fz.get("thickness"),
                           fz.get("protectForce"), fz.get("scatter"))
         cap = sized["breakHigh"]
-        capped = []
+        capped, warn = [], []
         for nm in breaks:
             c = by_name[nm]
             f, n = _region_force(c, reg)
@@ -282,7 +297,23 @@ def expand_fuses(d: dict) -> dict:
                 total = cap / max(share, 1e-6)
                 prev = imp.get("maxForce")
                 imp["maxForce"] = round(min(total, prev) if prev else total, 3)
-                capped.append({"case": nm, "maxForce": imp["maxForce"], "acrossShare": round(share, 3)})
+                row_c = {"case": nm, "maxForce": imp["maxForce"], "acrossShare": round(share, 3)}
+                e_hit = _hit_energy(imp)
+                if e_hit is not None:
+                    # the crusher alone up to the cap (the part's own give adds a little: the analysis
+                    # reports releaseEnergy with it); breaking the link stops nothing
+                    from .impact import release_energy
+                    cr = imp.get("crusher") or {}
+                    e_rel = release_energy(imp["maxForce"], 0.0, cr.get("distance"), cr.get("force"))
+                    row_c["hitEnergy"] = round(e_hit / 1000.0, 3)
+                    row_c["releaseEnergy"] = round(min(e_rel, e_hit) / 1000.0, 3)
+                    left = max(e_hit - e_rel, 0.0) / 1000.0
+                    row_c["energyPastRelease"] = round(left, 3)
+                    if left > 0.02 * e_hit / 1000.0:
+                        warn.append(f"{nm}: the link lets go with {left:.2f} J of {e_hit / 1000:.2f} J still "
+                                    "moving; the next contact (what the body hits once the part is gone) needs "
+                                    "its own case")
+                capped.append(row_c)
             elif work > cap:
                 # a plain force case over the window: the link is gone before it is reached
                 k = cap / work
@@ -290,7 +321,10 @@ def expand_fuses(d: dict) -> dict:
                     if isinstance(ld, dict) and ld.get("region") == reg and ld.get("force") is not None:
                         ld["force"] = [round(v * k, 4) for v in ld["force"]]
                 capped.append({"case": nm, "scaledTo": round(cap, 2), "from": round(work, 2)})
-        row = {"id": fid, "region": reg, **sized, "holds": list(holds), "breaks": capped}
+        row = {"id": fid, "region": reg, **sized, "serviceSafetyFactor": service_sf, "holds": list(holds),
+               "breaks": capped}
+        if warn:
+            row["warnings"] = warn
         if kind == "shear-pin" and axial > 0.3 * max(service, 1e-9) and axial > 0:
             row.setdefault("warnings", []).append(
                 f"{axial:.1f} N of the service load runs along the pin: its heads or a shoulder must carry it")

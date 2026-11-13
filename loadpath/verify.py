@@ -1929,8 +1929,13 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                "rigidBackingForce": rigid["peakForce"] if rigid is not None else None,
                "forceAsWritten": fn}
         if capped_from is not None:
+            from .impact import release_energy
             row["cappedAt"] = ic.max_force
             row["uncappedForce"] = capped_from
+            # what the crusher and the part have taken when the link lets go; the rest is still moving
+            e_rel = release_energy(ic.max_force, c_f, ic.distance, ic.force)
+            row["releaseEnergy"] = min(e_rel, energy) / 1000.0
+            row["energyPastRelease"] = max(energy - e_rel, 0.0) / 1000.0
         if m_eff is not None:
             row["mass"] = m_eff
         if ic.velocity is not None:

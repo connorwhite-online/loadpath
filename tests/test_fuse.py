@@ -82,6 +82,30 @@ def test_study_caps_crash_cases():
     assert st.raw["_fuses"][0]["id"] == "pin"
 
 
+def test_release_energy_and_the_hit_left_moving():
+    from loadpath.impact import release_energy
+
+    # a linear crusher F = k d to the cap holds cap^2 / 2k; the part's own give adds cap^2 c / 2
+    k, cap, c = 50.0, 200.0, 0.01
+    d = np.linspace(0, 10, 11)
+    assert abs(release_energy(cap, 0.0, d, k * d) - cap ** 2 / (2 * k)) < 1.0
+    assert abs(release_energy(cap, c, d, k * d) - cap ** 2 / (2 * k) - 0.5 * c * cap ** 2) < 1.0
+    # no crusher: the link lets go with the whole 2 J hit still moving, and the report says so
+    row = fuse.expand_fuses(_study())["_fuses"][0]
+    knock = row["breaks"][0]
+    assert knock["hitEnergy"] == 2.0 and knock["energyPastRelease"] == 2.0
+    assert any("next contact" in w for w in row["warnings"])
+
+
+def test_held_cases_at_their_own_safety_factor():
+    d = _study()
+    # a crash the link must ride out, at its own (lower) factor: 50 N x 1.25 governs over 30 N x 2
+    d["loadCases"].append({"name": "bump", "safetyFactor": 1.25, "loads": [{"region": "lug", "force": [0, 0, -50]}]})
+    row = fuse.expand_fuses(d)["_fuses"][0]
+    assert row["serviceForce"] == 50.0 and row["serviceSafetyFactor"] == 1.25
+    assert row["breakLow"] >= 62.5 - 1e-6
+
+
 def test_cap_reaches_the_peak_force():
     from loadpath.impact import series_impact
 
