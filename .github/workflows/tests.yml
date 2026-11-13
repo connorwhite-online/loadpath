@@ -36,7 +36,7 @@ jobs:
               tests/test_touch_zones.py tests/test_cooling.py tests/test_rods.py tests/test_wires.py
               tests/test_stack.py tests/test_kicad.py
           - group: antenna         # ~10 min (rf 1, antenna 8)
-            files: tests/test_rf.py tests/test_antenna.py
+            files: tests/test_rf.py tests/test_antenna.py tests/test_frameband.py
           - group: casting         # ~8 min
             files: tests/test_casting.py tests/test_slipcast.py tests/test_castfeed.py
           - group: enclosure       # ~11 min

@@ -419,6 +419,11 @@ the bands. It does not change the antenna: what the size of the radiator
 forbids (Bode-Fano) shows as a worst case that stays low whatever the
 parts, and that is the honest answer to "can this band be covered".
 
+A product carries one network, found in free space. `match(...,
+network=m["network"])` reads that network on the impedance solved with a
+hand or a cable in place, so the number is what the radio sees when held,
+not what a network retuned for the hand would give.
+
 ### Checking what is joined
 
 On a body with a curved outline a gap of a cell can close and a tie can
@@ -426,6 +431,59 @@ miss its ground. `Sim.conductors()` labels the metal the solver actually
 has, so two segments that should be apart, or a feed that should land on
 the band, are checked before a solve is read. Curved outlines are passed
 with `curved=True`, which keeps their vertices from becoming grid lines.
+
+### A band cut out of a fixed exterior
+
+`loadpath.frameband` takes a product whose outside is already drawn (two
+shells, a tray and a cover) and turns a strip of its side wall into the
+antenna without moving the exterior:
+
+```python
+from loadpath import frameband as F
+ext = F.opening_extent(list(shells.values()), (4.0, 10.0), [0, -60], [0, 1])   # the USB mouth, from the shells
+r = F.cut_band(shells, z=(4.0, 10.0), wall=1.2, splits=[0.3, 0.7], ties=[0.1], feed=0.2,
+               behind=0.8, keep=0.3, keep_clear=[...])
+r["parts"]    # rear, front, band-1..n: watertight single bodies
+r["report"]   # exterior deviation (0.0 mm when it is kept), air layers, bodies per part
+sc = F.band_scene(r["layout"], shells, "tpu", splits=[0.3, 0.7], ties=[0.1], feed=0.2,
+                  grounds=[(board_outline, z_bottom, z_top)], extra=F.hand_grip(shells, f_mhz=835))
+```
+
+The band is the wall between two heights, `wall` thick, split into
+segments at fractions of the perimeter; ties are lugs to the board ground,
+the feed is a lug with the port. Air behind the strip keeps the field out
+of the plastic; it is cut only where the shell's own wall has room for it
+(`keep` mm of plastic left on the inner face), in straight-walled layers
+grouped where the wall's planform agrees, so no stepped slivers or
+knife-thin fins come out. Openings are measured from the shells by rays,
+not typed in. Every part is checked for one body, watertight, and the
+exterior against the original (`surfacecheck.compare_exterior`).
+
+**A hand.** `hand_grip` lays a palm, four fingers and a thumb round the
+shells from the CTIA hand phantom's dimensions (CTIA 01.72, hand 85 mm
+wide, fingers about 21 mm) with CTIA's hand-tissue values
+(`hand_tissue(f)`, 300 MHz to 5 GHz, interpolated). The solver turns a
+loss tangent into a conductivity at the scene's centre frequency, so the
+hand is given at `f_ref_mhz` such that the conductivity is CTIA's.
+
+**One scene per band.** For the same reason a plastic's loss is exact
+only at the scene's centre. A sweep from 600 to 2700 MHz built for the
+low band understates the TPU's heat at 2.4 GHz by about the ratio of the
+frequencies; solve each band with its own `Scene((lo, hi))`.
+
+### Metal loss
+
+`antenna.conductor_loss(scene, {"band": "aluminium 5052", "ground":
+"copper"})` reads the magnetic field on the open cell next to every metal
+face after a run (`field_box=antenna.metal_box(scene)`) and integrates
+P = 1/2 Rs |H_t|^2 over the faces, Rs = sqrt(pi f mu0 / sigma)
+(Harrington). It returns the loss per body at the monitor frequencies;
+wires and sheets thinner than a cell are not included and are listed.
+Checked against a 29 mm square-rod monopole on a 60 mm plate, both at
+1e5 S/m so the loss is large: 0.81 ohm solved against 0.76 ohm from the
+quarter-wave cosine current on the rod plus the plate's radial spread
+(7%, `tests/test_frameband.py`). On aluminium at 0.8 to 2.5 GHz it is a
+fraction of a percent of the power; plastic and a hand dominate.
 
 ## A bench test
 
@@ -511,8 +569,9 @@ zero about 6% higher than PETG's.
 
 ## Limits
 
-- **Conductors are perfect.** Copper loss at 2.4 GHz on a board antenna
-  is a few percent of efficiency; it is not in the number yet.
+- **Conductors are perfect in the solve.** Their loss is read afterwards
+  from the solved field (`conductor_loss`, above); thin wires and foils
+  are not in it.
 - **A radiator is drawn, not read from the enclosure yet.** `radiator`
   takes boxes, extruded outlines and wires in a standalone brief; an
   enclosure's metal parts are not yet offered to the radio as one, and
@@ -534,5 +593,5 @@ zero about 6% higher than PETG's.
 - **One cross-check missing.** openEMS would be the natural second
   solver; it was not available where this was built. NEC-2 covers wires, the measured
   patch covers a board.
-- **A body in the hand.** Tissue is a material like any other
-  (permittivity about 40 to 50, lossy), but no hand or head model ships.
+- **A body in the hand.** `frameband.hand_grip` is a hand of boxes and
+  rods with CTIA's tissue, not CTIA's moulded phantom; no head ships.

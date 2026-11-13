@@ -433,7 +433,7 @@ class Scene:
         port = sim.add_port(ax, lines, p["resistance"])
         # the sign that makes "p1 above p0" positive
         port.sign = 1.0 if p["p1"][ax] > p["p0"][ax] else -1.0
-        self.sim, self.label, self.grid_mm = sim, label, (x, y, z)
+        self.sim, self.label, self.grid_mm, self.metal = sim, label, (x, y, z), metal
         return sim
 
     @staticmethod
@@ -536,6 +536,79 @@ def summarize(scene, out, n_sweep=None):
         res["run"]["note"] = ("the port had not rung down when the run stopped (residual "
                               f"{out['residual']:.1e} of its peak): spectra carry a ripple")
     return res
+
+
+# conductivity of metals the scene's conductors are made of (S/m, 20 C)
+METAL_CONDUCTIVITY = {
+    "copper": (5.80e7, "IACS: 100 % = 58.0 MS/m (annealed copper standard)"),
+    "aluminium 5052": (2.03e7, "35 % IACS, 5052-H32 (ASM Handbook vol. 2)"),
+    "aluminium 6061": (2.50e7, "43 % IACS, 6061-T6 (ASM Handbook vol. 2)"),
+    "stainless 304": (1.39e6, "resistivity 72 uohm cm (ASM Handbook vol. 1)"),
+}
+
+
+def metal_box(scene, margin=2):
+    """Cell index ranges round every metal cell of a built scene (pass to
+    `Sim.run(field_box=...)` so `conductor_loss` has the fields there)."""
+    nz = np.nonzero(scene.metal)
+    return [(max(int(a.min()) - margin, 0), min(int(a.max()) + 1 + margin, n)) for a, n in zip(nz, scene.metal.shape)]
+
+
+def conductor_loss(scene, conductivity, default=None):
+    """Power lost in the conductors' own resistance, per monitor frequency
+    (W, for the run's drive), and its share of the accepted power: the
+    standard perturbation for a good conductor (its skin depth, microns, is
+    resolved by no grid): the surface resistance Rs = sqrt(pi f mu0 / sigma)
+    times the tangential magnetic field on each metal face,
+    P = 1/2 Rs |H_t|^2 dA (Harrington, Time-Harmonic Electromagnetic Fields,
+    sec. 2-9). The field is the one in the open cell beside each face (half a
+    cell off the surface).
+
+    `conductivity`: {body name: S/m or a METAL_CONDUCTIVITY name}; bodies
+    not named take `default` (none: left out). Needs a run with
+    `field_box` covering the metal (`metal_box`). Metal cells only: wires
+    (staircased edges) and zero-thickness sheets carry no area here and are
+    left out, which the result lists."""
+    sim = scene.sim
+    if getattr(sim, "H_cells", None) is None:
+        raise ValueError("run with field_box=metal_box(scene) first: the loss needs the magnetic field at the metal")
+    sig = {}
+    for k, v in dict(conductivity).items():
+        sig[k] = METAL_CONDUCTIVITY[v][0] if isinstance(v, str) else float(v)
+    (i0, i1), (j0, j1), (k0, k1) = sim.field_box
+    metal = scene.metal[i0:i1, j0:j1, k0:k1]
+    lab = scene.label[i0:i1, j0:j1, k0:k1]
+    H = sim.H_cells                                   # [3] x (nmon, ni, nj, nk), A/m
+    d = [sim.d[0][i0:i1], sim.d[1][j0:j1], sim.d[2][k0:k1]]
+    mon = np.asarray(sim.monitor, float)
+    rs_of = {}
+    for idx, name in enumerate(scene.names):
+        s_ = sig.get(name, default)
+        if s_:
+            rs_of[idx] = np.sqrt(np.pi * mon * 4e-7 * np.pi / s_)
+    loss = np.zeros(len(mon))
+    by = {}
+    for ax in range(3):
+        u, v = (ax + 1) % 3, (ax + 2) % 3
+        sl_a = [slice(None)] * 3; sl_b = [slice(None)] * 3
+        sl_a[ax] = slice(0, -1); sl_b[ax] = slice(1, None)
+        ma, mb = metal[tuple(sl_a)], metal[tuple(sl_b)]
+        for face_metal, open_side, mlab_sl, osl in ((ma & ~mb, sl_b, sl_a, sl_b), (mb & ~ma, sl_a, sl_b, sl_a)):
+            if not face_metal.any():
+                continue
+            ml = lab[tuple(mlab_sl)][face_metal]
+            ht2 = sum(np.abs(H[q][(slice(None),) + tuple(osl)][:, face_metal]) ** 2 for q in (u, v))
+            shp = [1, 1, 1]; shp[u] = -1
+            shq = [1, 1, 1]; shq[v] = -1
+            area = np.broadcast_to(d[u].reshape(shp) * d[v].reshape(shq), face_metal.shape)[face_metal]
+            for idx, rs in rs_of.items():
+                m = ml == idx
+                if m.any():
+                    p = 0.5 * rs * (ht2[:, m] * area[m]).sum(axis=1)
+                    loss += p
+                    by[scene.names[idx]] = by.get(scene.names[idx], 0.0) + p
+    return {"monitor": mon, "loss": loss, "byBody": by,
+            "notIncluded": "wires and zero-thickness sheets (no surface in the grid); bodies without a conductivity"}
 
 
 def simulate(scene, fine=0.5, body=1.0, n_freq=401, log=None, **kw):
@@ -1061,7 +1134,7 @@ _E24 = np.array([1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0, 2.2, 2.4, 2.7, 3.0, 3.3
                  6.2, 6.8, 7.5, 8.2, 9.1])
 
 
-def match(freqs, z, bands, z0=50.0, parts=2, q_inductor=40.0, q_capacitor=150.0, efficiency=None):
+def match(freqs, z, bands, z0=50.0, parts=2, q_inductor=40.0, q_capacitor=150.0, efficiency=None, network=None):
     """The lumped network between a 50 ohm radio and an antenna whose
     impedance `z` (complex, at `freqs` in Hz) has been solved: every ladder
     of up to `parts` standard-value inductors and capacitors (series or
@@ -1078,7 +1151,11 @@ def match(freqs, z, bands, z0=50.0, parts=2, q_inductor=40.0, q_capacitor=150.0,
     toward the radio, "delivered": the fraction of the radio's power that
     reaches the antenna at each band's worst frequency, "worst", "s11"
     (dB, at `freqs`), and with `efficiency` (radiation efficiency at
-    `freqs`) "radiated": delivered x radiation efficiency."""
+    `freqs`) "radiated": delivered x radiation efficiency.
+
+    `network` (a previous result's "network") skips the search and reads
+    that network on this impedance: how a product matched in free space
+    does once a hand or a cable has moved its antenna."""
     freqs, z = np.asarray(freqs, float), np.asarray(z, complex)
     sel = np.zeros(len(freqs), bool)
     for lo, hi in bands:
@@ -1153,8 +1230,11 @@ def match(freqs, z, bands, z0=50.0, parts=2, q_inductor=40.0, q_capacitor=150.0,
             z2, p2 = through(place, part, values, zin, pl, idx)
             visit(net + [(place, part, values)], z2, p2)
 
-    visit([], z[None, idx], np.ones((1, len(idx))))
-    net = best[0][1]
+    if network is not None:
+        net = [(n["place"], n["part"], n["value"] * (1e-9 if n["part"] == "L" else 1e-12)) for n in network]
+    else:
+        visit([], z[None, idx], np.ones((1, len(idx))))
+        net = best[0][1]
     zin, pl = ladder([(pl_, pt, [v]) for pl_, pt, v in net], full)
     g, refl = gain(zin, pl)
     g, refl = g[0], refl[0]
