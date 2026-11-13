@@ -47,6 +47,13 @@
         "$ref": "#/$defs/fastener"
       }
     },
+    "fuses": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fuse"
+      },
+      "description": "Designed weak links: a printed shear pin or tension link that holds every service load and breaks before the part behind it does. Each is sized from its service cases to the smallest section that holds them on its weakest print, and every crash case through it is capped at the strongest print's break force at impact rate (impact.maxForce). report.fuses gives the size and the window (docs/FUSES.md)."
+    },
     "stock": {
       "type": "array",
       "items": {
@@ -4742,6 +4749,11 @@
                 "force"
               ],
               "description": "what is between the part and what it hits: a force-crush curve, e.g. a field graph's impact report curve (graded.curve). Left out: nothing in between, the part alone stops the hit"
+            },
+            "maxForce": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "N: the most this hit can put on the part, because something in the path lets go first (a fuse that breaks, a clutch that slips). The peak force is held to it. A `fuses` entry sets it from the fuse's break window (docs/FUSES.md)"
             }
           },
           "additionalProperties": false
@@ -5106,6 +5118,91 @@
           "maxDeflection"
         ]
       ],
+      "additionalProperties": false
+    },
+    "fuse": {
+      "type": "object",
+      "required": [
+        "region"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "shear-pin",
+            "tension-link"
+          ],
+          "description": "shear-pin (default): a printed pin through lugs, cut on `planes` planes; tension-link: a waisted tab pulled along `axis`"
+        },
+        "region": {
+          "type": "string",
+          "description": "the region (a preserve id) the breakaway part's loads act on: every load naming it runs through the fuse"
+        },
+        "axis": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "pin axis (its shear is across it) or the link's pull direction; left out, the whole resultant works the link"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "links in parallel (default 1)"
+        },
+        "planes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "description": "shear planes per pin: 1 single shear, 2 double (default 1)"
+        },
+        "acrossLayers": {
+          "type": "boolean",
+          "description": "the break runs along a layer plane (a pin printed upright, cut across): the layer bond's strength"
+        },
+        "thickness": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm, a tension link's thickness (its width is sized)"
+        },
+        "material": {
+          "type": "string",
+          "description": "the link's material (default the study's)"
+        },
+        "serviceSafetyFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "on the weakest print under the service loads (default the goal's)"
+        },
+        "scatter": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "coefficient of variation of the printed strength, when measured (default by process, fuse.STRENGTH_SCATTER)"
+        },
+        "protectForce": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "N the part behind can take: the report says whether the window's top is under it"
+        },
+        "holds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "service cases the link must hold (default: every case without an impact block)"
+        },
+        "breaks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "crash cases it breaks in and so caps (default: every impact case with a load on the region)"
+        }
+      },
       "additionalProperties": false
     },
     "stockMember": {

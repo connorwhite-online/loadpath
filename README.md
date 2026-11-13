@@ -142,6 +142,14 @@ Where it is strongest:
   crushing and buckling ([docs/STOCK.md](docs/STOCK.md)). Topology
   optimization codes know one material and frame codes know nothing about
   the lug. This is the layer between them.
+- **Parts designed to break first**: when a crash brings more energy than
+  a light part can hold intact, the honest design is a link that lets go
+  before the part behind it does. A study's `fuses` size a printed shear
+  pin or tension link to hold every service load on its weakest print,
+  and cap every crash through it at its strongest print's break force at
+  impact rate, so the rest is designed for a force it can survive
+  ([docs/FUSES.md](docs/FUSES.md)). Codes that design a part to hold its
+  loads have no way to say "break here, at this force, and nowhere else".
 - **Any exterior in**: you or your agent draw the shape, loadpath makes
   everything inside it work. A designer's STEP, a mesh, an SDF function
   (numpy, the `sdf` package, libfive style), a build123d part, or a mesh
@@ -387,7 +395,7 @@ print(best.report["mass"], best.report["safetyFactor"])
 - Topics: [fields](docs/fields.md), [materials](docs/materials.md),
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
   [CAD import](docs/IMPORT.md), [scans and splats](docs/SCAN.md), [slicer](docs/slicer.md),
-  [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
+  [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md), [breakaway links](docs/FUSES.md),
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
   [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md), [bought stock](docs/STOCK.md),

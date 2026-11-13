@@ -149,6 +149,8 @@ class ImpactCase:
     mass: float | None = None
     distance: np.ndarray | None = None
     force: np.ndarray | None = None
+    # N: the most the hit can put on the part (a fuse that breaks, a clutch that slips, fuse.py)
+    max_force: float | None = None
 
 
 @dataclass
@@ -248,8 +250,12 @@ def _impact_case(b, ci, loads, free):
         if len(dist) != len(force) or len(dist) < 2 or np.any(np.diff(dist) <= 0) or np.any(force < 0) \
                 or not np.all(np.isfinite(dist)) or not np.all(np.isfinite(force)):
             raise ValueError(f"{lab}.crusher: distance must rise, force be >= 0, the two the same length (>= 2)")
+    mx = b.get("maxForce")
+    if mx is not None and (isinstance(mx, bool) or not isinstance(mx, (int, float)) or not np.isfinite(mx) or mx <= 0):
+        raise ValueError(f"{lab}.maxForce must be a positive number (N)")
     return ImpactCase(None if energy is None else 1000.0 * float(energy), None if vel is None else float(vel),
-                      None if mass is None else float(mass), dist, force)
+                      None if mass is None else float(mass), dist, force,
+                      None if mx is None else float(mx))
 
 
 def _aero(v):
@@ -1591,6 +1597,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         # bought members (stock.py): the bore each goes in, its sleeves, loads and supports onto it
         from .stock import expand_stock
         d = expand_stock(d, base_dir)
+    if d.get("fuses"):
+        # designed weak links (fuse.py): sized from their service cases, crash cases through them capped
+        from .fuse import expand_fuses
+        d = expand_fuses(d)
     d = expand_fasteners(d)
     d = _expand_planar(d)
     from .fits import expand_fits

@@ -347,7 +347,12 @@ _LOAD_CASE = {
                                "required": ["distance", "force"],
                                "description": "what is between the part and what it hits: a force-crush curve, "
                                               "e.g. a field graph's impact report curve (graded.curve). Left out: "
-                                              "nothing in between, the part alone stops the hit"}},
+                                              "nothing in between, the part alone stops the hit"},
+                           "maxForce": {**_POS, "description": "N: the most this hit can put on the part, because "
+                                                               "something in the path lets go first (a fuse that "
+                                                               "breaks, a clutch that slips). The peak force is "
+                                                               "held to it. A `fuses` entry sets it from the "
+                                                               "fuse's break window (docs/FUSES.md)"}},
                        "additionalProperties": False}},
     "required": ["loads"],
     "additionalProperties": False,
@@ -1550,6 +1555,39 @@ _STOCK_JOINT = {
     }}],
 }
 
+_FUSE = {
+    "type": "object",
+    "required": ["region"],
+    "properties": {
+        "id": {"type": "string"},
+        "type": {"enum": ["shear-pin", "tension-link"],
+                 "description": "shear-pin (default): a printed pin through lugs, cut on `planes` planes; "
+                                "tension-link: a waisted tab pulled along `axis`"},
+        "region": {"type": "string", "description": "the region (a preserve id) the breakaway part's loads act "
+                                                    "on: every load naming it runs through the fuse"},
+        "axis": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                 "description": "pin axis (its shear is across it) or the link's pull direction; left out, the "
+                                "whole resultant works the link"},
+        "count": {"type": "integer", "minimum": 1, "description": "links in parallel (default 1)"},
+        "planes": {"type": "integer", "minimum": 1, "maximum": 2,
+                   "description": "shear planes per pin: 1 single shear, 2 double (default 1)"},
+        "acrossLayers": {"type": "boolean", "description": "the break runs along a layer plane (a pin printed "
+                                                           "upright, cut across): the layer bond's strength"},
+        "thickness": {**_POS, "description": "mm, a tension link's thickness (its width is sized)"},
+        "material": {"type": "string", "description": "the link's material (default the study's)"},
+        "serviceSafetyFactor": {**_POS, "description": "on the weakest print under the service loads (default "
+                                                       "the goal's)"},
+        "scatter": {**_POS, "description": "coefficient of variation of the printed strength, when measured "
+                                           "(default by process, fuse.STRENGTH_SCATTER)"},
+        "protectForce": {**_POS, "description": "N the part behind can take: the report says whether the "
+                                                "window's top is under it"},
+        "holds": {"type": "array", "items": {"type": "string"},
+                  "description": "service cases the link must hold (default: every case without an impact block)"},
+        "breaks": {"type": "array", "items": {"type": "string"},
+                   "description": "crash cases it breaks in and so caps (default: every impact case with a load "
+                                  "on the region)"}},
+    "additionalProperties": False}
+
 _STOCK_MEMBER = {
     "type": "object", "required": ["id", "from", "to"], "additionalProperties": False,
     "description": "A bought member the printed part is built round: a tube, rod or plate with its own material. "
@@ -1592,6 +1630,13 @@ STUDY_SCHEMA = {
         "keepOut": {"type": "array", "items": {"$ref": "#/$defs/keepOut"},
                     "description": "Volume that must stay empty: bores, bolt access, cables, mating parts."},
         "fasteners": {"type": "array", "items": {"$ref": "#/$defs/fastener"}},
+        "fuses": {"type": "array", "items": {"$ref": "#/$defs/fuse"},
+                  "description": "Designed weak links: a printed shear pin or tension link that holds every "
+                                 "service load and breaks before the part behind it does. Each is sized from "
+                                 "its service cases to the smallest section that holds them on its weakest "
+                                 "print, and every crash case through it is capped at the strongest print's "
+                                 "break force at impact rate (impact.maxForce). report.fuses gives the size "
+                                 "and the window (docs/FUSES.md)."},
         "stock": {"type": "array", "items": {"$ref": "#/$defs/stockMember"},
                   "description": "Bought members the printed part is built round (carbon or aluminium tubes, rods, "
                                  "plates): bodies in the analysis with their own material; the printed nodes and "
@@ -1953,7 +1998,7 @@ STUDY_SCHEMA = {
     "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
               "switchClearance": _SWITCH_CLEARANCE,
               "load": _LOAD, "loadCase": _LOAD_CASE, "material": _ONE_MATERIAL, "fastener": _FASTENER, "goal": _GOAL,
-              "stockMember": _STOCK_MEMBER, "stockJoint": _STOCK_JOINT, "stockMaterial": _STOCK_MATERIAL},
+              "fuse": _FUSE, "stockMember": _STOCK_MEMBER, "stockJoint": _STOCK_JOINT, "stockMaterial": _STOCK_MATERIAL},
 }
 
 _FLUID_NAMES = ["water", "water60", "air", "glycol50", "oil"]

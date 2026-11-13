@@ -1376,6 +1376,9 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
                 r = series_impact(en, c_f, case.impact.distance, case.impact.force)
                 if r["peakForce"] is None:
                     continue
+                if case.impact.max_force is not None and r["peakForce"] > case.impact.max_force:
+                    # a fuse (fuse.py) or a slipping clutch lets go here: the part sees no more
+                    r = {**r, "peakForce": case.impact.max_force}
                 scale[ci] = r["peakForce"] ** 2 / fn2
                 imp_rec[case.name] = {"peakForce": round(r["peakForce"], 2), "structureShare": round(r["structureShare"], 3)}
             weights = weights0 * scale

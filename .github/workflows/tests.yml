@@ -47,7 +47,7 @@ jobs:
             pytest: >-
               tests/test_mass_properties.py tests/test_inertia_relief.py tests/test_point_maps.py
               tests/test_lattice_library.py tests/test_textures.py tests/test_layerfiles.py
-              tests/test_reactions.py tests/test_stock.py tests/test_nesting.py tests/test_fe_export.py tests/test_tpms_more.py
+              tests/test_reactions.py tests/test_stock.py tests/test_fuse.py tests/test_nesting.py tests/test_fe_export.py tests/test_tpms_more.py
               tests/test_aero.py tests/test_ribs.py tests/test_patterns.py tests/test_vdb.py
               tests/test_reconstruct_fragments.py tests/test_study_limits.py tests/test_rotor_blockage.py
               tests/test_face_bridge.py tests/test_reconstruct_slits.py tests/test_bundle.py

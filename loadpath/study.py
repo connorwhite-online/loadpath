@@ -274,6 +274,8 @@ class Outcome:
             "boundaryCutArea": r.get("boundaryCutArea"),
             **({"closedBores": r["closedBores"]} if r.get("closedBores") else {}),
             **({"fits": r["fits"]} if r.get("fits") else {}),
+            # designed weak links (fuse.py): each link's size, its break window and the crash cases it caps
+            **({"fuses": r["fuses"]} if r.get("fuses") else {}),
             # bought members (stock.py): the members and joints as checked, and what the assembly weighs
             **({"stock": r["stock"], "printedBodies": r.get("printedBodies"), "stockMass": r.get("stockMass"),
                 "assemblyMass": r.get("assemblyMass")} if "stock" in r else {}),

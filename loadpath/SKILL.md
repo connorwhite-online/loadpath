@@ -163,6 +163,15 @@ buckling, printability) you can report to the user.
    check: a stiff part sees the bumper's full force, a soft one far less,
    and a bumper force applied as if the part were rigid asks for a part
    that cannot be built.
+   When no part this light holds the crash whole (a small drone's duct in
+   a 1 m drop), design a link that breaks first: `"fuses": [{"type":
+   "shear-pin", "region": <where the breakaway part bears>, "axis": [...],
+   "count": 2}]`. It is sized to the smallest pin that holds the service
+   cases on its weakest print, and every crash case through it is capped
+   at its strongest print's break force at impact rate (`impact.maxForce`),
+   so the part behind is designed for that force (docs/FUSES.md). On SLS
+   PA12 the window is 1.6x wide: the protected part has to take 1.6 x the
+   service factor x the service load.
    A link that carries or is driven by a servo or motor: add a case with
    its full stall torque about the joint axis at that interface (a 1.5 N·m
    servo is `"moment": [0, 1500, 0]` about y), since a jam or a hard stop

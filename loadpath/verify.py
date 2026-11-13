@@ -1765,6 +1765,9 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
     report.update(_creases(study, mesh))
     report["closedBores"] = _closed_bores(study, mesh)
+    if (getattr(study, "raw", None) or {}).get("_fuses"):
+        # designed weak links (fuse.py): each sized link, the window it breaks in, the crash cases it caps
+        report["fuses"] = study.raw["_fuses"]
     if getattr(study, "fits", None):
         # bearing seats, pins and bolt holes: the hole in the file, the band
         # it prints to, and whether the fit holds (fits.py)
@@ -1914,12 +1917,20 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         ic = case.impact
         r = series_impact(energy, c_f, ic.distance, ic.force)
         rigid = series_impact(energy, 0.0, ic.distance, ic.force) if ic.distance is not None else None
+        capped_from = None
+        if ic.max_force is not None and r["peakForce"] is not None and r["peakForce"] > ic.max_force:
+            # a fuse breaks (fuse.py) or a clutch slips at maxForce: the part sees no more than that
+            capped_from = r["peakForce"]
+            r = {**r, "peakForce": ic.max_force}
         row = {"energy": energy / 1000.0, "compliance": c_f, "stiffness": 1.0 / c_f if c_f > 0 else None,
                "peakForce": r["peakForce"], "crush": r["crush"], "deflection": r["deflection"],
                "crusherEnergy": r["crusherEnergy"] / 1000.0, "structureEnergy": r["structureEnergy"] / 1000.0,
                "structureShare": r["structureShare"], "bottomedOut": r["bottomedOut"],
                "rigidBackingForce": rigid["peakForce"] if rigid is not None else None,
                "forceAsWritten": fn}
+        if capped_from is not None:
+            row["cappedAt"] = ic.max_force
+            row["uncappedForce"] = capped_from
         if m_eff is not None:
             row["mass"] = m_eff
         if ic.velocity is not None:
