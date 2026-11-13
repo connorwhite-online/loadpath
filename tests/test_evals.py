@@ -144,6 +144,31 @@ def test_each_case_in_its_own_process():
         ev.run_case = real
 
 
+def test_one_case_runs_on_the_whole_box():
+    """--jobs splits the box between cases run at once; a case run alone
+    gets all of it (the cores, its pitch starts in processes), so a one-case
+    run times what an agent's study takes."""
+    seen = []
+    real, env = ev._run_isolated, dict(os.environ)
+
+    def fake(files, out, tier, critic_, jobs, spread):
+        seen.append((len(files), jobs, os.environ.get("LOADPATH_THREADS"), os.environ.get("LOADPATH_WORKERS")))
+        return []
+    ev._run_isolated = fake
+    try:
+        for k in ("LOADPATH_THREADS", "LOADPATH_WORKERS"):
+            os.environ.pop(k, None)
+        with tempfile.TemporaryDirectory() as d:
+            ev.main(["arm-link", "--out", d, "--jobs", "2", "--allow-voxel-confirm"])
+            assert seen[-1] == (1, 1, None, None), seen
+            ev.main(["arm-link", "bell-crank", "--out", d, "--jobs", "2", "--allow-voxel-confirm"])
+            assert seen[-1][:2] == (2, 2) and seen[-1][3] == "1", seen
+    finally:
+        ev._run_isolated = real
+        os.environ.clear()
+        os.environ.update(env)
+
+
 TESTS = [
     test_pareto_front_and_mass_at_target,
     test_coarse_tier_caps_resolution,
@@ -152,6 +177,7 @@ TESTS = [
     test_critic_score_and_agent_round_trip,
     test_corpus_case_runs,
     test_each_case_in_its_own_process,
+    test_one_case_runs_on_the_whole_box,
 ]
 
 

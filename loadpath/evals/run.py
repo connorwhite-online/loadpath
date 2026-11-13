@@ -1136,6 +1136,14 @@ def main(argv=None):
         # against 2 h 30 min one at a time on the 4-core 15 GB box, the
         # box at 3.8 GB, every number the same as --jobs 1
         args.jobs = (os.cpu_count() or 1) if args.tier == "coarse" else min(2, os.cpu_count() or 1)
+    if args.jobs != "auto" and files:
+        # No share of the box for a case that is not there: one case run
+        # alone (an evals.yml dispatch of one case) took half the cores,
+        # one BLAS thread, its pitch starts one after another and its tet
+        # check on one thread, so it timed the suite's split and not the
+        # study an agent runs (the robot-arm upper arm, one box: 917 s
+        # split, 786 s on every core, the same 186.1 g part).
+        args.jobs = min(int(args.jobs), len(files))
     if args.jobs == "auto":
         rows = _run_budgeted(files, args.out, args.tier, args.critic, args.spread)
     elif os.environ.get("LOADPATH_EVAL_INPROCESS") == "1":
