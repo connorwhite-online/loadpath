@@ -1483,6 +1483,12 @@ class StudyHeat:
         if self.vth is None:
             self.vth = hex8_fth(self.nu) * self.mesh.pitch ** 2
         w = scale * p * self.g * self.eps
+        stock = getattr(self.mesh, "stock_scale", None)
+        if stock is not None:
+            # a bought member's cells expand only by their printed share: the member itself (carbon
+            # along its fibres, ~0) is not given the plastic's expansion. The printed sleeve's own
+            # growth against the member is kept: that mismatch is real (stock.py)
+            w = w * stock
         f = np.bincount(self.mesh.edof.ravel(), weights=(w[:, None] * self.vth[None, :]).ravel(),
                         minlength=self.mesh.n_dof)
         f[self.fixed] = 0.0

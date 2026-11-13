@@ -214,3 +214,28 @@ def test_span_holds_on_a_member_of_any_length():
     assert m.joints[0].span[1] <= m.length
     again = study_from_dict(copy.deepcopy(st.raw))
     assert again.stock[0].joints[0].span == m.joints[0].span
+
+
+def test_member_cells_do_not_take_the_plastic_s_expansion():
+    """A heated part: the expansion load is the printed material's, so a cell
+    that is all member carries none of it (carbon barely grows along its
+    fibres; given PA12's growth a tube read 200-300 N in its joints under a
+    6 N load, the same in every case)."""
+    from loadpath.domain import build_domain
+    from loadpath.thermal import StudyHeat
+
+    st = _study(thermal={"ambient": 25.0, "convection": 20.0, "temperatures": [{"region": "base", "t": 70.0}]})
+    dom = build_domain(st)
+    mesh = dom.mesh
+    heat = StudyHeat(st, mesh, st.elastic(st.material), dom.fixed, modulus=st.material.E)
+    heat.temperature()
+    assert heat.expands
+    scale = mesh.stock_scale
+    w = heat.load(np.ones(mesh.n_elem), st.material.E)
+    only = scale < 1e-3                                   # cells that are member alone
+    assert only.any()
+    nodes = np.unique(mesh.enode[only])
+    other = np.unique(mesh.enode[~only])
+    inner = np.setdiff1d(nodes, other)                    # nodes no printed cell touches
+    wn = np.abs(w.reshape(-1, 3))
+    assert len(inner) and wn[inner].max() < 1e-3 * wn.max()

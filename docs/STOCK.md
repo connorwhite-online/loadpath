@@ -176,7 +176,11 @@ strengths on plastics no sheet lists.
   yet shape the node to lower the bond's peak; the verification catches a
   joint that fails and says what to change (a longer joint, a larger tube,
   a different adhesive, a pin).
-- Thermal mismatch between carbon and plastic, fatigue of the joint, and a
+- With a thermal block the printed part's expansion is in the solve and
+  the member's is not (carbon barely grows along its fibres), so a bonded
+  sleeve's growth against the tube shows in the joint. The heat itself
+  flows through the member at the printed material's conductivity.
+- Fatigue of the joint, and a
   clamp's split and screws (draw them as `fasteners`) are the study's to
   state. The tetrahedral cross-check does not run with stock.
 - No printed validation coupon yet: a pull-out test of a bonded tube is

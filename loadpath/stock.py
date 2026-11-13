@@ -67,8 +67,9 @@ sides carry everything (the member's last cell layer there carries
 nothing). Not modelled: slip itself, the
 adhesive's own compliance (the shear a real bondline spreads over its
 transfer length reads sharper here, which is why it is read over the test
-overlap rather than at a node), thermal mismatch between member and print,
-and fatigue of the joint.
+overlap rather than at a node), the member's own thermal expansion (with
+a thermal block only the print grows; carbon barely does along its
+fibres), and fatigue of the joint.
 """
 from __future__ import annotations
 
@@ -1619,6 +1620,10 @@ def assess(study, mesh, cases, residual=None, goal_sf=None) -> dict:
             joints_out.append(jrow)
             if j_sf[2] is not None and j_sf[0] < worst[0]:
                 worst = (j_sf[0], f"joint {jid}", j_sf[3])
+            if s0 <= 1e-6 and s1 >= m.length - 1e-6:
+                warnings.append(f"joint {jid} runs the whole length of {m.id!r}: the design space covers all of it, "
+                                "so it is read as one sleeve bonded end to end. For sockets at the ends and a free "
+                                "tube between, give `joints` with a `span` each")
             if cover < 0.6:
                 warnings.append(f"joint {jid}: the printed part touches {cover:.0%} of the member there; "
                                 "a bond or a clamp wants a full sleeve (joint.sleeve)")
