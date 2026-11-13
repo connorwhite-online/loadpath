@@ -223,3 +223,88 @@ def test_one_contact_band_for_every_check():
     band = st.contact_band(s, d)
     assert band == max(2.0 * cc.element_size(s), 1.5 * d.pitch)
     assert band >= d.pitch
+
+
+# ---- the constrained method holds the checks' reading (constrained._Averaged)
+
+_LUG = {"name": "lug", "designSpace": {"type": "box", "min": [0, -15, -4], "max": [60, 15, 4]},
+        "preserve": [{"id": "eye", "shape": {"type": "cylinder", "center": [48, 0, 0], "axis": "z",
+                                             "length": 8, "r": 9}}],
+        "keepOut": [{"id": "pin", "shape": {"type": "cylinder", "center": [48, 0, 0], "axis": "z",
+                                            "length": 12, "r": 4}}],
+        "supports": [{"shape": {"type": "box", "min": [-1, -16, -5], "max": [0.01, 16, 5]}}],
+        "loadCases": [{"name": "pull", "loads": [{"region": "pin", "force": [0, -80, 0]}]}],
+        "material": "pa12", "goal": {"volumeFraction": 0.35}, "resolution": {"pitch": 2.0}}
+
+
+def _first_step(monkeypatch, x0, limits):
+    """The stress constraint and its gradient (free variables) on design x0,
+    with the normalization held at 1 so the aggregate is smooth in x."""
+    from loadpath import constrained as co
+    from loadpath.domain import build_domain
+    from loadpath.simp import SimpOptions, filter_radius
+
+    got = {}
+
+    class Capture:
+        def __init__(self, n, m, **kw):
+            self.move = 0.1
+
+        def tighten(self, f):
+            pass
+
+        def update(self, x, f0, df0, cons, grads):
+            got["c"], got["g"] = cons, grads
+            return x
+
+    monkeypatch.setattr(co, "MMA", Capture)
+    monkeypatch.setattr(co, "_normalize", lambda prev, smax, pm, it: 1.0)
+    s = study_from_dict(_LUG)
+    d = build_domain(s)
+    o = SimpOptions(volume_fraction=0.4, filter_radius=filter_radius(d, None), max_iterations=1, x0=x0, beta_start=2.0)
+    co.optimize_constrained(d, s.material.nu, o, limits)
+    return d, got["c"][0], got["g"][0]
+
+
+@pytest.mark.parametrize("radius", [1.0, 4.0])
+def test_averaged_stress_limit_gradient_matches_finite_differences(monkeypatch, radius):
+    # von Mises and the layer bond, both read from the averaged tensor, with
+    # the averaging weights and the node's density depending on the design
+    from loadpath.constrained import Limits
+    from loadpath.domain import build_domain
+
+    n = build_domain(study_from_dict(_LUG)).mesh.n_elem
+    rng = np.random.default_rng(0)
+    x0 = np.clip(0.5 + 0.3 * rng.standard_normal(n), 0.05, 0.95)
+    bond = (0.5, np.array([1.0, 0.3, 0.0]) / np.linalg.norm([1.0, 0.3, 0.0]), 1.7)
+    lim = Limits(20.0, None, 1700.0, bond=bond, contact_band=3.0, radius=radius)
+    d, c0, g0 = _first_step(monkeypatch, x0, lim)
+    free = np.flatnonzero(~d.preserve)
+    for j in np.argsort(-np.abs(g0))[:3]:
+        i, h = free[j], 1e-5
+        xp, xm = x0.copy(), x0.copy()
+        xp[i] += h
+        xm[i] -= h
+        fd = (_first_step(monkeypatch, xp, lim)[1] - _first_step(monkeypatch, xm, lim)[1]) / (2 * h)
+        assert abs(fd - g0[j]) <= 1e-4 * abs(g0[j]) + 1e-9, (i, fd, g0[j])
+
+
+def test_averaged_reading_is_the_bars_stress():
+    # A bar pulled along its length reads P/A away from its ends: the
+    # averaged reading is the stress itself, not a scaled stand-in for it.
+    from loadpath.constrained import Limits, optimize_constrained
+    from loadpath.domain import build_domain
+    from loadpath.simp import SimpOptions, filter_radius
+
+    spec = {"designSpace": {"type": "box", "min": [0, 0, 0], "max": [60, 10, 10]},
+            "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 11, 11]}}],
+            "loadCases": [{"name": "pull", "loads": [{"shape": {"type": "box", "min": [59.9, -1, -1],
+                                                               "max": [61, 11, 11]}, "force": [500, 0, 0]}]}],
+            "material": "pa12", "goal": {"volumeFraction": 0.9}, "resolution": {"pitch": 1.0}}
+    s = study_from_dict(spec)
+    d = build_domain(s)
+    o = SimpOptions(volume_fraction=1.0, filter_radius=filter_radius(d, None), max_iterations=1,
+                    x0=np.ones(d.mesh.n_elem), beta_start=64.0)
+    rec = optimize_constrained(d, 0.0, o, Limits(1.0, None, s.material.E, contact_band=15.0,
+                                                 radius=0.86)).history[-1]
+    assert abs(rec["stress.pull"] - 5.0) < 0.05 * 5.0, rec["stress.pull"]

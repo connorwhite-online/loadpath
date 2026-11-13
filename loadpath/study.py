@@ -176,8 +176,15 @@ _POLISH_STRIDE = 20
 _POLISH_MIN_STRIDE = 5
 _POLISH_ITERATIONS = 200
 _POLISH_SPARE = 1.03
-_POLISH_DONE = 1.02
-_POLISH_CONFIRMS = 3
+_POLISH_DONE = 1.01
+_POLISH_CONFIRMS = 4
+# The polish's correction for the check's drift from the optimizer (strength_polish), held within this
+_POLISH_DRIFT = (0.7, 1.1)
+# A polished design the tetrahedra read at this much of the target or more is repaired, at most this often
+_POLISH_RESCUE = 0.95
+_POLISH_RESCUES = 2
+# ... and buckling is held in it once the pick's buckling factor is under this many times the target
+_POLISH_BUCKLING = 2.0
 # Its steps are a fiftieth of the density range, the constrained method's
 # own floor once the projection is sharp: at 0.05 one of four hooks cut a
 # member through in its first 20 iterations (stress reading 134 MPa for a
@@ -553,6 +560,20 @@ def _layer_bond_limit(study: Study):
     from .failure import bond_shear_ratio
 
     return (float(proc.interlayer), build_vector(proc.build), bond_shear_ratio(proc))
+
+
+def optimizer_radius(study: Study, domain: Domain) -> float | None:
+    """constrained.Limits.radius: the stress the constrained method holds is
+    read as the checks read it, averaged over the material's length
+    (crosscheck.stress_radius on the design grid). None (the corner peak of
+    each cell) with LOADPATH_STRESS_READ=point, the checks' own switch."""
+    from .verify import _averaged
+
+    if not _averaged():
+        return None
+    from .crosscheck import stress_radius
+
+    return float(stress_radius(study, domain.pitch)[0])
 
 
 def contact_band(study: Study, domain: Domain) -> float:
@@ -2716,8 +2737,9 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         Its stress reading is not the check's (the eroded design on the
         design grid against the meshed part), and the two drift apart as
         the design moves: over 120 iterations at one limit the hook's check
-        fell from 2.56 to 2.04 while the optimizer's own reading held. So
-        the limit is only trusted over a stride of iterations. Each stride
+        fell from 2.59 to 2.04 while the optimizer's own reading held. So
+        the limit is only trusted over a stride of iterations, and each
+        stride's limit is set through the drift the last one measured. Each stride
         starts from a design the check passed, with the limit set on that
         design itself (the optimizer's reading of it, times the margin the
         check found), and ends in a check. A stride that lands under the
@@ -2737,6 +2759,12 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         from .constrained import Limits, optimize_constrained
 
         band = contact_band(study, domain)     # the checks' own, so the limit is held on the material they judge
+        # The polish reads the cell corners by default: on the shared reading it held the check
+        # better over a long stride (docs/CONVERGENCE.md, cause 7) but its hooks came out at 35.1,
+        # 35.5 and 35.7 g in three runs against 33.4 g on the corners (main 5ebc087).
+        # LOADPATH_POLISH_READ=average puts it on the shared reading.
+        polish_radius = optimizer_radius(study, domain) if os.environ.get("LOADPATH_POLISH_READ") == "average" \
+            else None
         conf = [q for q in outcomes if getattr(q, "tet_k", None) and q.passes and q.x is not None]
         if not conf:
             return
@@ -2765,16 +2793,26 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             rec = res.delivered or (res.history[-1] if res.history else {})
             st_ = [v for kk, v in rec.items() if kk.startswith("stress.")]
             df_ = [v for kk, v in rec.items() if kk.startswith("deflection.")]
-            return (max(st_) if st_ else None), (max(df_) if df_ else None)
+            bk_ = [v for kk, v in rec.items() if kk.startswith("buckling.") and np.isfinite(v) and v > 0]
+            return (max(st_) if st_ else None), (max(df_) if df_ else None), (min(bk_) if bk_ else None)
 
         def worst_deflection(q):
             return max((c["deflection"] for c in q.report.get("cases") or []), default=None)
 
         want_defl = goal.max_deflection is not None and bool(worst_deflection(src))
+        # Buckling held too, where it is near enough to bind (_POLISH_BUCKLING of the target or
+        # under): the trim thins the members, and a strut's Euler load goes with its section
+        # squared, so it can land on buckling well before the bond's limit (the printed hook:
+        # 27 g). Held on the optimizer's own reading scaled by the check's, as stress is.
+        bf_src = src.report.get("bucklingFactor")
+        want_buck = bool(goal.buckling and _BUCKLING_IN_OPTIMIZER and bf_src
+                         and bf_src < _POLISH_BUCKLING * goal.safety_factor
+                         and os.environ.get("LOADPATH_POLISH_BUCKLING", "1") != "0")
         # the optimizer's own reading of the design it starts from
         try:
             read = readings(optimize_constrained(domain, study.elastic(), opts(src, 1), Limits(
-                1.0, 1.0 if want_defl else None, study.material.E, bond=bond, contact_band=band)))
+                1.0, 1.0 if want_defl else None, study.material.E, buckling=1.0 if want_buck else None,
+                bond=bond, contact_band=band, radius=polish_radius)))
         except (RuntimeError, ValueError):
             return
         if not read[0]:
@@ -2782,28 +2820,56 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         chain, reads = [src], {id(src): read}    # designs the check passed, lightest last; the optimizer's reading of each
         kq = src.tet_k
         stride, spent, confirms = _POLISH_STRIDE, 0, 0
+        # How far the check moved against the optimizer's own reading over the last stride
+        # (1: in step). Even on one reading the two drift apart as the members thin: the
+        # optimizer judges the design on its own grid, members two or three cells across,
+        # the check the meshed part. Held at one limit for 40 iterations the hook's check
+        # fell 12% under it. The next stride's limit is set through what the last one showed;
+        # a stride that misses is taken once more at its length through its own drift before
+        # it is halved.
+        drift, retried = 1.0, False
+        # A design the tetrahedra read just under the target (_POLISH_RESCUE or over) is not
+        # dropped at once: a short stride from it at the limit its own tet reading asks for
+        # puts back the little the check found missing, where the check found it missing.
+        # On the hook the polished designs passed the voxel check and read 0.98-0.99 on tets.
+        repair, rescues = False, 0
         while not (should_stop is not None and should_stop()):
             cur = chain[-1]
-            more = spent < _POLISH_ITERATIONS and stride >= _POLISH_MIN_STRIDE and cur.report["margin"] >= _POLISH_DONE
+            more = repair or (spent < _POLISH_ITERATIONS and stride >= _POLISH_MIN_STRIDE
+                              and cur.report["margin"] >= _POLISH_DONE)
             if more:
-                s_read, d_read = reads[id(cur)]
-                s_lim = s_read * sf_margin(cur)
+                s_read, d_read, b_read = reads[id(cur)]
+                # (a repair adds material: a drift that let the trim go further is not its own)
+                # A trim aims at half its margin (geometrically) and is checked there: one stride
+                # straight onto the target took the hook's pick from 40.3 to 35.5 g and stopped,
+                # where strides that left margin walked on to 33.4 g. A repair aims at the target.
+                aim = sf_margin(cur) if repair else sf_margin(cur) ** 0.5
+                s_lim = s_read * aim * (min(drift, 1.0) if repair else drift)
                 d_lim = d_read * goal.max_deflection / worst_deflection(cur) if want_defl and d_read else None
+                bf_cur = cur.report.get("bucklingFactor")
+                # (the optimizer's reading over the check's, times what the check asks)
+                b_lim = b_read * goal.safety_factor / bf_cur if want_buck and b_read and bf_cur else None
                 emit({"stage": "optimize", "volumeFraction": cur.volume_fraction, "start": "strength polish",
-                      "limits": {"stress": s_lim, "deflection": d_lim}})
+                      "limits": {"stress": s_lim, "deflection": d_lim, "buckling": b_lim}})
 
                 def on_iter(rec, xp, vf=cur.volume_fraction):
                     emit({"stage": "optimize", "volumeFraction": vf, **rec}, xp)
 
                 try:
                     res = optimize_constrained(domain, study.elastic(), opts(cur, stride), Limits(
-                        s_lim, d_lim, study.material.E, bond=bond, contact_band=band),
+                        s_lim, d_lim, study.material.E, buckling=b_lim, bond=bond, contact_band=band,
+                        radius=polish_radius),
                         on_iter=on_iter, should_stop=should_stop)
                     q = attempt(res.volume_fraction, None, None, made=(res.x, res.xphys, {
                         "iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                         "achievedVolumeFraction": res.volume_fraction, "method": "strength polish",
-                        "limits": {"stress": s_lim, **({"deflection": d_lim} if d_lim is not None else {})}}))
+                        "limits": {"stress": s_lim, **({"deflection": d_lim} if d_lim is not None else {}),
+                                   **({"buckling": b_lim} if b_lim is not None else {})}}))
                 except (RuntimeError, ValueError):
+                    if repair:
+                        repair, stride = False, 0
+                        chain.pop()
+                        continue
                     stride //= 2
                     continue
                 spent += max(res.iterations, 1)
@@ -2813,10 +2879,37 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 emit({"stage": "outcome", **q.summary()})
                 _save_partial(q, domain.pitch)
                 got = readings(res)
+                d_used = drift
+                if q.voxel_sf and got[0] and not _malformed(study, q.report):
+                    # sf goes as 1 / stress: in step, the two ratios multiply to 1
+                    d = (sf_margin(q) / sf_margin(cur)) * (got[0] / s_read)
+                    drift = float(np.clip(d, _POLISH_DRIFT[0], _POLISH_DRIFT[1]))
+                if repair:
+                    stride = 0
+                    if not q.passes or not q.voxel_sf or not got[0] or _malformed(study, q.report) \
+                            or (len(chain) > 1 and _weigh(q.report) >= _weigh(chain[-2].report)):
+                        q.passes = False
+                        if rescues < _POLISH_RESCUES and q.voxel_sf and drift < 0.99 * d_used:
+                            rescues += 1    # missed by a drift now measured: once more, through it
+                            stride = _POLISH_STRIDE // 2
+                            continue
+                        repair = False
+                        chain.pop()     # not rescued (or no lighter than the design before it)
+                        while len(chain) > 1 and not chain[-1].passes:
+                            chain.pop()
+                        continue
+                    repair = False
+                    chain[-1] = q       # in place of the design it rescued: the tetrahedra read it next
+                    reads[id(q)] = got
+                    continue
                 if not q.passes or not q.voxel_sf or not got[0] or _malformed(study, q.report):
                     q.passes = False
-                    stride //= 2        # under the target (or not a part): again from `cur`, half as far
+                    if not retried and drift < 0.99 * d_used:
+                        retried = True  # missed by a drift now measured: again, through it
+                    else:
+                        stride //= 2    # under the target (or not a part): again from `cur`, half as far
                     continue
+                retried = False
                 if _weigh(q.report) > (1.0 - 2e-3) * _weigh(cur.report):
                     q.passes = False    # nothing came off: `cur` is at its limit
                     stride = 0
@@ -2838,6 +2931,10 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 chain.pop()
                 return
             kq = cur.tet_k
+            if _POLISH_RESCUE <= mt < 1.0 and rescues < _POLISH_RESCUES and cur.x is not None:
+                rescues += 1
+                repair, stride = True, _POLISH_STRIDE // 2
+                continue
             if mt < 1.0:
                 # read under the target there: the designs before it are re-read
                 # through this one's calibration, and the lightest that still passes is next
@@ -2974,14 +3071,17 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             limits = Limits(stress * t if stress is not None else None,
                             goal.max_deflection * t if goal.max_deflection is not None else None, mat.E,
                             buckling=sf_b * kb / t if sf_b is not None else None,
-                            # the layer bond is held in the strength polish, where the limit is
-                            # set from the check's own reading. From scratch it over-constrains:
-                            # measured on two brackets the check passes without it (wall bracket
-                            # 34.7 g against 30.6 g, motor mount 29.3 against 27.8 g), until the
-                            # optimizer and the check share one stress reading
-                            # (docs/CONVERGENCE.md). LOADPATH_BOND_CONSTRAINED=1 turns it on.
+                            # the layer bond from the start, read as the check reads it. On the
+                            # corner reading it over-constrained (wall bracket 34.7 g against 30.6 g,
+                            # motor mount 29.3 against 27.8 g on parts the check passes without it);
+                            # on the shared reading 31.3 and 27.9 g, within noise of the parts made
+                            # without it (docs/CONVERGENCE.md, cause 7). LOADPATH_BOND_CONSTRAINED=0
+                            # leaves it to the check (and the polish).
                             bond=_layer_bond_limit(study)
-                            if os.environ.get("LOADPATH_BOND_CONSTRAINED") == "1" else None)
+                            if optimizer_radius(study, domain) and os.environ.get("LOADPATH_BOND_CONSTRAINED") != "0"
+                            else None,
+                            contact_band=contact_band(study, domain) if optimizer_radius(study, domain) else None,
+                            radius=optimizer_radius(study, domain))
             try:
                 o = run_constrained(limits, x_pass)
             except (RuntimeError, ValueError) as exc:

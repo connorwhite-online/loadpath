@@ -102,7 +102,7 @@ _VM = np.array([
 class Limits:
     def __init__(self, stress: float | None, deflection: float | None, modulus: float,
                  buckling: float | None = None, bond: tuple | None = None,
-                 contact_band: float | None = None):
+                 contact_band: float | None = None, radius: float | None = None):
         self.stress = stress            # MPa, allowable peak von Mises
         self.deflection = deflection    # mm at the loads
         self.modulus = modulus          # MPa, to turn unit-E displacements into mm
@@ -121,6 +121,71 @@ class Limits:
         # limit held there spends material the checks never ask for. None:
         # only the cells the loads and supports touch are left out.
         self.contact_band = contact_band
+        # mm: stress is read as the checks read it (verify._MaterialAverage,
+        # crosscheck._averaged_stress), the tensor averaged over the material
+        # within this distance of each node, then judged (_Averaged). None:
+        # the peak of each cell's corners, as before.
+        self.radius = radius
+
+
+class _Averaged:
+    """The optimizer's stress reading made the checks' own: at each node, the
+    stress tensor averaged over the material within `radius` (the material's
+    length, failure.MATERIAL_LENGTH), then von Mises and the layer bond read
+    from that average.
+
+    The corner-point reading it replaces is the mesh's and not the part's: a
+    cell corner on a staircase or at a re-entrant step reads a spike the
+    meshed part does not have, and as the design moves, the spikes move with
+    it. Holding a limit on them, the printed hook's check fell from 2.56 to
+    2.04 over 120 iterations while the optimizer's own reading held. On the
+    averaged reading the optimizer holds what the voxel and tetrahedral
+    checks judge (docs/CONVERGENCE.md).
+
+    The material is sampled as verify._MaterialAverage samples it: each
+    cell's own stress at its eight quarter points while the ball is under
+    three cells across, at its centre on finer grids, each sample weighted by
+    the cell's (eroded) density, so a grey or void cell carries what material
+    it has. A node's reading is then relaxed by the density of the material
+    round it (its density-weighted mean density, 1 at the surface of a solid
+    member): a near-void node strained by a member's motion fades, as the
+    corner reading's x^q did. Built once per run (the pairs of nodes and
+    samples do not depend on the design)."""
+
+    def __init__(self, mesh, nu: float, radius: float, readable):
+        import scipy.sparse as sp
+        from scipy.spatial import cKDTree
+
+        from .fem import CORNERS
+
+        pitch = mesh.pitch
+        rho = radius / pitch
+        nat = (CORNERS - 0.5) if rho <= 1.5 else np.zeros((1, 3))      # natural coordinates
+        self.ns = len(nat)
+        c0 = elastic_c(1.0, nu)
+        self.cbs = [c0 @ hex8_b(a, b, cz, nu) / pitch for a, b, cz in nat]
+        ne = mesh.n_elem
+        xs = ((mesh.elem_ijk[:, None, :] + 0.5 + 0.5 * nat[None, :, :]) * pitch).reshape(-1, 3)
+        nodes = np.flatnonzero(readable)
+        pairs = cKDTree(mesh.node_ijk[nodes] * pitch).sparse_distance_matrix(
+            cKDTree(xs), radius, output_type="coo_matrix")
+        self.nodes = nodes
+        # (read nodes, samples), sample s = cell s // ns, point s % ns
+        self.ball = sp.csr_matrix((np.ones(len(pairs.row)), (pairs.row, pairs.col)), shape=(len(nodes), ne * self.ns))
+        self.ballT = self.ball.T.tocsr()
+        self.n_elem = ne
+        self.w0 = pitch ** 3 / self.ns
+        self.radius = float(radius)
+
+    def cell_sum(self, per_sample):
+        return per_sample.reshape(self.n_elem, self.ns).sum(axis=1)
+
+
+def _normalize(prev: float, smax: float, pm: float, it: int) -> float:
+    """Le et al.'s adaptive normalization: the factor that brings the P-mean
+    up to the peak, from this reading, averaged with the last one."""
+    k = smax / max(pm, 1e-30)
+    return 0.5 * (prev + k) if it > 1 else k
 
 
 def _bond_form(normal):
@@ -217,6 +282,18 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
     # cases (MBB, bell crank, hook, motor mount, wrist yoke at 15k cells),
     # the corners 1.2-2x.
     bond = limits.bond if limits.stress is not None else None
+    avg = None
+    if limits.stress is not None and limits.radius:
+        # read at the nodes the checks read: outside the contact band (or, with
+        # no band, off the cells the loads and supports touch)
+        if pt_counted is not None:
+            readable = np.zeros(mesh.n_nodes, bool)
+            readable[mesh.enode[pt_counted]] = True
+            readable[mesh.enode[~pt_counted]] = False
+        else:
+            readable = np.ones(mesh.n_nodes, bool)
+            readable[mesh.enode[contact].ravel()] = False
+        avg = _Averaged(mesh, nu, float(limits.radius), readable)
     if bond is not None:
         bond_ratio = float(bond[0])
         bond_m, bond_q = _bond_form(bond[1])
@@ -333,7 +410,70 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
             grads.append(to_x(g_xe) / limits.deflection)
             record[f"deflection.{domain.case_names[c]}"] = defl
 
-        if stress_cases:
+        if stress_cases and avg is not None:
+            adj_rhs, partials = [], []
+            bond_limit = limits.stress * bond_ratio if bond is not None else None
+            nc = max(len(avg.nodes), 1) * (2 if bond is not None else 1)
+            v = np.repeat(avg.w0 * np.maximum(xe, 0.0), avg.ns)              # sample weights: material
+            dn = avg.ball @ v
+            on = dn > 0
+            dinv = np.where(on, 1.0 / np.where(on, dn, 1.0), 0.0)
+            xs_ = np.repeat(xe, avg.ns)
+            rho_n = (avg.ball @ (v * xs_)) * dinv                         # density round the node
+            for c in stress_cases:
+                moved = np.flatnonzero(us[c].reshape(-1, 3).any(axis=1)[mesh.enode].any(axis=1))
+                edof = mesh.edof[moved]
+                ue = us[c][edof]
+                ss = np.zeros((n, avg.ns, 6))
+                for k, cbk in enumerate(avg.cbs):
+                    ss[moved, k] = ue @ cbk.T
+                ss = ss.reshape(-1, 6)
+                sig = (avg.ball @ (v[:, None] * ss)) * dinv[:, None]      # (read nodes, 6) averaged
+                parts = []
+                sv = sig @ _VM
+                vm = np.sqrt(np.maximum(np.einsum("ij,ij->i", sv, sig), 1e-30))
+                parts.append((sv, vm, limits.stress))
+                if bond is not None:
+                    sn = np.maximum(sig @ bond_m, 0.0)
+                    sb = sn[:, None] * bond_m + bond_k2 * (sig @ bond_q)
+                    eq = np.sqrt(np.maximum(np.einsum("ij,ij->i", sb, sig), 1e-30))
+                    parts.append((sb, eq, bond_limit))
+                srs = [rho_n ** _Q * f / lim for _, f, lim in parts]
+                smax = max((float(sr.max()) for sr in srs if len(sr)), default=0.0)
+                sc = max(smax, 1e-30)
+                pm = sc * (sum(float(np.sum((sr / sc) ** _P)) for sr in srs) / nc) ** (1.0 / _P)
+                kappa[c] = _normalize(kappa[c], smax, pm, it)
+                g = kappa[c] * pm
+                gsig = np.zeros_like(sig)          # dg / d(averaged tensor)
+                grho = np.zeros(len(sig))          # dg / d(node density)
+                for (sh, f, lim), sr in zip(parts, srs):
+                    a = kappa[c] * (sr / max(pm, 1e-30)) ** (_P - 1) / nc
+                    gsig += (a * rho_n ** _Q / (f * lim))[:, None] * sh
+                    grho += a * _Q * np.maximum(rho_n, 1e-12) ** (_Q - 1) * f / lim
+                # back to the samples: d sig_n / d s_s = ball_ns v_s / D_n
+                hs_ = avg.ballT @ (gsig * dinv[:, None])                   # (samples, 6), per unit weight
+                h_s = v[:, None] * hs_
+                # explicit, through the weights: d sig_n / d x(s) = ball w0 (s_s - sig_n) / D_n,
+                # and d rho_n / d x(s) = ball w0 (2 x_s - rho_n) / D_n
+                t_sig = np.einsum("ij,ij->i", ss, hs_) \
+                    - avg.ballT @ (np.einsum("ij,ij->i", gsig, sig) * dinv)
+                t_rho = 2.0 * xs_ * (avg.ballT @ (grho * dinv)) - avg.ballT @ (grho * rho_n * dinv)
+                g_xe = avg.w0 * avg.cell_sum(t_sig + t_rho)
+                h_s = h_s.reshape(n, avg.ns, 6)
+                rhs = np.zeros(mesh.n_dof)
+                for k, cbk in enumerate(avg.cbs):
+                    rhs += np.bincount(edof.ravel(), weights=(h_s[moved, k] @ cbk).ravel(), minlength=mesh.n_dof)
+                rhs[domain.fixed] = 0.0
+                adj_rhs.append(rhs)
+                partials.append((c, g, g_xe, smax, moved))
+            lams = fe.resolve(adj_rhs, [l for l in lams] if lams[0] is not None and len(lams) == len(adj_rhs) else None)
+            for (c, g, g_xe, smax, moved), lam in zip(partials, lams):
+                edof = mesh.edof[moved]
+                g_xe[moved] -= de[moved] * np.einsum("ij,ij->i", lam[edof] @ fe.ke, us[c][edof])
+                cons.append(g - 1.0)
+                grads.append(to_x(g_xe))
+                record[f"stress.{domain.case_names[c]}"] = smax * limits.stress
+        elif stress_cases:
             adj_rhs, partials = [], []
             for c in stress_cases:
                 # Only over the cells that moved. The solve leaves every dof
@@ -375,7 +515,7 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
                 # MMA a NaN step (the robot-arm upper arm)
                 sc = max(smax, 1e-30)
                 pm = sc * (sum(float(np.sum((sr / sc) ** _P)) for *_, sr in parts) / nc) ** (1.0 / _P)
-                kappa[c] = 0.5 * (kappa[c] + smax / max(pm, 1e-30)) if it > 1 else smax / max(pm, 1e-30)
+                kappa[c] = _normalize(kappa[c], smax, pm, it)
                 g = kappa[c] * pm
                 g_xe = np.zeros(n)
                 rhs = np.zeros(mesh.n_dof)

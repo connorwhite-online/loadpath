@@ -175,6 +175,85 @@ same seven designs, and the hook's three searches (three grids 1% apart in
 pitch) confirm at 40.1, 40.0 and 40.6 g. Main's three, same machine, same
 day: 36.8, 39.9 and 42.6 g.
 
+## Cause 7: the constrained method held a different stress than the checks
+
+After cause 6 the search and its checks read one stress. The constrained
+method (`constrained.py`, from scratch and in the strength polish) still
+read its own: the peak of each cell's eight corners. A cell corner on a
+staircase, or at a step a member's surface takes on the design grid, reads
+a spike the meshed part does not have, and the spikes move as the design
+moves. Held at one limit from the printed hook's confirmed pick (40.6 g,
+tet SF 2.59 for 2.5) for 120 iterations, checked every 20:
+
+| iteration | corner reading: mass g / check SF | shared reading: mass g / check SF |
+| --- | --- | --- |
+| 20 | 36.6 / 2.47 | 35.9 / 2.48 |
+| 40 | 31.1 / 2.25 | 31.4 / 2.28 |
+| 60 | 28.1 / 2.11 | 30.2 / 2.23 |
+| 80 | 27.4 / 2.00 | 29.3 / 2.23 |
+| 120 | 27.2 / 2.04 | 29.8 / 2.24 |
+
+(check SF: the voxel check through the pick's tet calibration.) On the
+corner reading the check keeps falling as long as the optimizer runs; on
+the shared reading it falls by 12% in the first 40 iterations and then
+holds.
+
+`constrained._Averaged` makes the reading the checks' own: at each node the
+stress tensor averaged over the material within the material's length
+(`crosscheck.stress_radius` on the design grid), sampled at each cell's
+quarter points (its centre on fine grids) and weighted by the cell's
+eroded density, then von Mises and the layer bond taken from that average.
+A node's reading is relaxed by the density of the material round it (its
+density-weighted mean density, 1 at the surface of a solid member), as the
+corner reading's x^q relaxed a cell, so a near-void node strained by a
+member's motion fades. The gradient carries the weights' and that
+density's dependence on the design (checked against finite differences in
+`tests/test_stress_read.py`). `LOADPATH_STRESS_READ=point` restores the
+corner reading with the checks' point reading.
+
+What remains between the two is resolution: the optimizer judges members
+two or three design cells across, the check the meshed part.
+
+Where the shared reading is used:
+
+- The constrained method from scratch, with the layer bond in it from the
+  start (`LOADPATH_BOND_CONSTRAINED=0` takes the bond out). On the corner
+  reading the bond over-constrained parts the check passes without it
+  (wall bracket 34.7 g against 30.6 g, motor mount 29.3 against 27.8 g).
+  On the shared reading: wall bracket 31.3 g with it, 30.9 g without;
+  motor mount 27.9 g. The robot-arm turret now gets a constrained part
+  that passes, 124.1 g (baseline 131.4 g); the wrist yoke 12.3 g with
+  every check passing, where main's 12.4 g fails the crease check.
+- Not, by default, in the strength polish (`LOADPATH_POLISH_READ=average`
+  puts it there). Its strides are short and checked, so the drift matters
+  less than which designs the strides walk through, and on the shared
+  reading the hook came out at 35.1, 35.5 and
+  35.7 g in three runs against 33.4 g on the corners.
+
+What the polish gained, on either reading:
+
+- Each stride's limit is set through the drift the last stride measured
+  (the check's change times the optimizer's change in its own reading is
+  1 when the two are in step), and aims at half its margin: one stride
+  straight onto the target stopped there, strides that leave margin walk
+  on. A stride that misses is taken once more through its own drift
+  before it is halved.
+- A design the tetrahedra read just under the target (0.95 of it or more)
+  is repaired instead of dropped: a half stride from it at the limit its
+  own tet reading asks for. On the hook (before the binding-case
+  weighting landed) one repair took a 35.8 g design that read 0.986 to
+  34.0 g at 1.059, and the polish from it ended at 31.8 g, tet 1.014.
+- Buckling is held once a pick's buckling factor is under twice the
+  target (`LOADPATH_POLISH_BUCKLING=0` off), on the optimizer's reading
+  scaled by the check's. On the hook it did not bind at these masses (the
+  31.8 g part reads 3.57 against 2.5).
+
+What is left: the polish's end is a knife edge between the voxel check
+and the tetrahedra (the voxel reading through the pick's calibration
+passes designs the tetrahedra read at 0.98 to 0.99), so one main gives
+33.4 g and the next code change 35 g. A calibration that follows the
+design as it thins, not the pick's, is the next step.
+
 ## What is left: which layout a fraction lands on
 
 Parts of one mass differ in strength by which design the fraction started
