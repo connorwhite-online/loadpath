@@ -166,13 +166,13 @@ Things to know:
 The same commands with `--quick` (or `LOADPATH_QUICK=1`) run each study on
 6000 cells and 30 iterations, about 3 minutes in all. The cold design comes
 out lighter (21 g) and reads worse under the cycle (fatigue SF about 1.0, a
-life a little under the 30,000 cycles); the PA-CF design comes out at 13.7 g,
-fatigue SF about 3.8. That reading is a hot-spot one and swings with the
-mesh: the same search with members smoothed a little thinner (before
-01d680f, which holds them to minMember) delivered 13.9 g at fatigue SF 2.3,
-and its lighter 9.6 g outcome read 2.7. So expect.json bounds it at 1.5
-(the study's target) to 4.5, and the mass band is what catches a part
-built heavier than it needs. CI runs this
+life a little under the 30,000 cycles); the PA-CF design comes out at 9.3 g (asked 7.5%,
+SF 3.0 hot, exactly the goal), fatigue SF about 4.5. That reading is a
+hot-spot one and swings with the mesh and the layout: before the search
+read stress averaged over the material's length (79ab7b9) the same quick
+search delivered 13.7 g at fatigue SF 3.8, and before 01d680f 13.9 g at
+2.3. So expect.json bounds it at 1.5 (the study's target) to 5.5, and the
+mass band is what catches a part built heavier than it needs. CI runs this
 tutorial that way ([test_tutorials.py](../../../tests/test_tutorials.py))
 and holds it to [expect.json](expect.json).
 
