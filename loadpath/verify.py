@@ -494,6 +494,81 @@ def _filled_clearances(study: Study, pts) -> list:
     return out
 
 
+# How deep (mm) the delivered part may stand inside a real part's body: the
+# exterior check's tolerance, well under any fit's clearance. The volume
+# alone hid it: a film 0.6 mm into a board's edge along 18 mm is 0.6 mm^3,
+# under the old 1 mm^3 bar.
+BODY_TOL = 0.05
+
+
+def _depth_in(inter, body_man, samples=20_000):
+    """The deepest point of `inter` (a manifold inside `body_man`) below the
+    body's surface: its vertices and points sampled through its volume,
+    each one's exact distance to the body's triangles. Returns (mm, [x, y,
+    z])."""
+    import trimesh
+
+    from .shapes import trimesh_from_manifold
+    it = trimesh_from_manifold(inter)
+    pts = np.asarray(it.vertices, float)
+    if inter.volume() > 1e-3 and len(it.faces):
+        try:
+            pts = np.vstack([pts, trimesh.sample.volume_mesh(it, samples)])
+        except Exception:  # noqa: BLE001 - the vertices alone still bound the depth
+            pass
+    if not len(pts):
+        return 0.0, None
+    bt = trimesh_from_manifold(body_man)
+    with _MESH_QUERY:
+        _, d, _ = trimesh.proximity.closest_point(bt, pts)
+    j = int(np.argmax(d))
+    return float(d[j]), [round(float(v), 3) for v in pts[j]]
+
+
+def body_intrusion(study, part, tol: float = BODY_TOL) -> dict:
+    """Every real part's body (keepOut "body": true) against the delivered
+    part, all of it, drawn and designed: two solids cannot share space.
+    Per body the volume inside it, how deep (mm, exact distances to the
+    body's surface) and where, and which drawn shape it is in (the skin, or
+    a preserve). Also the drawn shapes the bodies cut when the study was
+    read (spec._cut_by_bodies): a cradle that rose into its board, a lip
+    through a motor, each with its depth, so the generator or the designer
+    can fix it. `ok` when no body holds material deeper than `tol`."""
+    from .sharp import exact_manifold
+    rows, cut = [], []
+    bodies = [(k, exact_manifold(k.body)) for k in study.keep_out if getattr(k, "body", None) is not None]
+    if not bodies:
+        return {"bodies": [], "drawnCut": [], "maxDepth": 0.0, "volume": 0.0, "ok": True, "tolerance": tol}
+    drawn = {r.id: exact_manifold(r.shape) for r in study.preserve}
+    for k, bm in bodies:
+        inter = part ^ bm
+        v = float(inter.volume())
+        if v <= 1e-6:
+            continue
+        depth, at = _depth_in(inter, bm)
+        row = {"id": k.id, "volume": round(v, 4), "depth": round(depth, 3), "at": at}
+        inside = {pid: round(float((inter ^ pm).volume()), 4) for pid, pm in drawn.items()}
+        inside = {pid: vv for pid, vv in inside.items() if vv > 1e-4}
+        if inside:
+            row["inDrawn"] = inside
+        rows.append(row)
+    for r in study.preserve:
+        if getattr(r, "uncut", None) is None:
+            continue
+        um = exact_manifold(r.uncut)
+        for k, bm in bodies:
+            inter = um ^ bm
+            v = float(inter.volume())
+            if v > 1e-6:
+                depth, at = _depth_in(inter, bm, samples=5_000)
+                cut.append({"preserve": r.id, "body": k.id, "volume": round(v, 4), "depth": round(depth, 3),
+                            "at": at})
+    md = max([0.0] + [r["depth"] for r in rows])
+    return {"bodies": sorted(rows, key=lambda r: -r["depth"]), "drawnCut": sorted(cut, key=lambda r: -r["depth"]),
+            "maxDepth": round(md, 3), "volume": round(sum(r["volume"] for r in rows), 4),
+            "ok": md <= tol, "tolerance": tol}
+
+
 def drawn_kept(study, regions=None):
     """What of the preserved shapes must be in the part, as one manifold
     (None if nothing): each less the keep-outs that cut it (spec.cuts_of)."""
@@ -1757,6 +1832,7 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     pres_eff = drawn_kept(study)
     designed = part - pres_eff if pres_eff is not None else part
     report["keepOutIntrusion"] = float((designed ^ keep).volume()) if keep is not None else 0.0
+    report["bodyIntrusion"] = body_intrusion(study, part)
     if pres_eff is not None:
         report["preserveMissing"] = _preserve_missing(pres_eff, part, mesh)
     else:

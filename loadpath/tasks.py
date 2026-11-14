@@ -331,7 +331,8 @@ def verify_mesh(raw, path: str, base_dir: str | None = None, max_cells: int = 60
         out["durability"] = {k: rep["durability"].get(k) for k in ("safetyFactor", "target", "warnings")}
     out["margin"] = margin
     out["passes"] = bool(margin is not None and margin >= 1.0 and rep.get("bodies") == 1
-                         and (rep.get("keepOutIntrusion") or 0) <= 1.0 and (rep.get("preserveMissing") or 0) <= 1.0)
+                         and (rep.get("keepOutIntrusion") or 0) <= 1.0 and (rep.get("preserveMissing") or 0) <= 1.0
+                         and (rep.get("bodyIntrusion") or {}).get("ok", True))
     out["attention"] = attention({**rep, "passes": out["passes"]}, raw)
     return jsonable({"ok": True, "stl": full, "safetyFactorMethod": "voxel", **out})
 

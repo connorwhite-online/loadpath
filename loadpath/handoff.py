@@ -420,7 +420,7 @@ def handoff(brief: dict, base_dir: str | None = None) -> dict:
             warnings.append(f"{c['id']}: no clear way in (best try: {paths[c['id']].get('blocked')}); its keep-out "
                             "covers where it sits only. The exterior or the fixed geometry has to change, or give "
                             "its path as insertFrom with fixed: true")
-        k = {"id": c["id"], "bore": False, "shape": c["spec"]}
+        k = {"id": c["id"], "bore": False, "body": True, "shape": c["spec"]}
         if ins is not None:
             k["insertFrom"] = ins
         keep.append(k)

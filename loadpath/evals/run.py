@@ -755,6 +755,12 @@ def run_enclosure_case(raw: dict, base: str, out: str, tier: str = "full") -> di
                                   "designPasses": dr.get("passes"), "seconds": c.get("designSeconds")}
             checks += [(f"exterior untouched{tag}", bool((c.get("exterior") or {}).get("untouched")), "==", True),
                        (f"watertight{tag}", bool(c.get("watertight")), "==", True)]
+            bi = c.get("bodyIntrusion") or {}
+            if bi:
+                # how deep any of the delivered part stands in a component
+                checks.append((f"deepest in a part mm{tag}", bi.get("maxDepth", 99.0) if "error" not in bi else 99.0,
+                               "<=", expect.get("maxBodyDepth", bi.get("tolerance", 0.05))))
+            row["parts"][half]["bodyIntrusion"] = {k: bi.get(k) for k in ("maxDepth", "volume", "bodies", "drawnCut")}
             if v:
                 checks += [(f"safety factor{tag}", v.get("safetyFactor"), ">=", sf_goal),
                            (f"keep-out intrusion mm^3{tag}", v.get("keepOutIntrusion"), "<=",

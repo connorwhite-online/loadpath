@@ -398,7 +398,8 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
 
     keep = []
     for c in [c for c in comps if c["id"] in comp_specs]:
-        k = {"id": c["id"], "bore": False, "shape": comp_specs[c["id"]]}
+        # the part's own solid: nothing printed, drawn or designed, inside it
+        k = {"id": c["id"], "bore": False, "body": True, "shape": comp_specs[c["id"]]}
         ins = path_of(c["id"])
         if ins is not None and not c.get("external"):
             k["insertFrom"] = ins
@@ -1350,7 +1351,11 @@ def _localize(study: dict, out_dir: str) -> None:
     def walk(v):
         if isinstance(v, dict):
             if v.get("type") == "mesh" and isinstance(v.get("path"), str):
+                # a path already relative is the study folder's (a second
+                # pass over a written study: cad/layout0/cradle-*.stl)
                 src = os.path.realpath(v["path"])
+                if not os.path.isabs(v["path"]) and os.path.exists(os.path.join(root, v["path"])):
+                    src = os.path.realpath(os.path.join(root, v["path"]))
                 if os.path.commonpath([root, src]) != root:
                     os.makedirs(cad, exist_ok=True)
                     dst = os.path.join(cad, os.path.basename(src))
@@ -1482,6 +1487,15 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
     out = {"part": part, "exterior": ex, "volumeCm3": round(float(abs(mesh.volume)) / 1000.0, 3),
            "watertight": bool(mesh.is_watertight)}
     ok = ex["untouched"] and mesh.is_watertight
+    # every part's body against the delivered mesh, whatever the design was
+    # for (a switch or feel design has no load cases, and was not read here)
+    from .reconstruct import manifold_from_trimesh
+    from .verify import body_intrusion
+    try:
+        out["bodyIntrusion"] = body_intrusion(study, manifold_from_trimesh(mesh))
+    except ValueError as exc:
+        out["bodyIntrusion"] = {"ok": False, "error": f"the delivered mesh is not a solid: {exc}"}
+    ok = ok and out["bodyIntrusion"]["ok"]
     if study.load_cases:
         if on_progress:
             on_progress({"stage": "check", "message": "load cases on the delivered part"}, None)
@@ -1510,8 +1524,11 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
             # delivered part (press forces, feel windows, temperatures)
             ok = ok and bool(rep.get("passes"))
     out["ok"] = bool(ok)
+    bi = out["bodyIntrusion"]
     out["summary"] = (f"exterior {'untouched' if ex['untouched'] else 'CHANGED'} (max proud {ex['maxProud']} mm, "
                       f"coverage {100 * ex['coverage']:.2f}%)"
+                      + (f"; parts clear (deepest {bi.get('maxDepth', 0):.3f} mm)" if bi.get("ok")
+                         else f"; IN PARTS: {bi.get('error') or bi['bodies'][0]}")
                       + (f"; min safety factor {out['verify'].get('safetyFactor')}"
                          if out.get("verify") else ""))
     return out

@@ -96,6 +96,17 @@ class Region:
     # keepOut only: cutsPreserve was set true in the study, so cutting what
     # is drawn is meant (a bearing's pocket in its drawn hub): no warning
     cuts_declared: bool = False
+    # keepOut only ("body": true): the solid a real part fills where it sits
+    # (a board, a cell, a motor), before any way in is swept from it. Two
+    # solids cannot share space, so nothing printed may be inside it: not
+    # the optimizer's material and not what is drawn either. Every preserve
+    # but the skin is cut by it (a cradle seats on the part's own surface,
+    # a shell's lip is notched round a motor), and verify measures every
+    # millimetre of the delivered part inside it (bodyIntrusion).
+    body: "Shape | None" = None
+    # preserve only: the shape as given, before the bodies cut it (verify
+    # says what each drawn shape lost, and to which part)
+    uncut: "Shape | None" = None
 
 
 @dataclass
@@ -996,6 +1007,11 @@ def _regions(items, label, base_dir, bounds=None):
         if wall is not None and not (isinstance(wall, (int, float)) and wall > 0):
             raise ValueError(f"{label}[{i}].wall is a thickness in mm (> 0)")
         shape = shape_from_spec(item["shape"], base_dir)
+        body = None
+        if item.get("body"):
+            if label != "keepOut":
+                raise ValueError(f"{label}[{i}].body: only a keep-out is a part's body")
+            body = shape
         if item.get("insertFrom") is not None:
             if label != "keepOut":
                 raise ValueError(f"{label}[{i}].insertFrom: only a keep-out has an assembly path")
@@ -1005,8 +1021,31 @@ def _regions(items, label, base_dir, bounds=None):
         bore = bool(item.get("bore", True)) and item.get("insertFrom") is None
         cuts = bool(item.get("bore", True)) or item.get("insertFrom") is not None
         out.append(Region(rid, shape, bore, float(wall) if wall is not None else None,
-                          bool(item.get("cutsPreserve", cuts)), cuts_declared=item.get("cutsPreserve") is True))
+                          bool(item.get("cutsPreserve", cuts)), cuts_declared=item.get("cutsPreserve") is True,
+                          body=body))
     return out
+
+
+def _cut_by_bodies(preserve, keep_out):
+    """Each preserve less the real parts' bodies it overlaps (Region.body):
+    what is drawn seats on a part, never inside it. Bounds first, then the
+    exact overlap, so a preserve that only comes near a part is left as it
+    is (its shape object unchanged)."""
+    from .shapes import Boolean
+    bodies = [(k.body, *k.body.bounds()) for k in keep_out if k.body is not None]
+    if not bodies:
+        return
+    for r in preserve:
+        lo, hi = r.shape.bounds()
+        near = [b for b, blo, bhi in bodies if np.all(blo < hi) and np.all(bhi > lo)]
+        if not near:
+            continue
+        from .sharp import exact_manifold
+        pm = exact_manifold(r.shape)
+        hit = [b for b in near if (pm ^ exact_manifold(b)).volume() > 1e-6]
+        if hit:
+            r.uncut = r.shape
+            r.shape = Boolean("subtract", [r.shape, *hit])
 
 
 def _assembly_path(shape, side, bounds, label):
@@ -1620,6 +1659,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     clash = {r.id for r in preserve} & {r.id for r in keep_out}
     if clash:
         raise ValueError(f"region ids must be unique across preserve and keepOut: {sorted(clash)}")
+    # the skin is added below, after this: the exterior is the designer's
+    # and is never cut by a part (verify reports a part through it)
+    _cut_by_bodies(preserve, keep_out)
 
     supports = []
     for i, s in enumerate(d.get("supports") or []):

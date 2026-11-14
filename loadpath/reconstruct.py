@@ -1864,6 +1864,17 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
         pinches += more
     if pinches:
         info["pinchesFilled"] = pinches
+    bodies = [r.body for r in study.keep_out if getattr(r, "body", None) is not None]
+    if bodies:
+        # last of all, the real parts' bodies out of everything: two solids
+        # cannot share space, whatever put material there (a pinch ball, a
+        # neck the fallback grew, a sliver between a cut and a weld; the
+        # smart button's board kept 0.08 mm of one)
+        bm = m3d.Manifold.batch_boolean([exact_manifold(b) for b in bodies], m3d.OpType.Add)
+        before = part.volume()
+        part = part - bm
+        if before - part.volume() > 1e-6:
+            info["bodyCut"] = round(float(before - part.volume()), 4)
     mesh = _drop_slivers(trimesh_from_manifold(part))
     if not _stl_watertight(mesh):
         # a boolean can leave sliver pairs only an STL's weld exposes

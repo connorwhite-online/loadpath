@@ -1735,14 +1735,23 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             if c["id"] not in ids:
                 mine = where.get(c["id"]) == side
                 path = (cut.get("paths") or {}).get(c["id"], {}).get("insertFrom") if mine else None
-                keep.append({"id": c["id"], "shape": c["spec"], "bore": False,
+                keep.append({"id": c["id"], "shape": c["spec"], "bore": False, "body": True,
                              "insertFrom": path or C.name(1 if side == "base" else -1)})
         if lip is not None:
             if side == "base":
                 pres.append({"id": "lip", "shape": {"type": "mesh", "path": "cad/lip.stl"}})
             else:
+                # the base's lip stands in this room when the two are closed,
+                # so what this half draws (cradles, bosses) is cut by the
+                # whole room, its fit clearance included (the remote cover's
+                # board cradle ran 1 mm into it); the skin is not, as the
+                # room overlaps it by design
                 keep.append({"id": "lip-room", "shape": {"type": "mesh", "path": "cad/lip-room.stl"},
-                             "bore": False})
+                             "bore": False, "cutsPreserve": True})
+                # and the lip itself is a solid the delivered half is checked
+                # against
+                keep.append({"id": "mating-lip", "shape": {"type": "mesh", "path": "cad/lip.stl"},
+                             "bore": False, "body": True})
         joint_loads = []
         pull = float((split.get("snaps") or {}).get("pull", 10.0)) if isinstance(split.get("snaps"), dict) else 10.0
         for sn in snaps:

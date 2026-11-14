@@ -582,6 +582,60 @@ def test_a_cradle_follows_a_round_cell():
     assert not m.contains([[0, 9.6, -8.0], [0, 0, -8.5], [40.0, 0, -9.6]]).any()
 
 
+def _body_study(cradle_top):
+    """A board (body) resting on a drawn cradle whose top is at `cradle_top`
+    (the board's underside is z = 0)."""
+    from loadpath.spec import study_from_dict
+    return study_from_dict({
+        "name": "bodies", "material": "pa12",
+        "designSpace": {"type": "box", "min": [-20, -20, -10], "max": [20, 20, 10]},
+        "preserve": [{"id": "cradle", "shape": {"type": "box", "min": [-12, -8, -3], "max": [12, 8, cradle_top]}}],
+        "keepOut": [{"id": "board", "bore": False, "body": True, "insertFrom": "+z",
+                     "shape": {"type": "box", "min": [-10, -6, 0], "max": [10, 6, 1.6]}}],
+        "supports": [{"shape": {"type": "box", "min": [-20, -20, -10], "max": [20, 20, -9]}}],
+        "loads": [{"shape": {"type": "box", "min": [-20, -20, 9], "max": [20, 20, 10]}, "force": [0, 0, -1]}]})
+
+
+def test_a_part_s_body_cuts_what_is_drawn_and_is_checked_by_depth():
+    """Two solids cannot share space. A cradle drawn 0.4 mm into its board
+    (as the enclosure's ray-sampled cradles and shell lips were, up to 1.5
+    mm into a motor) is cut to the board's own surface when the study is
+    read, and said so; any of the delivered part inside a body is measured
+    by how deep, not by volume: a film 0.6 mm into a board edge is under
+    1 mm^3 and was passed."""
+    import manifold3d as m3d
+    from loadpath.sharp import exact_manifold
+    from loadpath.verify import body_intrusion
+    st = _body_study(0.4)
+    cradle, board = st.preserve[0], st.keep_out[0]
+    assert board.body is not None and cradle.uncut is not None
+    # the cradle as read no longer reaches into the board: it seats on it
+    assert (exact_manifold(cradle.shape) ^ exact_manifold(board.body)).volume() < 1e-6
+    # the cut is reported, with its depth
+    rep = body_intrusion(st, exact_manifold(cradle.shape))
+    assert rep["ok"] and rep["maxDepth"] <= 0.05, rep
+    assert rep["drawnCut"] and abs(rep["drawnCut"][0]["depth"] - 0.4) < 0.02, rep["drawnCut"]
+    # a cradle that only touches the board is left as drawn
+    assert _body_study(0.0).preserve[0].uncut is None
+    # a delivered part with a thin film 0.6 mm into the board's edge: 0.5
+    # mm^3, under the old volume bar, fails on depth
+    film = m3d.Manifold.cube((0.6, 4.0, 0.2)).translate((9.4, -2.0, 0.7))
+    part = exact_manifold(cradle.shape) + film
+    rep = body_intrusion(st, part)
+    assert rep["volume"] < 1.0 and not rep["ok"], rep
+    assert abs(rep["bodies"][0]["depth"] - 0.6) < 0.03 and rep["bodies"][0]["id"] == "board", rep
+
+
+def test_the_enclosure_marks_every_component_a_body():
+    """Every placed component's keep-out is its body, so its cradle is cut
+    to it and the delivered part is checked against it."""
+    out = tempfile.mkdtemp()
+    r = enclosure(product(), _DIR, out)
+    comps = {c["id"] for c in product()["components"]}
+    keep = {k["id"]: k for k in r["study"]["keepOut"] if k["id"] in comps}
+    assert keep and all(k.get("body") for k in keep.values()), keep
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

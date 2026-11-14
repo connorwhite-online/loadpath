@@ -47,6 +47,16 @@ def attention(o: dict, study: dict) -> list[str]:
         out.append(f"{o['bodies']} separate bodies: something is not connected to a support")
     if (o.get("keepOutIntrusion") or 0) > 1.0:
         out.append(f"keepOutIntrusion {o['keepOutIntrusion']:.1f} mm³: material in a keep-out (report a bug)")
+    bi = o.get("bodyIntrusion") or {}
+    if bi.get("bodies") and not bi.get("ok", True):
+        w = bi["bodies"][0]
+        out.append(f"material {w['depth']:.2f} mm inside part {w['id']!r} at {w['at']}"
+                   + (f" (drawn: {', '.join(w['inDrawn'])})" if w.get("inDrawn") else "")
+                   + ": two solids in one place; the part will not go in")
+    for c in (bi.get("drawnCut") or [])[:3]:
+        if c["depth"] > (bi.get("tolerance") or 0.05):
+            out.append(f"drawn {c['preserve']!r} stood {c['depth']:.2f} mm inside part {c['body']!r} "
+                       f"({c['volume']:.1f} mm³) and was cut to it: check what drew it")
     if (o.get("preserveMissing") or 0) > 1.0:
         out.append(f"preserveMissing {o['preserveMissing']:.1f} mm³: preserved geometry lost (report a bug)")
     mm = study.get("minMember")

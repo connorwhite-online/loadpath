@@ -170,6 +170,14 @@ _KEEP_OUT = {
                                                    "true for a bore and for a part's way in (insertFrom), false "
                                                    "for a clearance volume. Only a bore ever cuts the skin: a way "
                                                    "in through the exterior is one of skin.openings."},
+                   "body": {"type": "boolean",
+                            "description": "This keep-out is a real part's solid where it sits (a board, a cell, a "
+                                           "motor; before insertFrom sweeps it): nothing printed may be inside "
+                                           "it, drawn or designed. It cuts every preserve but the skin (a cradle "
+                                           "seats on the part's surface, a lip is notched round it), and verify "
+                                           "fails a delivered part standing more than 0.05 mm inside it "
+                                           "(bodyIntrusion). `loadpath enclosure` and `handoff` set it on every "
+                                           "component."},
                    "wall": {**_POS, "description": "mm of material kept round it, pinned solid: a duct's or a "
                                                    "plenum's skin, with only what is behind it designed (ribs). "
                                                    "A pressurized keep-out gets minMember if not set."},

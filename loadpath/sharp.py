@@ -296,7 +296,7 @@ def exact_manifold(shape, tol=CHORD_TOL):
     """shape.to_manifold() with circles fine enough to be `tol` mm true."""
     import manifold3d as m3d
 
-    from .shapes import Box, Cylinder, Shell, Sphere, Union
+    from .shapes import Boolean, Box, Cylinder, Shell, Sphere, Union
 
     if isinstance(shape, Cylinder):
         n = segments_for(shape.r, tol)
@@ -314,6 +314,11 @@ def exact_manifold(shape, tol=CHORD_TOL):
     if isinstance(shape, Shell):
         man = exact_manifold(shape.outer, tol) - exact_manifold(shape.inner, tol)
         return man if shape.clip is None else man ^ exact_manifold(shape.clip, tol)
+    if isinstance(shape, Boolean):
+        mans = [exact_manifold(s, tol) for s in shape.parts]
+        if shape.kind == "intersect":
+            return m3d.Manifold.batch_boolean(mans, m3d.OpType.Intersect)
+        return mans[0] - (m3d.Manifold.batch_boolean(mans[1:], m3d.OpType.Add) if len(mans) > 2 else mans[1])
     if isinstance(shape, Box):
         return shape.to_manifold()
     return shape.to_manifold()

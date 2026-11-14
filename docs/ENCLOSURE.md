@@ -170,7 +170,43 @@ engineer would:
   surface (all of it still there, openings aside);
 - **every load case on the delivered part**: `verify` on cut cells (or
   tets where installed), not the optimizer's grid, with the safety factor
-  per case and no part's keep-out or path intruded on.
+  per case and no part's keep-out or path intruded on;
+- **every part clear**: the delivered mesh against each component's own
+  solid, on every design (switch and feel designs too, which have no load
+  cases), by how deep it reaches in, not how much volume (below).
+
+## Parts are solids
+
+A component's keep-out is its body (`"body": true`, set on every
+component by `enclosure`, `handoff` and the split shells, and on the
+mating lip each cover closes over): the solid the part fills where it
+sits, before its way in is swept from it. Two solids cannot share space,
+so nothing printed may be inside it, whether the optimizer put it there
+or something drew it. That second case was the leak. The optimizer's
+grid already leaves out every cell a keep-out touches, and the mesh is cut
+by the keep-outs exactly, but what is drawn (preserved) was exempt from
+both and from the check: the cradles, read by rays every 0.5 mm under a
+part, rose up to 0.5 mm into boards and motors at their edges, and a split
+shell's lip ran 1.2 mm through the remote's LED and 1.5 mm through the
+tool grip's motor. A check by volume (1 mm^3) also passed a film 0.6 mm
+into a board's edge, because it was thin.
+
+So a body:
+
+- cuts every preserve but the skin when the study is read (a cradle seats
+  on the part's own surface, a lip is notched round it), and the
+  optimizer, the mesh and the checks all see the cut shapes;
+- is cut from the finished mesh last of all, after the pinch balls and
+  welds, so nothing that comes after the exact cuts can put material back;
+- is checked on the delivered mesh by depth (`bodyIntrusion`: per body
+  the volume, the deepest point and where it is, and which drawn shape it
+  is in), failing past 0.05 mm, the exterior check's tolerance;
+- reports what it cut from the drawn shapes (`bodyIntrusion.drawnCut`,
+  with depths), because a drawn shape standing in a part is a mistake in
+  whatever drew it, and the designer or agent should see it.
+
+The skin is never cut: the exterior is the designer's, and a part through
+it fails the check instead.
 
 ## Parts that only go in at a tilt
 
