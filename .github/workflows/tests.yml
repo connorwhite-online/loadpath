@@ -102,7 +102,7 @@ jobs:
           # libigl (the exterior extra) only here: the groups above check the
           # paths without it
           - group: exterior
-            extras: ",exterior"
+            extras: ",exterior,scan"
             files: tests/test_exterior.py tests/test_scan.py tests/test_surfacecheck.py
             pytest: >-
               tests/test_materials.py tests/test_preview.py tests/test_interfaces.py tests/test_multimat.py
