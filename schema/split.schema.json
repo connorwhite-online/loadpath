@@ -315,6 +315,33 @@
         }
       ],
       "description": "cantilever snaps, sized so the strain as the barb passes the ledge is within the material's allowance. Default: on (auto count) when there are no screws"
+    },
+    "capture": {
+      "anyOf": [
+        {
+          "const": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pressPlay": {
+              "type": "number",
+              "minimum": 0,
+              "description": "mm of play each press fit in a capture chain is expected to leave (default 0: crush ribs, or a fit tuned on the printer)"
+            },
+            "padThickness": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "clamshell": {
+              "type": "boolean",
+              "description": "propose a cut through each connector's socket along its plug axis (default true)"
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "how connectors' sockets are held against their plug forces (capture.py): which half bears on each socket on each side, a cut that leaves a plug force on the socket's solder joints ranks behind one that does not, and each bearing face is preserved in its half with the plug force on it. On for every keep-out with a `connector`; false: off"
     }
   },
   "additionalProperties": false,

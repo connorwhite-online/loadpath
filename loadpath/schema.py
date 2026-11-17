@@ -196,6 +196,30 @@ _KEEP_OUT = {
                                           "diameter: the default for every bore once the process is known), none "
                                           "(no allowance). The hole is redrawn for the process's hole bias and "
                                           "report fits gives the as-built band and whether the fit holds."},
+                   "connector": {"type": "object", "properties": {
+                       "type": {"type": "string", "description": "connectors.CONNECTORS key: usb-c, usb-a, "
+                                                               "usb-micro-b (or give insert and withdraw)"},
+                       "out": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3],
+                               "description": "the way the plug comes out of the socket"},
+                       "wide": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3],
+                                "description": "the socket's wide direction across the plug (default: the "
+                                               "axis across `out` nearest +x)"},
+                       "insert": _POS, "withdraw": _POS,
+                       "side": {"type": "object", "properties": {"thin": _POS, "wide": _POS},
+                                "additionalProperties": False},
+                       "abuse": {"type": "boolean"},
+                       "maxShift": {**_POS, "description": "mm the socket may move on its legs before a face "
+                                                           "takes the force (default 0.1)"},
+                       "retention": {"type": "object", "additionalProperties": _POS,
+                                     "description": "N the socket's legs are rated for, per force (insert, "
+                                                    "withdraw, side-thin+, ...) or 'all': its datasheet"},
+                       "plug": {"description": "a shape: the plug's way in front of the socket (default: the "
+                                              "socket's own outline swept out of its mouth)"}},
+                                 "required": ["out"], "additionalProperties": False,
+                                 "description": "This keep-out is a socket a plug goes into: the plug's forces "
+                                                "(connectors.py) decide what has to hold it (capture.py). "
+                                                "split uses it to choose the cut and the faces that bear on "
+                                                "the socket."},
                    "mate": {**_POS, "description": "Diameter of the mating part, mm (default the cylinder's: draw "
                                                    "the keep-out at the bearing's or pin's size)."},
                    "mateUncertainty": {"type": "number", "minimum": 0,
@@ -1494,6 +1518,18 @@ _SPLIT_PROPS = {
         "additionalProperties": False}],
         "description": "cantilever snaps, sized so the strain as the barb passes the ledge is within the "
                        "material's allowance. Default: on (auto count) when there are no screws"},
+    "capture": {"anyOf": [{"const": False}, {"type": "object", "properties": {
+        "pressPlay": {"type": "number", "minimum": 0,
+                      "description": "mm of play each press fit in a capture chain is expected to leave (default 0: "
+                                     "crush ribs, or a fit tuned on the printer)"},
+        "padThickness": _POS, "clamshell": {"type": "boolean",
+                                            "description": "propose a cut through each connector's socket along "
+                                                           "its plug axis (default true)"}},
+        "additionalProperties": False}],
+        "description": "how connectors' sockets are held against their plug forces (capture.py): which half "
+                       "bears on each socket on each side, a cut that leaves a plug force on the socket's "
+                       "solder joints ranks behind one that does not, and each bearing face is preserved in its "
+                       "half with the plug force on it. On for every keep-out with a `connector`; false: off"},
 }
 
 SPLIT_SCHEMA = {
@@ -3153,7 +3189,11 @@ _CONNECTOR = {"type": "object", "properties": {
     "wrench": {"type": "object", "properties": {"thin": _POS, "wide": _POS}, "additionalProperties": False,
                "description": "N·mm wrenching moments, with abuse"},
     "maxShift": {"type": "number", "minimum": 0, "description": "mm the board's mount may move in these cases "
-                                                                "(default 0.1; 0 for no cap)"}},
+                                                                "(default 0.1; 0 for no cap)"},
+    "retention": {"type": "object", "additionalProperties": _POS,
+                  "description": "N the socket's legs (solder joints, shell tabs) are rated for, per force "
+                                 "(insert, withdraw, side-thin+, ...) or 'all', from its datasheet: with a split, "
+                                 "capture.py lets those forces stay on the legs"}},
     "required": ["component"], "additionalProperties": False}
 _MOUNT_HOLE = {"type": "object", "properties": {
     "at": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 3,

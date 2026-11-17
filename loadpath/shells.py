@@ -688,7 +688,94 @@ def _assign(comps, cut, given):
     return out
 
 
-def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order, base_dir=None, max_slide=12.0):
+def _capture_prep(comps, ext, split, base_dir):
+    """What does not change from cut to cut for each connector's socket
+    (a keep-out with `connector`): its plug forces, its carrier board, and
+    the room round it for a bearing face (capture.SocketRoom: inside the
+    exterior, out of the plug's way and every other component)."""
+    if split.get("capture") is False:
+        return {}
+    from .capture import SocketRoom, connector_frame, service_loads
+    from .shapes import shape_from_spec, sweep
+    byid = {c["id"]: c for c in comps}
+    lo, hi = ext.bounds()
+    reach = float(np.linalg.norm(np.asarray(hi) - np.asarray(lo)))
+    out = {}
+    for c in comps:
+        cn = c.get("connector")
+        if not cn:
+            continue
+        out_d, wide, thin = connector_frame(cn["out"], cn.get("wide"))
+        loads = service_loads(cn.get("type", "usb-c"), out_d, wide, insert=cn.get("insert"),
+                              withdraw=cn.get("withdraw"), side=cn.get("side"), abuse=bool(cn.get("abuse")))
+        root = c
+        while root.get("installedOn") in byid:
+            root = byid[root["installedOn"]]
+        carrier = byid.get(c.get("installedOn")) if c.get("installedOn") else None
+        # the plug's way: given, or the socket's own outline swept out of
+        # its mouth (no plug overmold is smaller than the socket it fits)
+        plug = shape_from_spec(cn["plug"], base_dir) if cn.get("plug") else sweep(c["shape"], out_d, reach)
+        others = [o["shape"] for o in comps if o["id"] != c["id"]]
+        room = SocketRoom(c["shape"], loads, within=ext, avoid=[plug] + others,
+                          carrier=carrier["shape"] if carrier is not None else None)
+        slo, shi = c["shape"].bounds()
+        out[c["id"]] = {"loads": loads, "room": room, "root": root["id"],
+                        "carrier": carrier["id"] if carrier is not None else None, "connector": cn,
+                        "plug": plug, "centre": 0.5 * (np.asarray(slo) + np.asarray(shi)),
+                        "out": out_d, "wide": wide, "thin": thin}
+    return out
+
+
+def _split_joints(split) -> tuple[str, float]:
+    """How the cover is held on the base against lifting off, and the play
+    that leaves: screws pull it down with none; snaps hold with their
+    clearance; nothing at all is 'none'."""
+    c = float(split["clearance"]) if split.get("clearance") is not None else 0.2
+    if split.get("screws"):
+        return "screws", 0.0
+    if split.get("snaps", {}) is not False:
+        return "snaps", c
+    return "none", c
+
+
+def _capture_for_cut(prep, cut, where, paths, split, joints=None) -> dict:
+    """capture.plan for each connector's socket with this cut: the half it
+    goes into holds it as its way in allows, the other half closes over it
+    (held on by the joints, sideways by the lip with its play), and the
+    board it stands on bears where it touches."""
+    from .capture import leave_direction, plan
+    if not prep:
+        return {}
+    joints, play = joints if joints is not None else _split_joints(split)
+    cap = split.get("capture") if isinstance(split.get("capture"), dict) else {}
+    out = {}
+    for cid, P in prep.items():
+        side = where.get(cid)
+        path = (paths or {}).get(P["root"], {}).get("insertFrom")
+        if side is None or path is None:
+            continue
+        v = leave_direction(path, at=P["centre"])
+        other = "cover" if side == "base" else "base"
+        n = cut.n
+
+        def member(s_):
+            return (lambda X: cut.phi(X) > 0) if s_ == "cover" else (lambda X: cut.phi(X) <= 0)
+
+        parts = [{"id": side, "room": P["room"].areas(member(side))},
+                 {"id": other, "after": True, "leave": n if side == "base" else -n, "joints": joints,
+                  "clearance": play, "pressGap": play, "room": P["room"].areas(member(other))}]
+        if P["carrier"] is not None and P["room"].touch is not None:
+            parts.append({"id": P["carrier"], "carrier": True, "leave": v, "joints": "none",
+                          "room": P["room"].touch})
+        cn = P["connector"]
+        pl = plan(P["loads"], v, parts, side, float(cn.get("maxShift", 0.1)), cn.get("retention"),
+                  float(cap.get("pressPlay", 0.0)))
+        out[cid] = pl
+    return out
+
+
+def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order, base_dir=None, max_slide=12.0,
+               capture=None, split=None):
     """Everything about one cut: seam, separation, assembly in each half."""
     from .handoff import _Obstacles, _path_check, assembly_paths
 
@@ -764,12 +851,17 @@ def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order, base_dir=None
         return rec
     db, dc = _depths(ext, cut)
     rec["depth"] = {"base": round(db, 2), "cover": round(dc, 2)}
+    if capture:
+        cap = _capture_for_cut(capture, cut, where, rec["paths"], split or {})
+        rec["capture"] = cap
+        rec["captureOk"] = False if any(v["ok"] is False for v in cap.values()) else True
     rec["ok"] = True
     return rec
 
 
 def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=None, min_depth=6.0,
-            curved=True, pkind=None, hidden=None, avoid_specs=(), base_dir=None, max_checks=12):
+            curved=True, pkind=None, hidden=None, avoid_specs=(), base_dir=None, max_checks=12, capture=None,
+            split=None):
     """Cuts across x, y and z at a spread of levels, and (curved) the
     non-flat ones parting.py proposes from the best of them: tilted planes,
     stepped lines, the silhouette and creases. Each is scored (`score`),
@@ -797,7 +889,28 @@ def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=N
         for at in lv:
             c = _cut_plane(base.name() if base.axis is not None else d, round(float(at), 3))
             cands.append(c)
+    # a cut through each connector's socket along its plug axis (a
+    # clamshell): the socket drops into one half, which can then stand
+    # right behind and in front of it, and the other half closes on top
+    # (capture.py). Always checked, whatever its score.
+    clam = []
+    if capture and (split or {}).get("capture", {}) is not False and \
+            ((split or {}).get("capture") or {}).get("clamshell", True) is not False:
+        for cid, P in capture.items():
+            for sg in (1.0, -1.0):
+                nv = sg * P["thin"]
+                if normal not in (None, "auto") and abs(float(_vec_of(normal) @ nv)) < 0.95:
+                    continue
+                if normal not in (None, "auto"):
+                    nv = _vec_of(normal)
+                c = _Cut.plane(nv, float(nv @ P["centre"]))
+                if any(np.allclose(c.n, x.n) and abs(c.h0 - x.h0) < 0.05 for x in clam):
+                    continue
+                c.clamshell = cid
+                clam.append(c)
+        cands += clam
     samples = {c["id"]: _samples(c["shape"], 0.8, 600) for c in comps}
+    socket_axes = {cid: P["thin"] for cid, P in (capture or {}).items()}
 
     def score(cut):
         """mm, lower is better: the seam's length where it shows (a quarter
@@ -817,6 +930,10 @@ def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=N
         travel, cross = 0.0, 0
         for c in comps:
             sd = cut.phi(samples[c["id"]])
+            if c["id"] in socket_axes and cut.planar and abs(float(cut.n @ socket_axes[c["id"]])) > 0.95:
+                # a socket cut along its plug axis is clamshelled, not
+                # threaded in: capture decides whether that is good
+                continue
             cross += int((sd > 0).any() and (sd < 0).any())
             travel += max(0.0, float(-sd.min())) if where[c["id"]] == "base" else max(0.0, float(sd.max()))
         depth = _depths(ext, cut)
@@ -869,20 +986,24 @@ def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=N
         # on each and takes the one that holds best. A cut that fails costs
         # a full path search for the part with no way in, so at most
         # max_checks are checked once one works.
-        if (sc_ >= best and n_ok >= 4) or (n_ok >= 1 and n_checked >= max_checks):
+        if not getattr(c, "clamshell", None) and \
+                ((sc_ >= best and n_ok >= 4) or (n_ok >= 1 and n_checked >= max_checks)):
             rows.append({**c.report(), **s_, "ok": None,
                          "why": "not checked: scores worse than a cut that works" if sc_ >= best and n_ok >= 4
                          else f"not checked: {max_checks} cuts checked already", "_cut": c})
             continue
         t_c = time.time()
         n_checked += 1
-        r = _check_cut(ext, skin, t, comps, c, given, tol, avoid, order, base_dir, SEARCH_SLIDE)
+        r = _check_cut(ext, skin, t, comps, c, given, tol, avoid, order, base_dir, SEARCH_SLIDE, capture, split)
+        if getattr(c, "clamshell", None):
+            r["clamshell"] = c.clamshell
         if normal in (None, "auto") and r.get("ok"):
             # the half with the components is the base (the cover is the
             # lid that comes off): flip the normal if they sit in the other
             w = r.get("componentsIn") or {}
             if sum(v == "cover" for v in w.values()) > sum(v == "base" for v in w.values()):
-                r2 = _check_cut(ext, skin, t, comps, c.flipped(), given, tol, avoid, order, base_dir, SEARCH_SLIDE)
+                r2 = _check_cut(ext, skin, t, comps, c.flipped(), given, tol, avoid, order, base_dir, SEARCH_SLIDE,
+                                capture, split)
                 if r2.get("ok"):
                     r = r2
         r.update({k: v for k, v in s_.items() if k != "seam"})
@@ -894,7 +1015,9 @@ def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=N
     ok = [r for r in rows if r.get("ok")]
     if not ok:
         return None, rows
-    ok.sort(key=lambda r: r["score"])
+    # a cut that leaves a plug force on a socket's solder joints ranks
+    # behind every cut that does not, whatever its seam
+    ok.sort(key=lambda r: (r.get("captureOk") is False, r["score"]))
     return ok[0], rows
 
 
@@ -1122,7 +1245,7 @@ def _components_from(study, components, base_dir):
 
     if components is None:
         components = [k for k in study.get("keepOut") or [] if k.get("insertFrom") is not None
-                      or k.get("component")]
+                      or k.get("component") or k.get("connector") or k.get("installedOn")]
     out = []
     for i, c in enumerate(components):
         cid = c.get("id") or f"component-{i}"
@@ -1133,7 +1256,8 @@ def _components_from(study, components, base_dir):
         if spec.get("type") == "mesh" and base_dir and not os.path.isabs(spec["path"]):
             spec["path"] = os.path.join(base_dir, spec["path"])
         out.append({"id": cid, "spec": spec, "shape": _fine_mesh_shape(spec, None),
-                    "installedOn": c.get("installedOn"), "insertFrom": None})
+                    "installedOn": c.get("installedOn"), "insertFrom": None,
+                    **({"connector": copy.deepcopy(c["connector"])} if c.get("connector") else {})})
     return out
 
 
@@ -1284,6 +1408,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
     from .shapes import shape_from_spec
     avoid = [shape_from_spec(s, base_dir) for s in split.get("avoid") or []]
     order = list(split.get("assembly") or [c["id"] for c in comps])
+    capture = _capture_prep(comps, ext, split, base_dir)
     from .fits import _process_of
     pkind, build, _holes = _process_of(study)
     from .spec import PROCESSES
@@ -1309,12 +1434,14 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
     elif split.get("at") is not None and normal not in (None, "auto"):
         given_cut = _cut_plane(normal, float(split["at"]))
     if given_cut is not None:
-        cut = _check_cut(ext, skin, t, comps, given_cut, given, tol, avoid, order, base_dir)
+        cut = _check_cut(ext, skin, t, comps, given_cut, given, tol, avoid, order, base_dir, capture=capture,
+                         split=split)
         if normal in (None, "auto") and cut.get("ok"):
             # a seam's own plane: the half holding the components is the base
             w_ = cut.get("componentsIn") or {}
             if sum(v == "cover" for v in w_.values()) > sum(v == "base" for v in w_.values()):
-                c2 = _check_cut(ext, skin, t, comps, given_cut.flipped(), given, tol, avoid, order, base_dir)
+                c2 = _check_cut(ext, skin, t, comps, given_cut.flipped(), given, tol, avoid, order, base_dir,
+                                capture=capture, split=split)
                 if c2.get("ok"):
                     cut = c2
         rows = [cut]
@@ -1330,7 +1457,8 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         hidden = [shape_from_spec(s_, base_dir) for s_ in split.get("hidden") or []]
         cut, rows = _search(ext, skin, t, comps, given, tol, avoid, order, normal, levels,
                             curved=mode == "all", pkind=pkind, hidden=hidden,
-                            avoid_specs=list(zip(split.get("avoid") or [], avoid)), base_dir=base_dir)
+                            avoid_specs=list(zip(split.get("avoid") or [], avoid)), base_dir=base_dir,
+                            capture=capture, split=split)
         how = "searched"
         if cut is None:
             raise ValueError("no cut (flat, tilted, stepped or curved) separates the halves with every component able to go in: "
@@ -1634,7 +1762,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         # whose snaps bend past the allowance does not hold. Each joint
         # short of the count asked for adds 15, a snap over its strain
         # allowance 50, each warning 10.
-        ranked = sorted([r for r in rows if r.get("ok")], key=lambda r: r["score"])[:4]
+        ranked = sorted([r for r in rows if r.get("ok")], key=lambda r: (r.get("captureOk") is False, r["score"]))[:4]
 
         def held(r, J_):
             want = J_.get("wanted") or 0
@@ -1651,6 +1779,8 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
 
         best_f = held(cut, J)
         for r in ranked[1:]:
+            if r.get("captureOk") is False and cut.get("captureOk") is not False:
+                continue
             J2 = _joints(r)
             f2 = held(r, J2)
             if f2 < best_f:
@@ -1658,6 +1788,12 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         cut["chosenFor"] = "joints placed" if cut is not ranked[0] else "score"
     C, where, frames = J["cut"], J["where"], J["frames"]
     c_fit, screws, snaps, snap_summary = J["c_fit"], J["screws"], J["snaps"], J["snap_summary"]
+    if capture and cut.get("ok"):
+        # the joints as placed hold the cover on: screws with no play,
+        # snaps with their clearance, nothing at all if none fitted
+        held_by = ("screws", 0.0) if screws else (("snaps", float(c_fit)) if snaps else ("none", float(c_fit)))
+        cut["capture"] = _capture_for_cut(capture, C, where, cut.get("paths"), split, held_by)
+        cut["captureOk"] = False if any(v["ok"] is False for v in cut["capture"].values()) else True
     exterior_changes, r_ring = J["exterior_changes"], J["r_ring"]
     warnings += J["warnings"]
 
@@ -1695,6 +1831,59 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
     studies = {}
     transferred = []
     halves = {sd: shape_from_spec(C.half_spec(ext, sd)) for sd in ("base", "cover")}
+
+    # the faces that hold each connector's socket (capture.py): a slab on
+    # the socket's side the force pushes, in the half the plan gives it to,
+    # preserved there with the plug's force on it and its travel held to
+    # the socket's maxShift, so the optimizer ties it into the shell
+    pads = {"base": [], "cover": []}
+    pad_cases = {"base": [], "cover": []}
+    pad_limits = {"base": [], "cover": []}
+    cap_report = {}
+    cap_v = split.get("capture") if isinstance(split.get("capture"), dict) else {}
+    for cid, pl in (cut.get("capture") or {}).items():
+        from .capture import bearing_pad
+        P = capture[cid]
+        sock = next(c_["shape"] for c_ in comps if c_["id"] == cid)
+        others = [c_["shape"] for c_ in comps if c_["id"] != cid]
+        pad_t = float(cap_v.get("padThickness", max(min_member, 1.0)))
+        made = []
+        for r in pl["loads"]:
+            if not r["ok"] or r.get("abuse") or r.get("by") not in ("base", "cover"):
+                continue
+            sd = r["by"]
+
+            class _Within:
+                def __init__(self, a, b):
+                    self.a, self.b = a, b
+
+                def sdf(self, X):
+                    return np.maximum(self.a.sdf(X), self.b.sdf(X))
+
+            d = np.asarray(_vec_of(r["d"]) if isinstance(r["d"], str) else r["d"], float)
+            m = bearing_pad(sock, d, 0.0, pad_t, within=_Within(ext, halves[sd]), avoid=[P["plug"]] + others)
+            if m is None:
+                warnings.append(f"capture {cid}: no room left for the {sd}'s face on the {r['d']} side "
+                                f"({r['name']}); the plan said there was")
+                continue
+            pid = f"capture-{cid}-{r['name']}"
+            m.export(os.path.join(cad, f"{pid}.stl"))
+            pads[sd].append({"id": pid, "shape": {"type": "mesh", "path": f"cad/{pid}.stl"}})
+            case = {"name": f"{cid}-{r['name']}", "loads": [{"region": pid, "force": _r(float(r["force"]) * d, 4)}]}
+            pad_cases[sd].append(case)
+            pad_limits[sd].append({"name": f"{pid}-travel", "region": pid,
+                                   "maxTravel": float(P["connector"].get("maxShift", 0.1)), "cases": [case["name"]]})
+            made.append({"id": pid, "half": sd, "load": r["name"], "face": r["face"],
+                         "volume": round(float(abs(m.volume)), 2)})
+        cap_report[cid] = {**{k: v for k, v in pl.items()}, "faces": made}
+        if pl["ok"] is False:
+            bad = [f"{r['name']} ({r['force']:g} N): {r['why']}" for r in pl["loads"] if r["ok"] is False]
+            warnings.append(f"capture {cid}: plug forces on the socket's solder joints with this cut: "
+                            + "; ".join(bad))
+        elif pl["ok"] is None:
+            und = [r["name"] for r in pl["loads"] if r["ok"] is None]
+            warnings.append(f"capture {cid}: {', '.join(und)} can have no face in any assembly (the plug's way): "
+                            "check the socket's datasheet and give connector.retention")
     res = study.get("resolution") or {}
     reach = 0.5 * float(res.get("pitch") or study.get("minMember") or 1.0)
     for side in ("base", "cover"):
@@ -1737,6 +1926,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                 path = (cut.get("paths") or {}).get(c["id"], {}).get("insertFrom") if mine else None
                 keep.append({"id": c["id"], "shape": c["spec"], "bore": False,
                              "insertFrom": path or C.name(1 if side == "base" else -1)})
+        pres += copy.deepcopy(pads[side])
         if lip is not None:
             if side == "base":
                 pres.append({"id": "lip", "shape": {"type": "mesh", "path": "cad/lip.stl"}})
@@ -1827,6 +2017,10 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                     transferred.append(lc.get("name"))
         if joint_loads:
             lcs.append({"name": "snap-pull", "loads": joint_loads})
+        lcs += copy.deepcopy(pad_cases[side])
+        if pad_limits[side] and isinstance(h.get("goal"), dict) and \
+                (h["goal"].get("safetyFactor") is not None or h["goal"].get("maxDeflection") is not None):
+            h["goal"]["clearances"] = list(h["goal"].get("clearances") or []) + copy.deepcopy(pad_limits[side])
         if not lcs and not fast:
             raise ValueError(f"the {side} has no load case: give the study loads on it, snaps or screws")
         h["supports"] = sup
@@ -1844,7 +2038,8 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
               "candidates": [{k: v for k, v in r.items() if k in ("normal", "at", "kind", "levels", "tilt", "steps",
                                                                   "seam", "seamSeen", "seamHidden", "rimFlat",
                                                                   "crossing", "travel", "score", "joints", "final",
-                                                                  "ok", "why", "depth", "seconds")}
+                                                                  "ok", "why", "depth", "seconds", "captureOk",
+                                                                  "clamshell")}
                              for r in rows],
               "assembly": {"componentsIn": where, "paths": cut.get("paths") or {},
                            "order": "the base's components in order with the cover off; then the cover comes "
@@ -1856,7 +2051,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                                                                      "inward": sn["inward"], "hookOn": sn["hookOn"]}
                                                                     for sn in snaps]},
               "exteriorChanges": exterior_changes, "clearance": round(c_fit, 3), "tolerance": J["tolerance"],
-              "loadsThroughSeam": transferred, "warnings": warnings, "lint": lint_rows,
+              "loadsThroughSeam": transferred, "capture": cap_report, "warnings": warnings, "lint": lint_rows,
               "seconds": round(time.time() - t0, 1)}
     report["snapsGeometry"] = [{"id": sn["id"], **{k: v for k, v in sn["shapes"].items() if k != "geom"}}
                                for sn in snaps]

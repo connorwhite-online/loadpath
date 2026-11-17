@@ -1830,6 +1830,14 @@
                   "type": "number",
                   "minimum": 0,
                   "description": "mm the board's mount may move in these cases (default 0.1; 0 for no cap)"
+                },
+                "retention": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "description": "N the socket's legs (solder joints, shell tabs) are rated for, per force (insert, withdraw, side-thin+, ...) or 'all', from its datasheet: with a split, capture.py lets those forces stay on the legs"
                 }
               },
               "required": [
@@ -1916,6 +1924,14 @@
                     "type": "number",
                     "minimum": 0,
                     "description": "mm the board's mount may move in these cases (default 0.1; 0 for no cap)"
+                  },
+                  "retention": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "description": "N the socket's legs (solder joints, shell tabs) are rated for, per force (insert, withdraw, side-thin+, ...) or 'all', from its datasheet: with a split, capture.py lets those forces stay on the legs"
                   }
                 },
                 "required": [

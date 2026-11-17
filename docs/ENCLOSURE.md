@@ -146,6 +146,9 @@ plug); several times the side load, so off by default. The board's mount may mov
 `maxShift` mm in those cases (default 0.1; a goal clearance), so the
 socket's solder joints are not flexed. The cases are named
 `<component>-insert`, `-withdraw`, `-side-thin`, `-side-wide`.
+
+With a split, the socket's keep-out is marked as a connector, and the cut and the faces that hold the socket are chosen from these forces ([CAPTURE.md](CAPTURE.md)); `retention` gives the socket's legs' datasheet rating.
+
 `connectors.connector_cases` writes the same cases for any study, with a
 load target where the board bears on the part.
 

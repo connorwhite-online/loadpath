@@ -92,6 +92,10 @@ The lip follows the seam up and down.
 *The handheld again, split along a line that sweeps from 8 mm at the front
 up to 15 mm at the back.*
 
+### Sockets: cuts that hold a plug's forces
+
+A keep-out with `connector` (a USB-C socket, say) gets a cut through it along its plug axis, always checked. A cut that leaves a plug force on the socket's solder joints ranks behind one that does not, and the faces that bear on the socket are preserved in their halves with the plug's forces on them. See [CAPTURE.md](CAPTURE.md).
+
 ### The search proposes curved lines
 
 With no `at`, the search does not stop at flat cuts. From the two best

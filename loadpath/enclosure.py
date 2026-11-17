@@ -555,6 +555,14 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         cases += cc
         if clear:
             shift_limits.append(clear)
+        # the socket's keep-out says it is one, so a split can choose the cut
+        # and the faces that hold it against these forces (capture.py)
+        for k_ in keep:
+            if k_.get("id") == cid:
+                k_["connector"] = {"type": cn.get("type", "usb-c"), "out": _r(out), "wide": _r(wide),
+                                   "maxShift": float(cn.get("maxShift", 0.1)),
+                                   **{f: cn[f] for f in ("insert", "withdraw", "side", "abuse", "retention")
+                                      if cn.get(f) is not None}}
     # rattle: every mounted component held still in the hand (feel.py
     # isolate with upTo): its resonance above the handling band, and a knock
     # at `g` moving it under maxTravel on its mount
@@ -1409,7 +1417,8 @@ def run_enclosure(brief_path: str, out_dir: str, base_dir: str | None = None, on
         else:
             cids = {c.get("id"): c for c in r.get("brief", brief).get("components") or []}
             parts = [{"id": k["id"], "shape": k["shape"],
-                      **({"installedOn": cids[k["id"]]["installedOn"]} if cids[k["id"]].get("installedOn") else {})}
+                      **({"installedOn": cids[k["id"]]["installedOn"]} if cids[k["id"]].get("installedOn") else {}),
+                      **({"connector": k["connector"]} if k.get("connector") else {})}
                      for k in study["keepOut"] if k["id"] in cids and not cids[k["id"]].get("external")]
             sr = apply_split(study, brief["split"], parts, out_dir=out_dir, base_dir=out_dir)
             r["split"] = {}

@@ -3151,6 +3151,33 @@
             }
           ],
           "description": "cantilever snaps, sized so the strain as the barb passes the ledge is within the material's allowance. Default: on (auto count) when there are no screws"
+        },
+        "capture": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "pressPlay": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "mm of play each press fit in a capture chain is expected to leave (default 0: crush ribs, or a fit tuned on the printer)"
+                },
+                "padThickness": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "clamshell": {
+                  "type": "boolean",
+                  "description": "propose a cut through each connector's socket along its plug axis (default true)"
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "how connectors' sockets are held against their plug forces (capture.py): which half bears on each socket on each side, a cut that leaves a plug force on the socket's solder joints ranks behind one that does not, and each bearing face is preserved in its half with the plug force on it. On for every keep-out with a `connector`; false: off"
         }
       },
       "additionalProperties": false,
@@ -4948,6 +4975,97 @@
             "none"
           ],
           "description": "A cylindrical bore's fit against the part that goes in it (fits.py): press (a bearing's outer ring, a dowel pin), transition, slip (a locating pin, a removable shaft), clearance (a shaft turning in it), close/normal/loose (bolt holes, ISO 273), nominal (hold the drawn diameter: the default for every bore once the process is known), none (no allowance). The hole is redrawn for the process's hole bias and report fits gives the as-built band and whether the fit holds."
+        },
+        "connector": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "connectors.CONNECTORS key: usb-c, usb-a, usb-micro-b (or give insert and withdraw)"
+            },
+            "out": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[+-]?[xyz]$"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "the way the plug comes out of the socket"
+            },
+            "wide": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[+-]?[xyz]$"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "the socket's wide direction across the plug (default: the axis across `out` nearest +x)"
+            },
+            "insert": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "withdraw": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "side": {
+              "type": "object",
+              "properties": {
+                "thin": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "wide": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "additionalProperties": false
+            },
+            "abuse": {
+              "type": "boolean"
+            },
+            "maxShift": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm the socket may move on its legs before a face takes the force (default 0.1)"
+            },
+            "retention": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "description": "N the socket's legs are rated for, per force (insert, withdraw, side-thin+, ...) or 'all': its datasheet"
+            },
+            "plug": {
+              "description": "a shape: the plug's way in front of the socket (default: the socket's own outline swept out of its mouth)"
+            }
+          },
+          "required": [
+            "out"
+          ],
+          "additionalProperties": false,
+          "description": "This keep-out is a socket a plug goes into: the plug's forces (connectors.py) decide what has to hold it (capture.py). split uses it to choose the cut and the faces that bear on the socket."
         },
         "mate": {
           "type": "number",
