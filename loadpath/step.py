@@ -1580,6 +1580,69 @@ def _smooth_shape(part, plan, patches, notes, degree=None):
     return solid
 
 
+def _subd_shape(plan, notes, tolerance=None):
+    """surface="subd": the plan's body (everything but its exact cutters,
+    the organic leaf meshed through where they cut) as a fitted
+    Catmull-Clark surface in smooth B-spline patches (subd.py), then the
+    exact cylinders, boxes and spheres cut from it by OpenCascade: a smooth
+    body with few faces is the boolean OpenCascade is built for. None
+    (and a note) when the body or the cut does not come out right; the
+    caller then writes facets."""
+    from .subd import export_surface
+
+    got = _normal(plan, {}, 10 ** 9, [])
+    if got is None or got[0].is_empty():
+        notes.append({"warning": "subd: the plan has an exact positive body; written the usual way"})
+        return None
+    body, tools = got
+    clean = body.simplify(1e-4)
+    if not clean.is_empty():
+        body = clean
+    tools = [t for t in tools if (t[1] ^ body).volume() > 1e-9]
+    mesh = _mesh_of(body)
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            rep = export_surface(mesh, os.path.join(td, "body.step"), tolerance=tolerance)
+        except (RuntimeError, ValueError) as e:
+            notes.append({"warning": f"subd: {e}; written the usual way"})
+            return None
+    solid = rep.pop("shape")
+    rep.pop("path", None)
+    note = {"leaf": "subd", "cageFaces": rep["cageFaces"], "stepFaces": rep["stepFaces"],
+            "tolerance": rep["tolerance"], "deviation": rep["deviation"], "edgeAngle": rep["patches"]["edgeAngle"],
+            "valid": rep["valid"]}
+    notes.append(note)
+    if not rep["valid"]:
+        return None
+    if not tools:
+        return solid
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    removed = body.volume() - (body - _union_of([t[1] for t in tools])).volume()
+    want = _volume(solid) - removed
+    occ = [s for t in tools for s in t[0]]
+    for fuzzy in (FUZZY, 1e-6, 0.0, 1e-3):
+        try:
+            r = _bool1(_cls("subtract"), [solid], occ, fuzzy)
+        except RuntimeError:
+            continue
+        err = abs(_volume(r) - want) / max(abs(want), 1e-9)
+        if BRepCheck_Analyzer(r).IsValid() and err < 2e-3:
+            note["cutters"] = len(occ)
+            return r
+    notes.append({"warning": "subd: OpenCascade's cut of the exact shapes from the smooth body failed; "
+                             "written the usual way"})
+    return None
+
+
+def _union_of(mans):
+    import manifold3d as m3d
+    return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add)
+
+
 def _unify(shape):
     """Coplanar facets merged into planes, pieces of one cylinder into one
     face (ShapeUpgrade_UnifySameDomain), kept only if the result is valid.
@@ -1626,7 +1689,7 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     facets move where a TPMS core's tunnels keep an organic region over its
     budget."""
     global TOPOLOGY_TOL
-    if tolerance is not None:
+    if tolerance is not None and surface != "subd":
         saved, TOPOLOGY_TOL = TOPOLOGY_TOL, float(tolerance)
         try:
             return export_step(part, path, faces, name, unify, check, surface, patches, degree)
@@ -1652,6 +1715,8 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     shape = None
     if surface == "smooth":
         shape = _smooth_shape(part, mesh_plan if mesh_volume is not None else None, patches, notes, degree)
+    elif surface == "subd":
+        shape = _subd_shape(plan, notes, tolerance)
     if shape is None:
         shape = _build_normal(plan, budget, faces, notes)
         if shape is None:
