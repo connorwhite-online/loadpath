@@ -229,6 +229,12 @@ def test_a_product_that_only_goes_together_with_a_tilt():
     assert "tilted" in steps[0]["text"] and steps[len(legs)]["text"].endswith("it is home."), steps
     notch = paths_into_skin(st, out)
     assert notch and all(v <= 0.05 for v in notch.values()), notch
+    # the study as written (paths relative to its folder) reads the same,
+    # whatever the working directory
+    from loadpath.enclosure import _localize
+    st2 = json.loads(json.dumps(st))
+    _localize(st2, out)
+    assert paths_into_skin(st2, out) == notch
     json.dumps(rep, default=float)
     flat = enclosure(dict(brief, tilt=0), d, tempfile.mkdtemp())["report"]
     assert "board" not in flat["placement"]["components"] or \

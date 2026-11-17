@@ -1350,7 +1350,8 @@ def _localize(study: dict, out_dir: str) -> None:
     def walk(v):
         if isinstance(v, dict):
             if v.get("type") == "mesh" and isinstance(v.get("path"), str):
-                src = os.path.realpath(v["path"])
+                # a relative path is the study's own (relative to its folder)
+                src = os.path.realpath(os.path.join(root, v["path"]))
                 if os.path.commonpath([root, src]) != root:
                     os.makedirs(cad, exist_ok=True)
                     dst = os.path.join(cad, os.path.basename(src))
@@ -1371,6 +1372,9 @@ def run_enclosure(brief_path: str, out_dir: str, base_dir: str | None = None, on
     placed components (cad/)."""
     brief = json.load(open(brief_path))
     base = base_dir or os.path.dirname(os.path.abspath(brief_path))
+    # absolute: the placed parts' paths come back absolute, and a relative
+    # path in a written study is relative to the study's own folder
+    out_dir = os.path.abspath(out_dir)
     r = enclosure(brief, base, out_dir, on_progress=on_progress)
     study = json.loads(json.dumps(r["study"]))
     _localize(study, out_dir)
