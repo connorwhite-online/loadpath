@@ -110,6 +110,41 @@ not modelled: forced air, the hand as a heat
 sink and sunlight. The plastic's softening with temperature is in the
 `thermal` block, not here.
 
+## Mounted on something warm: contacts
+
+Not every product loses its heat only to the room. A phone accessory
+rests on the phone's back, a sensor module is screwed to a heat-sinked
+frame, a dashboard unit sits on a sun-warmed panel. A `contacts` block
+names the outside faces that rest on something else, its temperature and
+the conductance across the joint:
+
+```json
+"contacts": [{"id": "phone-back", "temperature": 35, "h": 300,
+              "shape": {"type": "box", "min": [-31, -31, -1], "max": [31, 31, -0.1]}}]
+```
+
+Those faces exchange `h (T - temperature)` with what they rest on instead
+of the room's `skin.h`, heat can go either way across them (a phone at
+35 C warms an idle accessory), and they are left out of the touch limit:
+nobody touches the face that sits on the phone. `h` defaults to 500
+W/(m^2 K), a dry printed face on glass or metal at low pressure; a thermal
+pad is 2000-5000, a case or dust between 50-150. The report's
+`heatOut.contacts` says how much leaves through each.
+
+A contact is a fixed temperature behind a conductance, so a body that
+warms up from what it carries (a phone's back under a 2 W accessory) is
+bracketed by two cases rather than modelled.
+
+## Boards: conductivity along each axis
+
+A component's `conductivity` can be `[kx, ky, kz]`: a printed circuit
+board carries heat 50-100 times better along its copper than across its
+glass-epoxy (a 4-layer 0.8 mm board with two planes is about 35 in plane
+and 0.45 across). The scalar 20 W/(m K) default either lets heat straight
+through a board to whatever is under it, or, taken across, stops it
+spreading. Each cell of the component conducts along x, y and z at its own
+value (`thermal.hex8_kt_axes`).
+
 ## Bursts, charging and duty cycles
 
 A handheld product is rarely at a steady load. It idles, then runs a game

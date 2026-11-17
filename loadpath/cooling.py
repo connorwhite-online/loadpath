@@ -90,6 +90,12 @@ __all__ = ["forced_h", "CoolingProblem", "CoolingModel", "cooling_readings", "ru
 K_AIR = 0.03            # W/(m K): air near 40 C is 0.027; a little for what convection there is
 H_OUT = 10.0            # W/(m^2 K): natural convection ~5 + radiation ~5-6 (emissivity 0.9, 30-50 C)
 COMPONENT_K = 20.0
+# W/(m^2 K) across a dry contact between a printed face and glass or metal
+# it rests on (a few um of roughness and an air film of ~10-30 um: k_air /
+# 20 um is ~1500, but printed surfaces touch on a fraction of their area;
+# 300-1000 is the range reported for polymer on smooth metal at low
+# pressure). Give the measured or a conservative value.
+H_CONTACT = 500.0
 # J/(mm^3 K) a component holds per K and volume when it gives no
 # heatCapacity: rho c_p of silicon 1.66, FR-4 1.6, a lithium pouch about 2.0
 # (2300 kg/m^3 x 900 J/(kg K)), copper 3.4 (MJ/(m^3 K))
@@ -131,6 +137,7 @@ class Source:
     k: float
     shape: object
     capacity: float | None = None     # J/K (None: VOL_CAP times its volume)
+    k_axes: tuple | None = None       # (kx, ky, kz) W/(m K) when it conducts differently along each axis
     cells: np.ndarray = None          # thermal cell indices
     nodes: np.ndarray = None          # bool per thermal node
 
@@ -140,6 +147,18 @@ class Vent:
     id: str
     shape: object
     area: float | None                # mm^2; None: from the faces it covers
+    faces: np.ndarray = None
+
+
+@dataclass
+class Contact:
+    """An outside face held against something at its own temperature (a
+    phone's back, a wall, a heat-sinked frame) through a contact
+    conductance h, instead of losing heat to the room's air."""
+    id: str
+    shape: object
+    h: float                          # W/(m^2 K) across the contact
+    temperature: float                # C of what it rests on
     faces: np.ndarray = None
 
 
@@ -156,6 +175,7 @@ class CoolingSpec:
     up: np.ndarray                    # unit vector against gravity
     raw: dict = field(default_factory=dict)
     cycle: "Cycle | None" = None
+    contacts: list = field(default_factory=list)
 
 
 @dataclass
@@ -244,10 +264,18 @@ def cooling_from_study(study) -> CoolingSpec:
             if mt <= ambient:
                 raise ValueError(f"{label}.maxTemp {mt:g} C is not over the ambient {ambient:g} C")
         hc = c.get("heatCapacity")
+        kc = c.get("conductivity", COMPONENT_K)
+        k_axes = None
+        if isinstance(kc, (list, tuple)):
+            # a board conducts 20-40 W/(m K) along its copper and under 1 across it
+            if len(kc) != 3:
+                raise ValueError(f"{label}.conductivity is a number or [kx, ky, kz] in W/(m K)")
+            k_axes = tuple(_num(v, f"{label}.conductivity[{j}]") for j, v in enumerate(kc))
+            kc = min(k_axes)
         sources.append(Source(str(c.get("region") or c.get("id") or f"component-{i}"), w, mt,
-                              _num(c.get("conductivity", COMPONENT_K), f"{label}.conductivity"),
+                              _num(kc, f"{label}.conductivity"),
                               _component_shape(study, c, label),
-                              _num(hc, f"{label}.heatCapacity") if hc is not None else None))
+                              _num(hc, f"{label}.heatCapacity") if hc is not None else None, k_axes))
     if not sources or not any(s.watts > 0 for s in sources):
         raise ValueError("cooling.components: at least one component with watts > 0")
     sk = cb.get("skin") or {}
@@ -278,7 +306,16 @@ def cooling_from_study(study) -> CoolingSpec:
     if not any(s.max_t is not None for s in sources) and smax is None:
         raise ValueError("cooling: nothing to hold: give a component maxTemp or skin.maxTemp")
     cyc = _cycle_from(cb.get("cycle"), sources, ambient, h) if cb.get("cycle") is not None else None
-    return CoolingSpec(ambient, h, k_air, k_mat, sources, smax, skin_shape, vents, up, cb, cyc)
+    contacts = []
+    for i, ct in enumerate(cb.get("contacts") or []):
+        label = f"cooling.contacts[{i}]"
+        if not isinstance(ct, dict) or "shape" not in ct or "temperature" not in ct:
+            raise ValueError(f"{label} is {{shape, temperature, h?}}: an outside face resting on something "
+                             "at its own temperature")
+        contacts.append(Contact(str(ct.get("id") or f"contact-{i}"), shape_from_spec(ct["shape"], study.base_dir),
+                                _num(ct.get("h", H_CONTACT), f"{label}.h"),
+                                _num(ct["temperature"], f"{label}.temperature", positive=False)))
+    return CoolingSpec(ambient, h, k_air, k_mat, sources, smax, skin_shape, vents, up, cb, cyc, contacts)
 
 
 def forced_h(speed: float, length: float, ambient: float = 25.0, rise: float = 20.0, emissivity: float = 0.9) -> dict:
@@ -453,7 +490,11 @@ def _gap_between_sources(sources, c, k, pitch: float, k_air: float) -> None:
             if not near.any():
                 continue
             g = _shape_gap(s.shape, t.shape, pitch)
-            if g <= 0.02:
+            if g <= 0.02 or not np.isfinite(g):
+                # touching, or no surface of s found near t (a shape's sampled
+                # surface missed the box where they meet): keep the contact.
+                # An unmeasured gap read as air turned a 0.8 mm board under
+                # every chip into an insulator.
                 continue
             half = min(0.5 * g, pitch)
             sel = s.cells[near]
@@ -510,6 +551,14 @@ class CoolingModel:
         is_mech[self.mech] = True
         self.is_mech = is_mech
         c = mesh.elem_centers()
+        # a component given as a mesh is read on its exact distance near its
+        # surface: the default distance grid (its longest side / 160) puts a
+        # 0.8 mm board's faces 0.1 mm off on a 54 mm disc, which is a cell's
+        # worth of difference in which cells it fills and where it touches
+        from .shapes import MeshShape
+        for s in spec.sources:
+            if isinstance(s.shape, MeshShape) and s.shape._grid is None and not s.shape._band:
+                s.shape._band = 2.0 * pitch
         k0 = np.full(mesh.n_elem, spec.k_air)
         src = np.zeros(mesh.n_elem, bool)
         heat = []
@@ -572,12 +621,53 @@ class CoolingModel:
         # it follows (1.5x on a sphere, which read its outside a third cool)
         bf = faces.nodes[faces.boundary]
         self.out_w = _true_area_weights(study, faces.center[faces.boundary], pitch)
-        w = (1e-6 * faces.area) * self.out_w[:, None] * _FACE_M.ravel()[None]
+        # contacts: outside faces that rest on something at its own
+        # temperature (a phone's back) through a contact conductance; they
+        # do not lose heat to the room, and nobody touches them
+        bnd_all = np.flatnonzero(faces.boundary)
+        self.contact_w = np.zeros(len(bnd_all))          # W/(m^2 K) per outside face
+        self.contact_dt = np.zeros(len(bnd_all))         # K over ambient of what it rests on
+        for ct in spec.contacts:
+            on = ct.shape.sdf(faces.center[bnd_all]) <= 0.5 * pitch
+            on &= self.contact_w == 0
+            if not on.any():
+                raise ValueError(f"cooling contact {ct.id!r} touches no outside face of the grid")
+            ct.faces = bnd_all[on]
+            self.contact_w[on] = ct.h
+            self.contact_dt[on] = ct.temperature - spec.ambient
+        self.skin_w = np.where(self.contact_w > 0, 0.0, self.out_w)
+        wc = (1e-6 * faces.area) * (self.out_w * self.contact_w)[:, None] * _FACE_M.ravel()[None]
+        self._kcon = sp.csr_matrix((wc.ravel(), (np.repeat(bf, 4, axis=1).ravel(), np.tile(bf, (1, 4)).ravel())),
+                                   shape=(mesh.n_nodes, mesh.n_nodes))
+        qc = 1e-6 * faces.area * self.out_w * self.contact_w * self.contact_dt / 4.0
+        self.q_contact = np.bincount(bf.ravel(), weights=np.repeat(qc, 4), minlength=mesh.n_nodes)
+        w = (1e-6 * faces.area) * self.skin_w[:, None] * _FACE_M.ravel()[None]
         # per unit h (W/(m^2 K)): a cycle's phases each have their own (Cycle)
         self._kc1 = sp.csr_matrix((w.ravel(), (np.repeat(bf, 4, axis=1).ravel(),
                                                np.tile(bf, (1, 4)).ravel())),
                                   shape=(mesh.n_nodes, mesh.n_nodes))
-        self._kc = spec.h_out * self._kc1
+        self._kc = spec.h_out * self._kc1 + self._kcon
+        self.heat = self.heat + self.q_contact
+        # components that conduct differently along each axis (a board):
+        # their cells carry k_min in the scalar field and the rest of each
+        # axis here, a constant matrix since components are not designed
+        from .thermal import hex8_kt_axes
+        kta = hex8_kt_axes() * pitch
+        extra = None
+        for s in spec.sources:
+            if s.k_axes is None:
+                continue
+            cells = s.cells[k0[s.cells] == s.k]          # not the cells _gap_between_sources thinned
+            e = mesh.enode[cells]
+            for a in range(3):
+                dk = (s.k_axes[a] - s.k) * 1e-3
+                if dk <= 0:
+                    continue
+                m = sp.csr_matrix((np.repeat(dk * kta[a].ravel()[None], len(cells), axis=0).ravel(),
+                                   (np.repeat(e, 8, axis=1).ravel(), np.tile(e, (1, 8)).ravel())),
+                                  shape=(mesh.n_nodes, mesh.n_nodes))
+                extra = m if extra is None else extra + m
+        self._kaniso = extra
         self.solver = ScalarSolver(rtol=1e-9)
         self._ones = np.ones(mesh.n_elem)
         # air share of each cell (1 - x on designed cells, set per design)
@@ -591,7 +681,7 @@ class CoolingModel:
         # touched surface: the outside faces of the exterior's own cells (not
         # the air or a component showing through an opening)
         bnd = np.flatnonzero(faces.boundary)
-        sel = bnd[is_mech[faces.a[bnd]]]
+        sel = bnd[is_mech[faces.a[bnd]] & (self.contact_w == 0)]
         if spec.skin_shape is not None:
             sel = sel[spec.skin_shape.sdf(faces.center[sel]) <= 0.5 * pitch]
         # and only what a finger reaches: not the floor of a slot or port
@@ -687,6 +777,8 @@ class CoolingModel:
         en = self.mesh.enode
         kt = self._kt.ravel()
         mat = self._kc.copy()
+        if self._kaniso is not None:
+            mat = mat + self._kaniso
         for s in range(0, len(en), self.CHUNK):
             e = en[s:s + self.CHUNK].astype(np.int32)
             mat = mat + sp.csr_matrix(((k[s:s + self.CHUNK, None] * kt[None]).ravel(),
@@ -763,9 +855,9 @@ class CoolingModel:
         # the steady start (and the vents' flow, frozen from it)
         self.heat_saved = self.heat
         kc_saved, h0 = self._kc, cyc.start_h()
-        self._kc = h0 * self._kc1                 # the start state sits in the first phase's air
+        self._kc = h0 * self._kc1 + self._kcon    # the start state sits in the first phase's air
         if sw is not None:
-            self.heat = self.src_load @ sw
+            self.heat = self.src_load @ sw + self.q_contact
         theta0 = self.solve(xp, vent_rounds=vent_rounds) if sw is not None else np.zeros(self.mesh.n_nodes)
         if sw is None:
             self.solve(xp, vent_rounds=1)         # K (and the vents at no rise: none)
@@ -786,7 +878,7 @@ class CoolingModel:
         th = [theta0]
         for dt, w, h in steps:
             solve = self._step_factor(kmat, cap, dt, h)
-            th.append(solve(cap / dt * th[-1] + self.src_load @ w))
+            th.append(solve(cap / dt * th[-1] + self.src_load @ w + self.q_contact))
         return np.array(th), first + 1
 
     def _step_factor(self, kmat, cap, dt, h):
@@ -1012,10 +1104,12 @@ def cooling_readings(study, domain: Domain, xp, floor=None, vent_rounds: int = 8
     th_face = end[f.nodes[bnd]].mean(axis=1)
     # (a cycle ends in its last phase's air)
     h_end = spec.cycle.phases[-1][3] if spec.cycle is not None else spec.h_out
-    q_skin = float(np.sum(h_end * 1e-6 * f.area * mdl.out_w * th_face))
+    q_skin = float(np.sum(h_end * 1e-6 * f.area * mdl.skin_w * th_face))
+    q_contact = {ct.id: round(float(np.sum(1e-6 * f.area * (mdl.out_w * mdl.contact_w * (th_face - mdl.contact_dt))
+                                           [np.searchsorted(bnd, ct.faces)])), 4) for ct in spec.contacts}
     air = mdl.air(xp)
     rep = {"components": rows, "ambient": spec.ambient, "watts": float(sum(s.watts for s in spec.sources)),
-           "heatOut": {"skin": round(q_skin, 4)}, "airRise": round(mdl.air_rise(theta, air), 2),
+           "heatOut": {"skin": round(q_skin, 4), **({"contacts": q_contact} if q_contact else {})}, "airRise": round(mdl.air_rise(theta, air), 2),
            "cells": int(mdl.mesh.n_elem), "pitch": float(domain.pitch)}
     if mdl.vent_ah:
         rep["heatOut"]["vents"] = round(mdl.g_vent * mdl.air_rise(theta, air), 4)
