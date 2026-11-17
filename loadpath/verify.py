@@ -794,83 +794,9 @@ def _submodel_box(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ban
         inner &= ~edges(sm.node_xyz)
     if not inner.any():
         return None
-    if case is not None and fp.any():
-        i = int(np.argmax(np.where(inner, vm, -1.0)))
-        return float(vm[i]), sm.node_xyz[i].tolist()
-    # The peak as the material answers to it: the stress averaged over its
-    # own length around each node (_material_peak). A node's own reading
-    # beside a sharp inside corner (a drawn ledge meeting the cut interior)
-    # grows without limit as the box is refined, and with it a few fine
-    # cells that come and go with the mesh's last digit: the desk hub's
-    # governing box read 1.19 from the mesh in memory, 1.07 from its STL.
-    from .crosscheck import reading_radius
-
-    radius = reading_radius(mat, pitch, getattr(study, "min_member", None) or None)[0]
-    if cgrid is not None:
-        xs, w, sig = cgrid._samples(np.ones(sm.n_elem, bool), us, mat.E)
-    else:
-        # nodes as the samples, each with its share of the cells about it
-        xs, sig = sm.node_xyz, nodal_stress(st, us, mat.E)
-        w = np.bincount(sm.enode.ravel(), minlength=sm.n_nodes) / 8.0
-    i, val = _material_peak(sm.node_xyz, inner, vm, xs, w, sig, radius, ratio)
-    return val, sm.node_xyz[i].tolist()
-
-
-def _material_peak(nodes, trusted, vm, xs, w, sig, radius, ratio=1.0):
-    """(node, value) of the highest equivalent stress of the stress tensor
-    averaged over the material within `radius` of a node (samples xs with
-    volume weights w and tensors sig; the ball is cut by the surface because
-    only material is sampled), over the `trusted` nodes. As crosscheck's
-    _averaged_stress reads a tetrahedral mesh (failure.MATERIAL_LENGTH).
-
-    Exact without averaging at every node: the equivalent stress is convex
-    in the tensor, so a ball's average reads no more than the highest sample
-    in it. Averaged first at the node of the highest point reading (value
-    a0); only nodes within `radius` of a sample reading a0 or more can beat
-    it."""
-    from scipy.spatial import cKDTree
-
-    from .failure import equivalent_stress
-
-    def avg(idx):
-        pairs = cKDTree(nodes[idx]).sparse_distance_matrix(tree, radius, output_type="coo_matrix")
-        import scipy.sparse as sps
-
-        a = sps.csr_matrix((w[pairs.col], (pairs.row, pairs.col)), shape=(len(idx), len(xs)))
-        tot = np.asarray(a.sum(axis=1)).ravel()
-        out = np.zeros(len(idx))
-        ok = tot > 0
-        out[ok] = equivalent_stress(np.asarray(a[ok] @ sig) / tot[ok, None], ratio)
-        return out
-
-    tree = cKDTree(xs)
-    svm = equivalent_stress(sig, ratio)
-    first = int(np.argmax(np.where(trusted, vm, -1.0)))
-    best_i, best = first, float(avg(np.array([first]))[0])
-    cand = np.nonzero(trusted)[0]
-    # hottest first, a block at a time (a block's balls are a few hundred
-    # samples each), the bar raised after each block: the candidates left
-    # are the nodes near a sample reading at least the best so far
-    cand = cand[np.argsort(-vm[cand], kind="stable")]
-    while len(cand):
-        hot = xs[svm >= best]
-        if not len(hot):
-            break
-        d = cKDTree(hot).query(nodes[cand], k=1, distance_upper_bound=radius * (1 + 1e-9))[0]
-        cand = cand[d < np.inf]
-        block, cand = cand[:_AVG_BLOCK], cand[_AVG_BLOCK:]
-        if not len(block):
-            break
-        vals = avg(block)
-        j = int(np.argmax(vals))
-        if vals[j] > best:
-            best_i, best = int(block[j]), float(vals[j])
-    return best_i, best
-
-
-# nodes averaged at once in _material_peak (memory: nodes x samples per ball)
-_AVG_BLOCK = 2000
-
+    # (vm is already the material-length reading: _MaterialAverage above)
+    i = int(np.argmax(np.where(inner, vm, -1.0)))
+    return float(vm[i]), sm.node_xyz[i].tolist()
 
 
 def _inside(mesh, pts, rng):
