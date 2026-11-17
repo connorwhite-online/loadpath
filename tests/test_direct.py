@@ -98,8 +98,61 @@ def test_one_factor_for_a_matrix():
     assert np.linalg.norm(k @ u - fs[1]) < 1e-8 * np.linalg.norm(fs[1])
     k2 = stiff.assemble(2.0 * e)
     u2 = s.solve(k2, fs[1])
-    assert s._fac is not fac
+    assert s._k is k2
     assert np.abs(2.0 * u2 - u).max() < 1e-8 * np.abs(u).max()
+
+
+def test_same_layout_is_factored_on_the_last_analysis():
+    """The next design on the same cells has the last matrix's sparsity
+    layout: PARDISO factors its numbers on the analysis it already made
+    (nonlinear._Pardiso.refactor), and the answers are the ones a fresh
+    analysis gives, to the bit. Another layout, or a matrix that is not
+    positive definite, gets a factor of its own."""
+    if direct.backend() != "pardiso":
+        return
+    import scipy.sparse as sp
+
+    from loadpath.nonlinear import _Pardiso
+
+    mesh, fixed, fs, e = _bar()
+    stiff = Stiffness(mesh, 0.3, fixed)
+    rng = np.random.default_rng(1)
+    designs = [e * rng.uniform(0.5, 2.0, len(e)) for _ in range(3)]
+    made = []
+    init = _Pardiso.__init__
+
+    def counted(self, *a, **kw):
+        made.append(1)
+        init(self, *a, **kw)
+
+    _Pardiso.__init__ = counted
+    try:
+        s = DirectSolver(mesh.node_ijk)
+        reused = [np.column_stack(s.solve_many(stiff.assemble(d), fs)) for d in designs]
+        assert len(made) == 1, len(made)
+        direct._REUSE_ANALYSIS = False
+        try:
+            s0 = DirectSolver(mesh.node_ijk)
+            fresh = [np.column_stack(s0.solve_many(stiff.assemble(d), fs)) for d in designs]
+        finally:
+            direct._REUSE_ANALYSIS = True
+        assert len(made) == 4, len(made)
+        for a, b in zip(reused, fresh):
+            assert np.array_equal(a, b), np.abs(a - b).max()
+        # another layout: a shorter bar
+        mesh2, fixed2, fs2, e2 = _bar(nx=20)
+        k2 = Stiffness(mesh2, 0.3, fixed2).assemble(e2)
+        u = s.solve(k2, fs2[0])
+        assert len(made) == 5, len(made)
+        assert np.linalg.norm(k2 @ u - fs2[0]) < 1e-8 * np.linalg.norm(fs2[0])
+        # the same layout, not positive definite: refused, and the factor released
+        f = _Pardiso(k2)
+        assert not f.refactor((-1.0 * k2).tocsr()) and f._s is None
+        f = _Pardiso(k2)
+        assert f.refactor(k2.copy())
+        assert np.array_equal(f.solve(fs2[0]), _Pardiso(k2).solve(fs2[0]))
+    finally:
+        _Pardiso.__init__ = init
 
 
 def _threads() -> int:
@@ -580,7 +633,8 @@ def test_a_design_repeats_to_the_bit():
     assert direct.backend() is None or set(seen) == {"direct"}, set(seen)
 
 
-TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix, test_threads_do_not_pile_up,
+TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix,
+         test_same_layout_is_factored_on_the_last_analysis, test_threads_do_not_pile_up,
          test_kernels_after_a_factorization_do_not_pile_up, test_mechanism_raises,
          test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over,
          test_stalled_multigrid_answer_is_not_kept,

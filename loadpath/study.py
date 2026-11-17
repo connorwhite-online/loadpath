@@ -823,7 +823,29 @@ def _meminfo_available() -> float | None:
         return None
 
 
-def _workers(n: int, cells: int | None = None) -> int:
+# what a tet confirm holds beside a search's own grids: fTetWild in its child
+# process and the P2 solve, on parts small enough for pitch starts (the hook:
+# 80k tets, under 0.6 GB each)
+_SEARCH_TET_BYTES = 1.0e9
+
+
+def _search_bytes(st: Study) -> float | None:
+    """Peak memory of one search of `st` that confirms on tets, or None
+    where the plan is _study_cells' (a voxel confirm, the constrained
+    method). _study_cells counts the confirming re-analysis at 150k cells
+    (8.9 GB), which a search confirmed on tets never runs: its largest
+    solves are the optimizer's grid and the check of each part. So three
+    pitch starts never fitted a 15 GB box and ran one after another, each
+    on all the cores: the hook's search 1474 s, and 1008 s side by side
+    with the same parts (three workers peaked at 5.9 GB together, 1.7 GB
+    the largest; 2.0 GB each by this figure before the tets)."""
+    g = st.goal
+    if g.method != "search" or g.safety_factor is None or not _confirm_on_tets(st, []):
+        return None
+    return _run_bytes(cell_cap(st)) + _SEARCH_TET_BYTES
+
+
+def _workers(n: int, cells: int | None = None, need: float | None = None) -> int:
     """Processes for independent outcomes: LOADPATH_WORKERS, else one per
     core, and no more than fit in the memory available when each solves
     `cells` cells (the 4-core, 15 GB cloud box ran out at two robot-arm cases at
@@ -834,10 +856,11 @@ def _workers(n: int, cells: int | None = None) -> int:
     env = os.environ.get("LOADPATH_WORKERS")
     if env:
         return max(1, min(n, int(env)))
-    w = max(1, min(n, os.cpu_count() or 1))
-    avail = _available_bytes() if cells else None
+    # (LOADPATH_THREADS: the cores this run was given, where a caller split the box: evals --jobs)
+    w = max(1, min(n, int(os.environ.get("LOADPATH_THREADS") or 0) or os.cpu_count() or 1))
+    avail = _available_bytes() if cells or need else None
     if avail:
-        w = min(w, max(1, int(0.8 * avail // _run_bytes(cells))))
+        w = min(w, max(1, int(0.8 * avail // (need if need else _run_bytes(cells)))))
     return w
 
 
@@ -947,7 +970,9 @@ def _share_cores(workers: int):
 def _parallel(studies: list, on_progress, should_stop) -> list:
     """Run independent single-goal studies, in processes when it helps.
     Progress inside a worker is not streamed; each finished outcome is."""
-    workers = _workers(len(studies), cells=max(_study_cells(s) for s in studies)) if studies else 1
+    needs = [_search_bytes(s) for s in studies]
+    workers = _workers(len(studies), cells=max(_study_cells(s) for s in studies),
+                       need=max(needs) if needs and all(needs) else None) if studies else 1
     if workers <= 1:
         return [_run_single(s, on_progress, should_stop) for s in studies]
     import multiprocessing as mp

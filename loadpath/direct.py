@@ -123,6 +123,10 @@ def rescue_dofs() -> int:
     return max(_RESCUE[b], large_dofs()) if b is not None else 0
 
 
+# LOADPATH_REUSE_ANALYSIS=0: a fresh symbolic analysis for every matrix, as before
+_REUSE_ANALYSIS = os.environ.get("LOADPATH_REUSE_ANALYSIS", "1") != "0"
+
+
 class DirectSolver:
     """Stands in for fem.Solver: `solve_many(k, fs)` factors k once and
     solves every right-hand side as one block; a second call with the same
@@ -147,12 +151,20 @@ class DirectSolver:
     def _factor(self, k):
         if self._fac is not None and self._k is k:
             return self._fac
+        prev = self._fac
         self.invalidate()
         try:
             if backend() == "pardiso":
                 from .nonlinear import _Pardiso
 
-                fac = _Pardiso(k, budget=factor_budget())
+                budget = factor_budget()
+                # the next design on the same layout: the numbers only, on the
+                # analysis the last factor made (_Pardiso.refactor: the same bits)
+                if _REUSE_ANALYSIS and isinstance(prev, _Pardiso) and prev.refactor(k, budget):
+                    fac = prev
+                else:
+                    prev = None
+                    fac = _Pardiso(k, budget=budget)
             else:
                 from .nonlinear import _splu
 

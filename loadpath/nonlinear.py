@@ -552,7 +552,7 @@ class _Pardiso:
                 s.free_memory(everything=True)
                 continue
             s.set_phase(33)
-            self._s, self._a, self.bytes = s, a, need
+            self._s, self._a, self.bytes, self._mtype = s, a, need, mtype
             break
         if self._s is None:
             if over is not None:
@@ -562,6 +562,49 @@ class _Pardiso:
                 raise MemoryError(f"a factorization of these {k.shape[0]} dofs would hold {over / 1e9:.1f} GB "
                                   f"({budget / 1e9:.1f} GB allowed)")
             raise RuntimeError("PARDISO could not factor the tangent")
+
+    def refactor(self, k, budget=None) -> bool:
+        """Factor `k` on this factor's symbolic analysis, in place of the
+        matrix it held: True when done, False when `k` needs a factor of
+        its own (another sparsity layout, an indefinite matrix, a budget
+        the factor would pass), and this one is then released.
+
+        An optimizer factors one layout many times over: the reduced system
+        of the live cells stands for several iterations (simp._Analysis),
+        the full grid for the whole run. The analysis (the fill-reducing
+        order and the factor's structure) is a quarter to a third of a
+        factorization there (28k dofs 0.19 s against 0.12 s, 81k dofs 0.99
+        against 0.77 s, 4 threads) and for a positive definite matrix reads
+        the layout alone, never the numbers: the order is the one a fresh
+        analysis would find, and the factor and every solve come out the
+        same to the bit."""
+        if getattr(self, "_s", None) is None or getattr(self, "_mtype", None) != 2:
+            self.close()
+            return False
+        done = on_mkl_thread(self._refactor, k, budget)
+        if not done:
+            self.close()
+        return done
+
+    def _refactor(self, k, budget):
+        a = sp.triu(k, format="csr")
+        a.sort_indices()
+        old = self._a
+        if a.shape != old.shape or a.nnz != old.nnz or not np.array_equal(a.indptr, old.indptr) \
+                or not np.array_equal(a.indices, old.indices):
+            return False
+        if budget is not None and self.bytes is not None and self.bytes > budget:
+            return False        # (a factor of its own then says so: MemoryError)
+        s = self._s
+        mkl_threads(s)
+        s.set_phase(22)
+        try:
+            s._call_pardiso(a, np.zeros((a.shape[0], 1)))
+        except Exception:  # noqa: BLE001 - not positive definite: a fresh factor tries the indefinite type
+            return False
+        s.set_phase(33)
+        self._a = a
+        return True
 
     def solve(self, b):
         b = np.asarray(b, float)
