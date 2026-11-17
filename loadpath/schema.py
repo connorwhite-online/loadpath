@@ -1264,7 +1264,10 @@ _COOLING_COMPONENT = {
                                                                  "conducts, a battery or a board)"},
         "maxTemp": {"type": "number", "description": "C its hottest point must stay under (a die's junction "
                                                      "limit less the package's own rise, a battery's 45-60 C)"},
-        "conductivity": {**_POS, "description": "W/(m K) (default 20: a package on a copper-filled board)"},
+        "conductivity": {"oneOf": [_POS, {"type": "array", "items": _POS, "minItems": 3, "maxItems": 3}],
+                         "description": "W/(m K) (default 20: a package on a copper-filled board), or [kx, ky, kz] "
+                                        "for a part that conducts differently along each axis (a board: ~30 in "
+                                        "plane along its copper, under 1 across it)"},
         "heatCapacity": {**_POS, "description": "J/K it holds per K, for a `cycle` (default 1.8 J/(cm^3 K) "
                                                 "times its volume; a battery is its mass times about 1000 "
                                                 "J/(kg K))"}},
@@ -1337,6 +1340,17 @@ _COOLING = {
                   "description": "openings for stack flow: the lowest let air in, the highest out"},
         "gravity": {"type": "string", "pattern": "^[+-]?[xyz]$",
                     "description": "the way down in use, for the vents' stack (default -z)"},
+        "contacts": {"type": "array", "items": {"type": "object", "properties": {
+                         "id": {"type": "string"},
+                         "shape": {"$ref": "#/$defs/shape", "description": "the outside faces that rest on it"},
+                         "temperature": {"type": "number", "description": "C of what the faces rest on (a "
+                                                                          "phone's back in use: 30-38)"},
+                         "h": {**_POS, "description": "W/(m^2 K) across the contact (default 500: a dry printed "
+                                                      "face on glass or metal)"}},
+                     "required": ["shape", "temperature"], "additionalProperties": False},
+                     "description": "outside faces held against something at its own temperature instead of "
+                                    "the room's air: an accessory on a phone's back, a module on a heat-sinked "
+                                    "frame. Heat goes either way across them, and they are not touched"},
         "conductivity": {**_POS, "description": "W/(m K) of the printed material (default the material card's)"},
         "cycle": _COOLING_CYCLE,
         "robust": {"oneOf": [{"type": "boolean"}, {"type": "number", "minimum": 0, "maximum": 0.4}],

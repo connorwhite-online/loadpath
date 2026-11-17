@@ -300,6 +300,11 @@ def _shape_spec(v, base_dir, reports: dict | None = None, key: str | None = None
     opts = {}
     if isinstance(v, dict):
         if "type" in v:
+            if v["type"] in ("mesh", "sdf", "brep") and isinstance(v.get("path"), str) and base_dir is not None \
+                    and not os.path.isabs(v["path"]):
+                # a shape dict's file is the brief's, like a bare path: absolute,
+                # so it still resolves once the study is written into --out
+                return {**v, "path": os.path.abspath(os.path.join(base_dir, v["path"]))}
             return v
         if "path" not in v:
             raise ValueError(f"a shape is a shape dict, a path, or {{path, size?, up?, ...}}: got {v!r}")

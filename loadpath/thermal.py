@@ -87,7 +87,7 @@ from .mma import MMA
 
 __all__ = [
     "CONDUCTIVITY", "MODULUS_RETENTION", "conductivity", "retention", "hex8_kt", "ThermalGrid",
-    "thermal_grid", "grid_from_domain", "Faces", "Conduction", "ScalarSolver", "ThermalBC",
+    "hex8_kt_axes", "thermal_grid", "grid_from_domain", "Faces", "Conduction", "ScalarSolver", "ThermalBC",
     "Convection", "nodes_in", "cells_in", "thermal_bc", "solve_temperature", "ThermalResult",
     "ThermalOptions", "ThermalOptResult", "optimize_thermal", "optimize_thermomechanical",
     "EXPANSION", "expansion", "thermoelastic", "StudyHeat", "study_heat", "study_thermal_bc",
@@ -187,6 +187,25 @@ def hex8_kt() -> np.ndarray:
                 dn[:, 2] = 0.25 * s[:, 2] * (1 + xi * s[:, 0]) * (1 + eta * s[:, 1])
                 kt += dn @ dn.T * 0.125
     return 0.5 * (kt + kt.T)
+
+
+def hex8_kt_axes() -> np.ndarray:
+    """hex8_kt split by direction, (3, 8, 8): the conduction along x, y and
+    z alone, so an orthotropic cell (a board: copper in plane, FR-4 across)
+    is sum_a k_a * h * hex8_kt_axes()[a]. The three sum to hex8_kt()."""
+    s = 2.0 * CORNERS - 1.0
+    g = 1.0 / np.sqrt(3.0)
+    kt = np.zeros((3, 8, 8))
+    for xi in (-g, g):
+        for eta in (-g, g):
+            for zeta in (-g, g):
+                dn = np.empty((8, 3))
+                dn[:, 0] = 0.25 * s[:, 0] * (1 + eta * s[:, 1]) * (1 + zeta * s[:, 2])
+                dn[:, 1] = 0.25 * s[:, 1] * (1 + xi * s[:, 0]) * (1 + zeta * s[:, 2])
+                dn[:, 2] = 0.25 * s[:, 2] * (1 + xi * s[:, 0]) * (1 + eta * s[:, 1])
+                for a in range(3):
+                    kt[a] += np.outer(dn[:, a], dn[:, a]) * 0.125
+    return kt
 
 
 # Consistent face matrix of a bilinear square of area 1, corners in cyclic
