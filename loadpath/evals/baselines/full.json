@@ -913,70 +913,70 @@
   "pass": false,
   "best": {
    "volumeFraction": 0.0675,
-   "mass": 45.79542939800432,
-   "massReduction": 0.940764311269179,
-   "safetyFactor": 11.68233067801046,
+   "mass": 48.62364049226829,
+   "massReduction": 0.9371008587738566,
+   "safetyFactor": 15.057464520199218,
    "p5Member": 1.833360074363167,
    "minMember": 1.833360074363167,
-   "creaseLength": 283.9349065945671,
-   "p5Thickness": 2.9770902045478462,
-   "p1Thickness": 2.129419063323468,
-   "deflection": 0.3762542682511185,
-   "iterations": 54,
-   "optimizerSeconds": 89.16908550262451,
-   "bucklingFactor": 22.775363720079426
+   "creaseLength": 30.679244208112856,
+   "p5Thickness": 2.9611731679081106,
+   "p1Thickness": 2.303216199569223,
+   "deflection": 0.3843541257692551,
+   "iterations": 67,
+   "optimizerSeconds": 49.486327171325684,
+   "bucklingFactor": 17.854471873754477
   },
   "pareto": {
    "points": 5,
    "front": [
     [
-     39.02631617780754,
-     4.651807594369509
+     41.949745722877545,
+     9.91736476376891
     ],
     [
-     45.79542939800432,
-     11.68233067801046
+     48.62364049226829,
+     15.057464520199218
     ],
     [
-     65.18934149231886,
-     14.695038721363073
+     67.11613713405053,
+     20.905186414915583
     ],
     [
-     92.12670218601534,
-     18.224655210071536
+     94.84787873166006,
+     29.576574978890154
     ]
    ],
-   "solidMass": 773.1053758167322,
+   "solidMass": 773.0414047697426,
    "target": 2.0,
-   "massAtTarget": 39.02631617780754,
+   "massAtTarget": 41.949745722877545,
    "bracketed": false,
-   "hypervolume": 1.8990401117400615
+   "hypervolume": 1.8914683082586692
   },
   "checks": [
    {
     "check": "mass",
-    "value": 45.79542939800432,
+    "value": 48.62364049226829,
     "op": "<=",
     "limit": 46.0,
-    "pass": true
+    "pass": false
    },
    {
     "check": "safetyFactor",
-    "value": 11.68233067801046,
+    "value": 15.057464520199218,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "clearanceUse",
-    "value": 0.98008208273194,
+    "value": 0.9790111729245643,
     "op": "<=",
     "limit": 1.0,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 0.0036265972597211257,
+    "value": 3.64856324948544e-14,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -997,17 +997,17 @@
    },
    {
     "check": "member",
-    "value": 2.9770902045478462,
+    "value": 2.9611731679081106,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    },
    {
     "check": "processWall",
-    "value": 0.591,
+    "value": 0.8,
     "op": ">=",
     "limit": 0.8,
-    "pass": false
+    "pass": true
    },
    {
     "check": "trappedVolume",
@@ -1025,16 +1025,16 @@
    },
    {
     "check": "buckling",
-    "value": 22.775363720079426,
+    "value": 17.854471873754477,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    }
   ],
-  "seconds": 4205.221641778946,
+  "seconds": 1047.1756465435028,
   "methodChoice": {
    "method": "search",
-   "stressUtilization": 0.27473748058793107,
+   "stressUtilization": 0.32415872538768586,
    "reason": "the constrained method does not apply"
   },
   "process": {
