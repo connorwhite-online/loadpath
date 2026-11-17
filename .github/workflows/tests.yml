@@ -37,6 +37,10 @@ jobs:
               tests/test_stack.py tests/test_kicad.py
           - group: antenna         # ~10 min (rf 1, antenna 8)
             files: tests/test_rf.py tests/test_antenna.py tests/test_frameband.py
+          # the MCP server's tool surface (the mcp extra only here)
+          - group: mcp             # ~1 min
+            extras: ",mcp"
+            files: tests/test_mcp_surface.py
           - group: casting         # ~8 min
             files: tests/test_casting.py tests/test_slipcast.py tests/test_castfeed.py
           - group: enclosure       # ~11 min

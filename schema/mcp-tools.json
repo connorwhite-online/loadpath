@@ -1,0 +1,438 @@
+{
+ "loadpath_antenna": {
+  "effect": "job",
+  "required": [
+   "brief"
+  ],
+  "optional": [
+   "base_dir"
+  ]
+ },
+ "loadpath_buildsim": {
+  "effect": "job",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "build",
+   "compensate",
+   "material",
+   "nominal",
+   "plate",
+   "process"
+  ]
+ },
+ "loadpath_cancel": {
+  "effect": "stop",
+  "required": [
+   "job_id"
+  ],
+  "optional": []
+ },
+ "loadpath_cast": {
+  "effect": "job",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "alloy",
+   "base_dir",
+   "head",
+   "mold_temperature",
+   "molds",
+   "pour_temperature",
+   "process",
+   "risers",
+   "up"
+  ]
+ },
+ "loadpath_check": {
+  "effect": "read",
+  "required": [
+   "study"
+  ],
+  "optional": [
+   "base_dir"
+  ]
+ },
+ "loadpath_check_fit": {
+  "effect": "read",
+  "required": [
+   "components",
+   "path"
+  ],
+  "optional": [
+   "base_dir"
+  ]
+ },
+ "loadpath_check_isolation": {
+  "effect": "read",
+  "required": [
+   "path",
+   "ports"
+  ],
+  "optional": [
+   "base_dir",
+   "min_feature",
+   "pitch",
+   "plugs"
+  ]
+ },
+ "loadpath_check_printability": {
+  "effect": "read",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "build",
+   "material",
+   "min_wall",
+   "overhang_deg",
+   "pitch",
+   "process",
+   "slice",
+   "slicer"
+  ]
+ },
+ "loadpath_cooling": {
+  "effect": "job",
+  "required": [
+   "study"
+  ],
+  "optional": [
+   "base_dir",
+   "pitches"
+  ]
+ },
+ "loadpath_enclosure": {
+  "effect": "job",
+  "required": [
+   "brief"
+  ],
+  "optional": [
+   "base_dir",
+   "run"
+  ]
+ },
+ "loadpath_examples": {
+  "effect": "read",
+  "required": [],
+  "optional": [
+   "name"
+  ]
+ },
+ "loadpath_explore": {
+  "effect": "job",
+  "required": [
+   "study"
+  ],
+  "optional": [
+   "base_dir",
+   "materials",
+   "methods",
+   "quantity",
+   "rank",
+   "screen"
+  ]
+ },
+ "loadpath_export_bundle": {
+  "effect": "job",
+  "required": [
+   "path",
+   "study"
+  ],
+  "optional": [
+   "base_dir",
+   "out"
+  ]
+ },
+ "loadpath_export_step": {
+  "effect": "job",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "faces",
+   "out",
+   "surface",
+   "tolerance"
+  ]
+ },
+ "loadpath_exterior": {
+  "effect": "write",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "keep",
+   "out_dir",
+   "pitch",
+   "place",
+   "scale",
+   "size",
+   "skin",
+   "up"
+  ]
+ },
+ "loadpath_feel": {
+  "effect": "job",
+  "required": [
+   "study"
+  ],
+  "optional": [
+   "base_dir",
+   "pitches"
+  ]
+ },
+ "loadpath_field": {
+  "effect": "job",
+  "required": [
+   "graph"
+  ],
+  "optional": [
+   "base_dir"
+  ]
+ },
+ "loadpath_guide": {
+  "effect": "read",
+  "required": [],
+  "optional": [
+   "topic"
+  ]
+ },
+ "loadpath_handoff": {
+  "effect": "job",
+  "required": [
+   "brief"
+  ],
+  "optional": [
+   "base_dir",
+   "pitches",
+   "run"
+  ]
+ },
+ "loadpath_heat_exchanger": {
+  "effect": "job",
+  "required": [
+   "spec"
+  ],
+  "optional": [
+   "base_dir"
+  ]
+ },
+ "loadpath_import_cad": {
+  "effect": "write",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "force",
+   "grow",
+   "loads",
+   "material",
+   "out_dir",
+   "process",
+   "ring",
+   "space",
+   "support"
+  ]
+ },
+ "loadpath_jobs": {
+  "effect": "read",
+  "required": [],
+  "optional": [
+   "limit"
+  ]
+ },
+ "loadpath_kicad": {
+  "effect": "read",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "heights",
+   "models",
+   "power"
+  ]
+ },
+ "loadpath_lattice": {
+  "effect": "job",
+  "required": [
+   "job_id"
+  ],
+  "optional": [
+   "options",
+   "outcome"
+  ]
+ },
+ "loadpath_materials": {
+  "effect": "read",
+  "required": [],
+  "optional": [
+   "name",
+   "stock"
+  ]
+ },
+ "loadpath_orient": {
+  "effect": "job",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "process",
+   "study",
+   "threemf"
+  ]
+ },
+ "loadpath_resume": {
+  "effect": "job",
+  "required": [
+   "job_id"
+  ],
+  "optional": []
+ },
+ "loadpath_scan": {
+  "effect": "write",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "brief",
+   "clamp",
+   "confidence",
+   "crop",
+   "device",
+   "fit",
+   "grow",
+   "keep",
+   "known",
+   "loads",
+   "material",
+   "mu",
+   "out_dir",
+   "process",
+   "reference",
+   "reference_objects",
+   "scale",
+   "support",
+   "units",
+   "up"
+  ]
+ },
+ "loadpath_schema": {
+  "effect": "read",
+  "required": [],
+  "optional": [
+   "kind"
+  ]
+ },
+ "loadpath_size_heat_exchanger": {
+  "effect": "read",
+  "required": [
+   "spec"
+  ],
+  "optional": [
+   "axes",
+   "base_dir",
+   "max_pressure_drop",
+   "min_effectiveness",
+   "min_wall",
+   "objective",
+   "splits"
+  ]
+ },
+ "loadpath_slipcast": {
+  "effect": "job",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "body",
+   "casts",
+   "molds",
+   "pressure",
+   "solid",
+   "up",
+   "wall"
+  ]
+ },
+ "loadpath_split": {
+  "effect": "job",
+  "required": [
+   "study"
+  ],
+  "optional": [
+   "base_dir",
+   "split_block"
+  ]
+ },
+ "loadpath_stack": {
+  "effect": "job",
+  "required": [
+   "brief"
+  ],
+  "optional": [
+   "base_dir"
+  ]
+ },
+ "loadpath_start": {
+  "effect": "job",
+  "required": [
+   "study"
+  ],
+  "optional": [
+   "base_dir",
+   "lattice",
+   "time_limit"
+  ]
+ },
+ "loadpath_status": {
+  "effect": "read",
+  "required": [
+   "job_id"
+  ],
+  "optional": [
+   "wait"
+  ]
+ },
+ "loadpath_switch": {
+  "effect": "job",
+  "required": [
+   "study"
+  ],
+  "optional": [
+   "base_dir",
+   "pitches",
+   "skin_review_only"
+  ]
+ },
+ "loadpath_verify": {
+  "effect": "read",
+  "required": [
+   "path",
+   "study"
+  ],
+  "optional": [
+   "base_dir",
+   "max_cells"
+  ]
+ },
+ "loadpath_wires": {
+  "effect": "job",
+  "required": [
+   "brief"
+  ],
+  "optional": [
+   "base_dir"
+  ]
+ }
+}

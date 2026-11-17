@@ -5,26 +5,21 @@ hosted service in between:
 
     {"mcpServers": {"loadpath": {"command": "loadpath", "args": ["mcp"]}}}
 
-Tools:
+Every tool is listed, with its parameters, in docs/agents.md (generated from
+this file: `python -m loadpath.mcp_server --reference`), and
+schema/mcp-tools.json holds the surface tests/test_mcp_surface.py keeps
+stable: a tool renamed, a parameter dropped or one made required fails it.
 
-- loadpath_guide: how to write a study (SKILL.md and the field reference)
-- loadpath_schema: the JSON Schema for a study, heat exchanger or lattice
-- loadpath_examples: worked example documents to start from
-- loadpath_check: validate a study (every problem at once) and show the
-  voxel problem, without solving
-- loadpath_start: run a study as a background job (optionally with a
-  lattice infill of the best outcome)
-- loadpath_explore: solve a study once per manufacturing method and
-  material (fdm, sls, mjf, sla, lpbf, cast, milled...) and rank the
-  outcomes by mass, cost and lead time
-- loadpath_lattice: fill a finished outcome with a stress-graded lattice
-- loadpath_heat_exchanger: design a two-fluid TPMS heat exchanger (a job)
-- loadpath_size_heat_exchanger: pick cell and wall for a duty (seconds)
-- loadpath_check_printability / loadpath_check_isolation / loadpath_check_fit:
-  checks on any STL an agent already holds (wall thickness, overhangs,
-  trapped powder; two-fluid isolation; does a component fit its cavity)
-- loadpath_status / loadpath_jobs / loadpath_cancel: follow jobs
-- loadpath_resume: continue a study job that died partway (a restart)
+Conventions every tool follows:
+
+- names are loadpath_<noun> or loadpath_<verb>_<noun>, snake_case;
+- a file to read is `path`, resolved against `base_dir` (default: the
+  server's working directory); a JSON document (study, brief, spec, graph)
+  is an object, its JSON text, or a path to a .json file;
+- a tool that takes more than a few seconds starts a job and returns
+  {ok, jobId, kind, dir, next}; loadpath_status reads any job;
+- a tool never raises: a problem comes back as {"ok": false, "tool",
+  "error", "hint"?}.
 
 Jobs run in a child process, the same `python -m loadpath ...` the CLI
 uses, under LOADPATH_HOME (default ~/.loadpath/jobs). Each job folder holds
@@ -365,16 +360,14 @@ def antenna(brief, base_dir: str | None = None) -> dict:
     return out
 
 
-def cast(mesh: str, process: str = "sand", alloy: str = "a356", up: str = "+z", pour_temperature=None,
+def cast(path: str, process: str = "sand", alloy: str = "a356", up: str = "+z", pour_temperature=None,
          mold_temperature=None, head=None, risers: bool = True, molds: bool = True,
          base_dir: str | None = None) -> dict:
     """Pour a part in metal (casting.py, castmold.py) as a background job."""
     from .casting import PROCESSES
     from .casting import alloy as _alloy
 
-    path = mesh if os.path.isabs(mesh) else os.path.join(base_dir or os.getcwd(), mesh)
-    if not os.path.isfile(path):
-        return {"ok": False, "error": f"no such mesh: {path}"}
+    path = _resolve(path, base_dir)
     if process not in PROCESSES:
         return {"ok": False, "error": f"process '{process}': one of {sorted(PROCESSES)}"}
     try:
@@ -395,14 +388,12 @@ def cast(mesh: str, process: str = "sand", alloy: str = "a356", up: str = "+z", 
     return out
 
 
-def slipcast(mesh: str, body: str = "porcelain", wall: float = 4.0, solid: bool = False, up: str = "+z",
+def slipcast(path: str, body: str = "porcelain", wall: float = 4.0, solid: bool = False, up: str = "+z",
              casts: int = 5, pressure: float = 0.0, molds: bool = True, base_dir: str | None = None) -> dict:
     """Slip cast a ceramic part (slipcast.py, castmold.py) as a background job."""
     from .slipcast import body as _body
 
-    path = mesh if os.path.isabs(mesh) else os.path.join(base_dir or os.getcwd(), mesh)
-    if not os.path.isfile(path):
-        return {"ok": False, "error": f"no such mesh: {path}"}
+    path = _resolve(path, base_dir)
     try:
         _body(body)
     except ValueError as exc:
@@ -417,6 +408,117 @@ def slipcast(mesh: str, body: str = "porcelain", wall: float = 4.0, solid: bool 
                  base_dir=base_dir or os.getcwd())
     out["next"] = _POLL_HINT
     return out
+
+
+def _resolve(path: str, base_dir: str | None) -> str:
+    """A file a tool reads: absolute, or relative to base_dir (default: the
+    server's working directory). Raises FileNotFoundError, which comes back
+    as {"ok": false, "error", "hint"}."""
+    p = os.path.expanduser(str(path))
+    p = p if os.path.isabs(p) else os.path.join(base_dir or os.getcwd(), p)
+    if not os.path.isfile(p):
+        raise FileNotFoundError(f"no such file: {p}")
+    return p
+
+
+def materials(name: str | None = None, stock: bool = False) -> dict:
+    """The material library: every card (name, stiffness, strength across
+    and along layers, density, processes) and the calibrated ones; with a
+    name, that card in full; stock: bought members' cards (laminates,
+    adhesives) for a study's `stock`."""
+    from .calibration import list_cards
+    from .material_library import card_names, describe
+    from .materials import _ALIASES, MATERIALS
+
+    if stock:
+        from .stock import describe_cards
+        return {"ok": True, "stock": describe_cards()}
+    if name:
+        key = name.strip().lower()
+        card = describe(_ALIASES.get(key, key))
+        if card is None:
+            import difflib
+            near = difflib.get_close_matches(key, card_names(), 3)
+            raise ValueError(f"unknown material {name!r}" + (f"; did you mean {', '.join(near)}?" if near else
+                                                             "; loadpath_materials() lists them"))
+        out = {"ok": True, "name": key, "card": card}
+        if key in list_cards():
+            out["calibrated"] = True
+            out["note"] = "a calibrated card of this name overrides the library one"
+        return out
+    rows = [{"name": k, "title": MATERIALS[k].note, "E": MATERIALS[k].E, "strength": MATERIALS[k].strength,
+             "strengthZ": MATERIALS[k].strength_z, "density": MATERIALS[k].density,
+             "processes": list(MATERIALS[k].processes)} for k in card_names()]
+    return {"ok": True, "units": {"E": "MPa", "strength": "MPa", "strengthZ": "MPa (across layers)",
+                                  "density": "g/cm^3"},
+            "library": rows, "calibrated": list_cards()}
+
+
+def _stem(path):
+    return os.path.splitext(os.path.basename(path))[0]
+
+
+def export_step(path: str, out: str | None = None, base_dir: str | None = None, faces: int | None = None,
+                surface: str = "facets", tolerance: float | None = None) -> dict:
+    """A closed mesh as a STEP solid (step.py) as a background job."""
+    p = _resolve(path, base_dir)
+    if surface not in ("facets", "smooth"):
+        raise ValueError("surface is 'facets' or 'smooth'")
+    dest = os.path.abspath(os.path.join(base_dir or os.getcwd(), out)) if out else os.path.splitext(p)[0] + ".step"
+    args = ["step", p, "--out", dest, "--surface", surface]
+    if faces:
+        args += ["--faces", str(int(faces))]
+    if tolerance is not None:
+        args += ["--tolerance", str(float(tolerance))]
+    return _spawn("step", _stem(p), {}, args, base_dir=base_dir or os.getcwd())
+
+
+def export_bundle(study, path: str, out: str | None = None, base_dir: str | None = None) -> dict:
+    """A part verified with its fields and written as a results bundle
+    (bundle.py) as a background job."""
+    if isinstance(study, str):
+        from .tasks import read_doc
+        study, base_dir = read_doc(study, base_dir)
+    p = _resolve(path, base_dir)
+    v = check(study, base_dir)
+    if not v["ok"]:
+        return v
+    dest = os.path.abspath(os.path.join(base_dir or os.getcwd(), out)) if out else os.path.splitext(p)[0] + "-bundle"
+    return _spawn("bundle", _stem(p), {"study.json": study},
+                  ["bundle", "{dir}/study.json", p, "--out", dest, "--base-dir", base_dir or os.getcwd()],
+                  base_dir=base_dir or os.getcwd())
+
+
+def orient(path: str, study=None, process: str = "fdm", threemf: str | None = None,
+           base_dir: str | None = None) -> dict:
+    """Rank a mesh's build orientations (orient.py) as a background job."""
+    p = _resolve(path, base_dir)
+    args, inputs = ["orient", p, "--process", process], {}
+    if study is not None:
+        if isinstance(study, str):
+            from .tasks import read_doc
+            study, base_dir = read_doc(study, base_dir)
+        v = check(study, base_dir)
+        if not v["ok"]:
+            return v
+        inputs["study.json"] = study
+        args += ["--study", "{dir}/study.json"]
+    if threemf:
+        args += ["--3mf", os.path.abspath(os.path.join(base_dir or os.getcwd(), threemf))]
+    return _spawn("orient", _stem(p), inputs, args, base_dir=base_dir or os.getcwd())
+
+
+def buildsim(path: str, process: str = "lpbf", material: str = "ti64", build: str = "+z", plate: float = 10.0,
+             compensate: int = 0, nominal: str | None = None, base_dir: str | None = None) -> dict:
+    """Simulate printing a part (buildsim.py) as a background job."""
+    p = _resolve(path, base_dir)
+    if process not in ("lpbf", "fdm", "sls"):
+        raise ValueError("process is 'lpbf', 'fdm' or 'sls'")
+    args = ["buildsim", p, "--process", process, "--material", material, "--build", build,
+            "--plate", str(float(plate)), "--compensate", str(int(compensate)), "--out", "{dir}/out"]
+    if nominal:
+        args += ["--nominal", _resolve(nominal, base_dir)]
+    return _spawn("buildsim", _stem(p), {}, args, base_dir=base_dir or os.getcwd())
 
 
 def stack(brief, base_dir: str | None = None) -> dict:
@@ -505,8 +607,8 @@ def _explore_status(d, r):
             "crossover": r.get("crossover"), "routes": routes, "skipped": r.get("skipped"),
             "notes": r.get("notes"), "report": os.path.join(d, "out", "report.json"),
             "next": "Show the user the ranking and picks with the renders; every route's folder holds its own "
-                    "report.json, STL and render. Costs are estimates: offer a real quote (Materialize "
-                    "materialize_get_quote) for the route they pick; never order unasked."}
+                    "report.json, STL and render. Costs are estimates: offer a real quote (a print service the "
+                    "user has connected) for the route they pick; never order unasked."}
     pngs = []
     for rid in dict.fromkeys((r.get("picks") or {}).values()):
         row = next((x for x in r.get("routes") or [] if x["id"] == rid), None)
@@ -852,10 +954,79 @@ def _study_status(d, r):
         pngs.append(_png(d, r["lattice"].get("render")))
     if best is not None:
         info["next"] = ("Look at the render and the attention list. To lighten it further, loadpath_lattice "
-                        "fills it with a stress-graded lattice. Once it passes, offer the user a print quote or a "
-                        "hosted page for the STL via Materialize (materialize_import_model, "
-                        "materialize_get_quote); never order unasked.")
+                        "fills it with a stress-graded lattice; loadpath_export_step gives CAD a solid, "
+                        "loadpath_export_bundle the fields for other viewers. Once it passes, offer the user a "
+                        "print quote for the STL (a print service they have connected); never order unasked.")
     return info, pngs
+
+
+# Jobs whose command writes its own report (not out/report.json) and prints a
+# JSON summary on stdout: done is read from that summary. Before 2026-11-17
+# loadpath_status looked for out/report.json only, so every one of these
+# came back "failed" with the result in its error text.
+_SUMMARY_KINDS = {
+    "cast": ("castability.json", "Tell the user whether the part pours sound (ok), where the hot spots and "
+             "shrinkage are, the risers it needs and the yield; files are the pattern and mold halves to print."),
+    "slipcast": ("slipcast.json", "Give the user the time in the mold, the wall the real shape gets, the shrinkage "
+                 "and kiln sag, and the mold files to print and pour."),
+    "wires": ("wires.json", "Show each cable's tightest bend against its allowed radius, twist, pull on each "
+              "connector and voltage drop; channels/ holds each cable's swept solid to keep clear."),
+    "antenna": ("antenna.json", "Show S11 and the resonance bare and as installed, how far the surroundings moved "
+                "it, bandwidth and efficiency; sensitivity.npz is where plastic or metal detunes it most."),
+    "stack": ("stack.json", "Give the user the board order and gaps chosen (best), each board's temperature "
+              "against its limit, and what was rejected and why."),
+    "handoff": ("handoff.json", "The study is ready: loadpath_switch it (or it ran, with run=true). Relay any "
+                "blocked part and its assembly path to the designer; never change the exterior."),
+    "split": ("split.json", "Run each half's study (loadpath_start). Relay exteriorChanges to the designer."),
+    "enclosure": ("enclosure.json", "The study is ready (loadpath_start it), or it ran (run=true: checks). "
+                  "assembly.steps is the assembly a person can follow."),
+    "step": (None, "Hand the user the STEP path. valid with one solid is a part CAD opens; volumeError is how far "
+             "the solid's volume is from the mesh's."),
+    "bundle": (None, "Hand the user the folder: manifest.json lists every file (glTF with stress and safety "
+               "factor colours, VTU fields, tradeoff.csv); docs/BUNDLE.md says how to open each."),
+    "orient": (None, "Tell the user the best build direction and why (support, overhang, the layer bond under "
+               "the loads when a study was given); 3mf is the slicer-ready file when asked for."),
+    "buildsim": ("report.json", "Show the distortion and deviation from the design, residual stress and recoater "
+                 "risk; printed is the shape as it comes off the plate, compensation the pre-distorted mesh."),
+}
+
+
+def _json_docs(text: str) -> list:
+    """Every JSON object a command printed on stdout, in order."""
+    dec, i, out = json.JSONDecoder(), 0, []
+    while True:
+        j = text.find("{", i)
+        if j < 0:
+            return out
+        try:
+            doc, i = dec.raw_decode(text, j)
+        except json.JSONDecodeError:
+            i = j + 1
+            continue
+        if isinstance(doc, dict):
+            out.append(doc)
+
+
+def _summary_status(d, kind, meta) -> dict:
+    fname, nxt = _SUMMARY_KINDS[kind]
+    docs = _json_docs(_read(os.path.join(d, "stdout.json")))
+    if not docs or (docs[-1].get("ok") is False and "error" in docs[-1]):
+        tail = [ln for ln in _read(os.path.join(d, "progress.jsonl")).splitlines() if ln.strip()][-15:]
+        state = "cancelled" if meta.get("cancelled") else "failed"
+        out = {"status": state, "kind": kind,
+               "error": docs[-1]["error"] if docs else ([ln for ln in tail if not ln.startswith(" ")] or
+                                                         ["exited early"])[-1]}
+        if tail:
+            out["log"] = "\n".join(tail)[-3000:]
+        return out
+    info = {"status": "done", "kind": kind, "name": meta.get("name"), **docs[0]}
+    if len(docs) > 1:
+        info["run"] = docs[1:] if len(docs) > 2 else docs[1]
+    rp = os.path.join(d, "out", fname) if fname else None
+    if rp and os.path.exists(rp):
+        info["report"] = rp
+    info["next"] = nxt
+    return _round(info)
 
 
 def status(job_id: str) -> tuple[dict, list]:
@@ -889,6 +1060,11 @@ def status(job_id: str) -> tuple[dict, list]:
                                 if best.get("confirmed") else
                                 " bestSoFar has passed its analysis grid only, not the re-check yet.")
         return out, []
+    if kind in _SUMMARY_KINDS:
+        info = _summary_status(d, kind, meta)
+        if meta.get("quick"):
+            info["quick"] = _QUICK_NOTE
+        return jsonable(info), []
     if not os.path.exists(report):
         err = _read(os.path.join(d, "stdout.json")).strip()
         tail = [ln for ln in _read(os.path.join(d, "progress.jsonl")).splitlines() if ln.strip()][-15:]
@@ -998,7 +1174,12 @@ def jobs(limit: int = 20) -> list[dict]:
         meta = _meta(d)
         if not meta:
             continue
-        done = os.path.exists(os.path.join(d, "out", "report.json"))
+        kind = meta.get("kind")
+        if kind in _SUMMARY_KINDS:
+            docs = _json_docs(_read(os.path.join(d, "stdout.json")))
+            done = bool(docs) and not (docs[-1].get("ok") is False and "error" in docs[-1])
+        else:
+            done = os.path.exists(os.path.join(d, "out", "report.json"))
         st = "running" if _alive(job_id, meta) else "done" if done else \
             "cancelled" if meta.get("cancelled") else "failed"
         rows.append({"jobId": job_id, "kind": meta.get("kind"), "name": meta.get("name"), "status": st,
@@ -1025,7 +1206,8 @@ def cancel(job_id: str) -> dict:
         meta["cancelled"] = True
         with open(os.path.join(d, "job.json"), "w") as fh:
             json.dump(meta, fh)
-    return {"status": "cancelled"}
+        return {"ok": True, "jobId": job_id, "status": "cancelled"}
+    return {"ok": False, "error": f"job {job_id} is not running: nothing to cancel (loadpath_status reads it)"}
 
 
 def resume(job_id: str) -> dict:
@@ -1054,38 +1236,102 @@ def resume(job_id: str) -> dict:
     return {"ok": True, "jobId": job_id, "status": "running", "next": _POLL_HINT}
 
 
-def serve():
+# Each tool's title and what it does to the machine, for the MCP tool
+# annotations clients show and gate on: "read" reads files and returns
+# (read-only, repeatable), "write" writes files next to its input and
+# returns, "job" starts a background job (writes under LOADPATH_HOME and the
+# output folder it names), "stop" ends a running job. No tool reaches the
+# network. tests/test_mcp_surface.py holds every registered tool to an entry.
+TOOLS = {
+    "loadpath_guide": ("Agent guide", "read"),
+    "loadpath_schema": ("JSON Schema for a document", "read"),
+    "loadpath_examples": ("Example documents", "read"),
+    "loadpath_materials": ("Material library", "read"),
+    "loadpath_check": ("Validate a study", "read"),
+    "loadpath_start": ("Run a study", "job"),
+    "loadpath_status": ("Job status and results", "read"),
+    "loadpath_jobs": ("List jobs", "read"),
+    "loadpath_cancel": ("Cancel a job", "stop"),
+    "loadpath_resume": ("Resume a died study job", "job"),
+    "loadpath_explore": ("Outcomes per manufacturing route", "job"),
+    "loadpath_verify": ("Verify a mesh against a study", "read"),
+    "loadpath_lattice": ("Fill an outcome with a lattice", "job"),
+    "loadpath_field": ("Mesh a field graph", "job"),
+    "loadpath_heat_exchanger": ("Design a heat exchanger", "job"),
+    "loadpath_size_heat_exchanger": ("Size a heat exchanger core", "read"),
+    "loadpath_import_cad": ("Import a CAD part as a study", "write"),
+    "loadpath_scan": ("Design round a scanned object", "write"),
+    "loadpath_exterior": ("Clean an exterior into a skin", "write"),
+    "loadpath_kicad": ("Read a KiCad board", "read"),
+    "loadpath_enclosure": ("Design a product inside its exterior", "job"),
+    "loadpath_handoff": ("Designer handoff to a push-pad study", "job"),
+    "loadpath_split": ("Split an exterior into base and cover", "job"),
+    "loadpath_switch": ("Design a push pad to a click force", "job"),
+    "loadpath_feel": ("Design an interior for feel", "job"),
+    "loadpath_cooling": ("Design an interior for cooling", "job"),
+    "loadpath_wires": ("Lay and check cables", "job"),
+    "loadpath_antenna": ("Solve a board antenna in place", "job"),
+    "loadpath_stack": ("Order and space a board stack", "job"),
+    "loadpath_cast": ("Metal casting simulation", "job"),
+    "loadpath_slipcast": ("Ceramic slip casting simulation", "job"),
+    "loadpath_buildsim": ("Simulate printing a part", "job"),
+    "loadpath_orient": ("Rank build orientations", "job"),
+    "loadpath_check_printability": ("Check a mesh is printable", "read"),
+    "loadpath_check_isolation": ("Check two fluids stay apart", "read"),
+    "loadpath_check_fit": ("Check components fit an enclosure", "read"),
+    "loadpath_export_step": ("Export a mesh as STEP", "job"),
+    "loadpath_export_bundle": ("Export a results bundle", "job"),
+}
+
+INSTRUCTIONS = (
+    "Generative design (topology optimization) for printed parts, plus lattice infills and two-fluid "
+    "TPMS heat exchangers. The user says what they want built; you work out the problem, not the geometry: "
+    "design space, preserved interfaces, keep-outs, fasteners, supports, load cases, material, process, "
+    "goal. Read interfaces from their CAD (loadpath_import_cad) and loads from what the part does; fill "
+    "gaps with stated assumptions instead of asking for numbers they don't have. For a printed part, set "
+    "minMember / process.minFeature / skin to at least the process's minimum wall and detail: the "
+    "printer's or print service's published limits when you have them, else the run report's defaults. "
+    "Give each hole something goes into a fit (press for a bearing, slip for a pin, clearance for a "
+    "turning shaft): the hole is drawn for the process and deliver.fits says what it measures as built. "
+    "Units: mm, N, MPa. Start with loadpath_guide (once) or loadpath_examples, validate with "
+    "loadpath_check until it is ok with no warnings you can fix, then loadpath_start and poll "
+    "loadpath_status (wait=... blocks for you). Read every outcome's attention list and look at the "
+    "render before trusting a part. Any tool that takes more than seconds returns a jobId: "
+    "loadpath_status reads every kind of job. When a part passes, offer to get it made (a print service "
+    "the user has connected can quote the STL) without ordering unasked. For a mesh you already have, "
+    "loadpath_check_printability, loadpath_check_isolation, loadpath_check_fit and loadpath_verify "
+    "check it directly.")
+
+
+def _annotations(name):
+    from mcp.types import ToolAnnotations
+
+    title, effect = TOOLS[name]
+    return ToolAnnotations(title=title, readOnlyHint=effect == "read", destructiveHint=effect == "stop",
+                           idempotentHint=effect in ("read", "write", "stop"), openWorldHint=False)
+
+
+def _version() -> str:
     try:
-        from mcp.server.mcpserver import Image, MCPServer
-    except ImportError:  # pragma: no cover - optional extra
-        sys.exit('loadpath mcp needs the MCP SDK: pip install "loadpath[mcp]"')
+        from importlib.metadata import version
+        return version("loadpath")
+    except Exception:  # noqa: BLE001 - a source checkout with no install
+        return ""
+
+
+def build_server():
+    """The MCP server with every tool registered (serve() runs it on stdio;
+    the tests list its tools)."""
+    from mcp.server.mcpserver import Image, MCPServer
 
     from .schema import schema as _schema
     from .tasks import example, examples
 
-    server = MCPServer(
-        "loadpath",
-        instructions=(
-            "Generative design (topology optimization) for printed parts, plus lattice infills and two-fluid "
-            "TPMS heat exchangers. The user says what they want built; you work out the problem, not the geometry: "
-            "design space, preserved interfaces, keep-outs, fasteners, supports, load cases, material, process, "
-            "goal. Read interfaces from their CAD (loadpath_import_cad) and loads from what the part does; fill "
-            "gaps with stated assumptions instead of asking for numbers they don't have. For a printed part, "
-            "take minimum wall and detail from Materialize (materialize_get_material designLimits) and set "
-            "minMember / process.minFeature / skin to at least them. Give each hole "
-            "something goes into a fit (press for a bearing, slip for a pin, clearance for a turning shaft): "
-            "the hole is drawn for the process and deliver.fits says what it measures as built. Units: mm, N, MPa. "
-            "Start with loadpath_guide (once) or loadpath_examples, validate with loadpath_check until it is "
-            "ok with no warnings you can fix, then loadpath_start and poll loadpath_status. Read every "
-            "outcome's attention list and look at the render before trusting a part. When a part passes, "
-            "offer to get it quoted and printed, or hosted to share, through Materialize (its MCP server: "
-            "materialize_import_model, then materialize_get_quote) without ordering unasked. For a mesh you "
-            "already have, loadpath_check_printability, loadpath_check_isolation and loadpath_check_fit "
-            "check it directly."),
-    )
+    server = MCPServer("loadpath", title="loadpath", instructions=INSTRUCTIONS, version=_version(),
+                       website_url="https://github.com/connorwhite-online/loadpath")
 
     def tool(fn):
-        return server.tool()(guarded(fn))
+        return server.tool(title=TOOLS[fn.__name__][0], annotations=_annotations(fn.__name__))(guarded(fn))
 
     def _reply(info, pngs):
         out = [json.dumps(info, indent=2)]
@@ -1105,20 +1351,16 @@ def serve():
 
     @tool
     def loadpath_schema(kind: str = "study") -> dict:
-        """The JSON Schema (2020-12) for a 'study', a 'heatExchanger' or 'lattice' options."""
-        try:
-            return _schema(kind)
-        except ValueError as exc:
-            return {"ok": False, "error": str(exc)}
+        """The JSON Schema (2020-12) for a document a tool takes: 'study' (loadpath_check, loadpath_start
+        and every study tool), 'heatExchanger', 'lattice' (options), 'field' (a field graph), 'handoff',
+        'split', 'enclosure', 'wires', 'antenna', 'stack', or 'bundle' (a results bundle's manifest)."""
+        return _schema(kind)
 
     @tool
     def loadpath_examples(name: str | None = None) -> dict:
         """With no name: the example documents (studies and heat exchangers) with a line on each.
         With a name: that document, ready to adapt and pass to loadpath_check / loadpath_start."""
-        try:
-            return example(name) if name else {"examples": examples()}
-        except ValueError as exc:
-            return {"ok": False, "error": str(exc)}
+        return example(name) if name else {"examples": examples()}
 
     @tool
     def loadpath_check(study: dict | str, base_dir: str | None = None) -> dict:
@@ -1145,13 +1387,10 @@ def serve():
         'attention' list of problems, STL path) and a render of the best one.
         wait: seconds to block while the job is still running (up to 540), so one call waits for it
         instead of many polls; keep calling until status is not 'running'."""
-        try:
-            t_end = time.time() + min(max(float(wait or 0), 0.0), 540.0)
-            while time.time() < t_end and _alive(job_id, _meta(_job_dir(job_id))):
-                time.sleep(min(5.0, max(0.1, t_end - time.time())))
-            return _reply(*status(job_id))
-        except ValueError as exc:
-            return [json.dumps({"ok": False, "error": str(exc)})]
+        t_end = time.time() + min(max(float(wait or 0), 0.0), 540.0)
+        while time.time() < t_end and _alive(job_id, _meta(_job_dir(job_id))):
+            time.sleep(min(5.0, max(0.1, t_end - time.time())))
+        return _reply(*status(job_id))
 
     @tool
     def loadpath_explore(study: dict | str, base_dir: str | None = None, methods: list | None = None,
@@ -1259,11 +1498,11 @@ def serve():
         return antenna(brief, base_dir)
 
     @tool
-    def loadpath_cast(mesh: str, process: str = "sand", alloy: str = "a356", up: str = "+z",
+    def loadpath_cast(path: str, process: str = "sand", alloy: str = "a356", up: str = "+z",
                       pour_temperature: float | None = None, mold_temperature: float | None = None,
                       head: float | None = None, risers: bool = True, molds: bool = True,
                       base_dir: str | None = None) -> dict:
-        """Pour a part in metal and see whether it comes out sound. `mesh` is the part as drawn
+        """Pour a part in metal and see whether it comes out sound. `path` is the part as drawn
         (.stl, mm); process is sand, investment, plaster, permanent or die; alloy is a356, a380, wcb
         (cast carbon steel) or silicon-bronze; `up` is which way is up in the mold. The heat equation
         with latent heat is solved in the part and its mold, then mass conservation and gravity decide
@@ -1275,13 +1514,13 @@ def serve():
         (STL). Nothing is a rule of thumb; docs/CASTING.md lists what each number was checked against.
         In a study, `casting: {draw, process, alloy}` pours the optimized part the same way. Starts a
         job (under a minute); poll loadpath_status."""
-        return cast(mesh, process, alloy, up, pour_temperature, mold_temperature, head, risers, molds, base_dir)
+        return cast(path, process, alloy, up, pour_temperature, mold_temperature, head, risers, molds, base_dir)
 
     @tool
-    def loadpath_slipcast(mesh: str, body: str = "porcelain", wall: float = 4.0, solid: bool = False,
+    def loadpath_slipcast(path: str, body: str = "porcelain", wall: float = 4.0, solid: bool = False,
                           up: str = "+z", casts: int = 5, pressure: float = 0.0, molds: bool = True,
                           base_dir: str | None = None) -> dict:
-        """Slip cast a ceramic part in a plaster mold. `mesh` is the fired part's outside (.stl, mm);
+        """Slip cast a ceramic part in a plaster mold. `path` is the fired part's outside (.stl, mm);
         body is porcelain, stoneware, earthenware or alumina; `wall` is the fired wall in mm (drain
         casting) or solid=true. Filtration through the growing cake gives the time in the mold and the
         wall the real shape gets (thicker in inside corners, slip trapped behind necks); conservation
@@ -1290,7 +1529,7 @@ def serve():
         mold. Writes out/slipcast.json and, to print or pour, the plaster mold halves at mold scale,
         the boxes to pour them in, and the fired part with its real inside. Starts a job (under a
         minute); poll loadpath_status."""
-        return slipcast(mesh, body, wall, solid, up, casts, pressure, molds, base_dir)
+        return slipcast(path, body, wall, solid, up, casts, pressure, molds, base_dir)
 
     @tool
     def loadpath_stack(brief: dict | str, base_dir: str | None = None) -> dict:
@@ -1308,9 +1547,9 @@ def serve():
         return stack(brief, base_dir)
 
     @tool
-    def loadpath_kicad(board: str, base_dir: str | None = None, power: dict | None = None,
+    def loadpath_kicad(path: str, base_dir: str | None = None, power: dict | None = None,
                        heights: dict | None = None, models: list | None = None) -> dict:
-        """Read a KiCad board (.kicad_pcb) the way an enclosure or a stack needs it: the Edge.Cuts outline
+        """Read a KiCad board (`path`: a .kicad_pcb) the way an enclosure or a stack needs it: the Edge.Cuts outline
         with its cut-outs, the stackup thickness, every footprint's body (its 3D model when the file is
         found, else its fab outline at the package's standard height, each with heightFrom), its mass
         (massFrom), the mounting holes and their screw sizes, each connector and which way it faces (out
@@ -1319,12 +1558,8 @@ def serve():
         give the component {"id": "board", "kicad": {"file", "connectors": {"J1": {"opening": "usb"}},
         "power"}} and in a stack board {"id", "kicad"} to use it directly. Reads only; quick."""
         from .kicad import load_board, _public
-        f = board if os.path.isabs(board) or not base_dir else os.path.join(base_dir, board)
-        try:
-            b = load_board({"kicad": {"file": f, "power": power or {}, "heights": heights or {},
-                                      "models": models or []}})
-        except (ValueError, OSError) as exc:
-            return {"ok": False, "error": str(exc)}
+        b = load_board({"kicad": {"file": _resolve(path, base_dir), "power": power or {},
+                                  "heights": heights or {}, "models": models or []}})
         pb = _public(b)
         return {"ok": True, "size": pb["size"], "thicknessFrom": pb["thicknessFrom"], "massKg": pb["mass"],
                 "conductivity": pb["conductivity"], "holes": pb["holes"],
@@ -1365,10 +1600,7 @@ def serve():
         wall follows the part's stress, keeping a solid skin and solid material where it works hard.
         options: {type: gyroid|diamond|schwarz-p, cell, skin (0 = open, for powder and resin), minWall,
         maxWall, solidAbove, safetyFactor}. Starts a job; poll loadpath_status."""
-        try:
-            return lattice(job_id, outcome, options)
-        except ValueError as exc:
-            return {"ok": False, "error": str(exc)}
+        return lattice(job_id, outcome, options)
 
     @tool
     def loadpath_heat_exchanger(spec: dict | str, base_dir: str | None = None) -> dict:
@@ -1445,9 +1677,11 @@ def serve():
         return check_component_fit(path, components, base_dir)
 
     @tool
-    def loadpath_scan(path: str, out_dir: str | None = None, base_dir: str | None = None, device=None,
-                      units: str | None = None, scale: float | None = None, up: str | None = None, crop=None,
-                      keep: str = "all", reference=None, known=None, support=None, loads=None,
+    def loadpath_scan(path: str, out_dir: str | None = None, base_dir: str | None = None,
+                      device: str | dict | None = None, units: str | None = None, scale: float | None = None,
+                      up: str | None = None, crop: list | None = None, keep: str = "all",
+                      reference: list | None = None, known: dict | None = None, support: list | str | None = None,
+                      loads: list | None = None,
                       material: str = "pa12", process: str | None = "sls", grow: float = 15.0,
                       confidence: float = 0.95, fit: str = "slip", brief: dict | None = None,
                       reference_objects: list | None = None, clamp: str | None = None,
@@ -1529,12 +1763,15 @@ def serve():
 
     @tool
     def loadpath_jobs(limit: int = 20) -> dict:
-        """Recent jobs (studies, lattices, heat exchangers), newest first, with their status."""
+        """Recent jobs of every kind (studies, explores, lattices, casts, enclosures, exports...), newest
+        first, each with its jobId, kind, name, status (running, done, failed, cancelled) and start time.
+        A jobId from here goes to loadpath_status, loadpath_cancel or loadpath_resume."""
         return {"jobs": jobs(limit)}
 
     @tool
     def loadpath_cancel(job_id: str) -> dict:
-        """Stop a running job."""
+        """Stop a running job (any kind). Its folder and whatever it wrote so far stay; a study stopped
+        partway can be continued with loadpath_resume."""
         return cancel(job_id)
 
     @tool
@@ -1545,8 +1782,106 @@ def serve():
         loadpath_status as before."""
         return resume(job_id)
 
-    server.run("stdio")
+    @tool
+    def loadpath_materials(name: str | None = None, stock: bool = False) -> dict:
+        """The material library a study's `material` names. With no name: every card with its stiffness
+        E, strength along and across layers (strengthZ), density and the processes it is made by, and
+        the calibrated cards (fit from the user's own printed coupons, which win over the library). With
+        a name ('pa12', 'petg', 'ti64'...): that card in full, with where each number came from. stock:
+        the cards for bought members in a study's `stock` (tubes, laminates, adhesives)."""
+        return materials(name, stock)
+
+    @tool
+    def loadpath_orient(path: str, study: dict | str | None = None, process: str = "fdm",
+                        threemf: str | None = None, base_dir: str | None = None) -> dict:
+        """Rank the build orientations of a mesh (STL/3MF/OBJ, mm) for a process (fdm, sls, mjf, sla,
+        dlp, lpbf): support volume, overhang area, bed contact, bridges, print time, and with a study
+        the layer bond read under its load cases (a printed part is weakest across its layers).
+        threemf: also write the best orientation as a slicer-ready 3MF at that path. Starts a job;
+        poll loadpath_status."""
+        return orient(path, study, process, threemf, base_dir)
+
+    @tool
+    def loadpath_buildsim(path: str, process: str = "lpbf", material: str = "ti64", build: str = "+z",
+                          plate: float = 10.0, compensate: int = 0, nominal: str | None = None,
+                          base_dir: str | None = None) -> dict:
+        """Simulate printing a part in its build position (lpbf metal, fdm, sls): distortion and how
+        far the printed shape deviates from the design, residual stress, warp off the bed, and the
+        recoater risk (powder bed). compensate=N: N passes of pre-distorting the mesh so it prints to
+        shape (out: the compensated STL). nominal: the design to compare with (default: the part).
+        Starts a job; poll loadpath_status."""
+        return buildsim(path, process, material, build, plate, compensate, nominal, base_dir)
+
+    @tool
+    def loadpath_export_step(path: str, out: str | None = None, base_dir: str | None = None,
+                             faces: int | None = None, surface: str = "facets",
+                             tolerance: float | None = None) -> dict:
+        """Turn a closed mesh (an outcome's STL, 3MF or OBJ, mm) into one STEP solid any CAD opens.
+        surface 'facets' (planar faces, exact to the mesh) or 'smooth' (B-spline patches); faces: the
+        facet budget (default 20000). out: the .step path (default: next to the mesh). Reports valid,
+        solids and the volume error against the mesh. Needs the step extra (OpenCascade). Starts a
+        job; poll loadpath_status."""
+        return export_step(path, out, base_dir, faces, surface, tolerance)
+
+    @tool
+    def loadpath_export_bundle(study: dict | str, path: str, out: str | None = None,
+                               base_dir: str | None = None) -> dict:
+        """Write a part's results bundle for other viewers and tools: the part verified against its
+        study with its fields (stress, safety factor, displacement per load case) as glTF with
+        colours, VTU fields, the report and tradeoff.csv, listed in manifest.json
+        (loadpath_schema('bundle'), docs/BUNDLE.md). path: the part's STL (a run's best.stl also
+        reads the run's report.json). out: the folder (default <part>-bundle). Starts a job; poll
+        loadpath_status."""
+        return export_bundle(study, path, out, base_dir)
+
+    return server
+
+
+def serve():
+    try:
+        import mcp  # noqa: F401
+    except ImportError:  # pragma: no cover - optional extra
+        sys.exit('loadpath mcp needs the MCP SDK: pip install "loadpath[mcp]"')
+    build_server().run("stdio")
+
+
+def tool_reference() -> str:
+    """docs/agents.md's tool table, from the registered tools."""
+    import asyncio
+    import inspect
+
+    server = build_server()
+    tools = {t.name: t for t in asyncio.run(server.list_tools())}
+    lines = []
+    for name in TOOLS:
+        t = tools[name]
+        props = t.input_schema.get("properties", {})
+        req = set(t.input_schema.get("required", []))
+        params = ", ".join(f"`{k}`" + ("" if k in req else "?") for k in props)
+        desc = inspect.cleandoc(t.description or "").split("\n\n")[0].replace("\n", " ").replace("|", "\\|")
+        effect = {"read": "reads", "write": "writes files", "job": "job", "stop": "stops a job"}[TOOLS[name][1]]
+        lines.append(f"| `{name}` | {effect} | {params} | {desc} |")
+    return "| tool | effect | parameters (? optional) | what it does |\n|---|---|---|---|\n" + "\n".join(lines) + "\n"
+
+
+def surface() -> dict:
+    """The tool surface the tests keep stable: each tool's parameters,
+    which are required, and its effect."""
+    import asyncio
+
+    server = build_server()
+    out = {}
+    for t in sorted(asyncio.run(server.list_tools()), key=lambda t: t.name):
+        props = t.input_schema.get("properties", {})
+        out[t.name] = {"effect": TOOLS[t.name][1], "required": sorted(t.input_schema.get("required", [])),
+                       "optional": sorted(k for k in props if k not in t.input_schema.get("required", []))}
+    return out
 
 
 if __name__ == "__main__":  # pragma: no cover
-    serve()
+    if sys.argv[1:] == ["--reference"]:
+        print(tool_reference(), end="")
+    elif sys.argv[1:] == ["--surface"]:
+        print(json.dumps(surface(), indent=1))
+    else:
+        serve()
