@@ -409,6 +409,31 @@ def _true_area_weights(study, centers, pitch):
     return np.where(ok, 1.0 / np.clip(l1, 1.0, np.sqrt(3.0)), 1.0)
 
 
+# The standard test finger (IEC 61032 probe B, the one IEC 62368-1 judges
+# what is accessible by): 12 mm across with a round tip. A surface it cannot
+# reach is not touched, so the touch limit does not apply there: the floor
+# of the speaker's 12 x 5 mm USB-C port read 60 C (the amp's board edge
+# 1.4 mm behind it), where no finger goes.
+FINGER_RADIUS = 6.0
+
+
+def _finger_reaches(inside, pts, origin, pitch: float, radius: float = FINGER_RADIUS) -> np.ndarray:
+    """Per point (in the air just outside a face): whether a ball of
+    `radius` in the outside air touches it. `inside` is the grid's cells
+    inside the exterior (dims of the domain box); the air past the box is
+    open. Opening of the air by the ball, on the grid: centres where the
+    ball fits clear of every inside cell, then everything within the radius
+    of one, each to half a cell."""
+    from scipy import ndimage
+    pad = int(np.ceil(radius / pitch)) + 2
+    air = np.pad(~np.asarray(inside, bool), pad, constant_values=True)
+    fits = ndimage.distance_transform_edt(air) * pitch >= radius + 0.5 * pitch
+    reach = ndimage.distance_transform_edt(~fits) * pitch <= radius + 0.5 * pitch
+    ijk = np.floor((np.asarray(pts, float) - np.asarray(origin, float)) / pitch).astype(int) + pad
+    ijk = np.clip(ijk, 0, np.array(reach.shape) - 1)
+    return reach[tuple(ijk.T)]
+
+
 def _gap_between_sources(sources, c, k, pitch: float, k_air: float) -> None:
     """Air between two components, under a cell wide. Two components 0.4 mm
     apart (the speaker's amp and its cell) fill face-adjacent cells on most
@@ -569,6 +594,9 @@ class CoolingModel:
         sel = bnd[is_mech[faces.a[bnd]]]
         if spec.skin_shape is not None:
             sel = sel[spec.skin_shape.sdf(faces.center[sel]) <= 0.5 * pitch]
+        # and only what a finger reaches: not the floor of a slot or port
+        sel = sel[_finger_reaches(inside.reshape(dims), faces.center[sel] + 0.5 * pitch * faces.normal[sel],
+                                  origin, pitch)]
         self.skin_nodes = np.zeros(mesh.n_nodes, bool)
         self.skin_nodes[faces.nodes[sel].ravel()] = True
         if spec.skin_max is not None and not self.skin_nodes.any():

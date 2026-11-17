@@ -373,3 +373,19 @@ def test_delivered_read_takes_a_pad_gap_the_same_on_any_grid():
     mesh = trimesh.Trimesh(np.asarray(m.vert_properties)[:, :3], np.asarray(m.tri_verts))
     t = [r["components"][0]["temperature"] for r in cooling.delivered_readings(st, mesh, [1.0, 0.7, 0.5])]
     assert max(t) - min(t) < 0.15 * (min(t) - 25.0), t
+
+
+def test_a_finger_does_not_reach_the_floor_of_a_port():
+    """The touch limit applies where the standard's 12 mm test finger
+    reaches: a block's outer face and the floor of a 14 mm wide pocket 4 mm
+    deep, not the floor of a 4 mm slot."""
+    from loadpath.cooling import _finger_reaches
+    pitch = 0.5
+    inside = np.ones((80, 80, 80), bool)     # a 40 mm cube of cells
+    inside[36:44, 20:60, 72:] = False        # slot x 18-22, y 10-30, z 36-40
+    inside[50:78, 4:72, 72:] = False         # pocket x 25-39, y 2-36, z 36-40
+    pts = np.array([[5.0, 5.0, 40.25],       # the top face, just above it
+                    [20.0, 20.0, 36.25],     # the slot's floor
+                    [32.0, 20.0, 36.25]])    # the pocket's floor
+    got = _finger_reaches(inside, pts, np.zeros(3), pitch)
+    assert got.tolist() == [True, False, True], got

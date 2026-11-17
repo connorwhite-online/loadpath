@@ -45,6 +45,9 @@ surfaces after IEC 62368-1's TS1 limits: `continuous` 43 C (held over 8 h),
 `held` 48 C (10 min to 8 h, a handheld product in use), `brief` 60 C (1 to
 10 min). Metal surfaces have lower limits; check the edition the product is
 certified to. `skin.shape` limits it to where the product is touched.
+The limit applies only where the standard's test finger reaches (IEC 61032
+probe B, 12 mm across, the probe IEC 62368-1 judges access by): the floor
+of a USB port or a narrow slot is not touched, whatever its temperature.
 
 A study with a `cooling` block needs no supports or load cases. `feel` and
 `switch` blocks in the same study are designed together with it.
