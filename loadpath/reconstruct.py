@@ -1055,22 +1055,29 @@ def _attach_plan(mesh, study, organic):
 
 
 PINCH_R = 0.08
+# Geometry finer than an STL keeps (float32: 1.2e-5 mm steps at 100 mm) is
+# collapsed before pinch filling (manifold3d's simplify). The full-tier
+# remote's cover came out of its booleans with slivers a few 1e-7 mm thick
+# where the cut interior met the exact skin on the envelope (174k triangles,
+# genus -60, 191 contacts): simplified it was 66k triangles, genus 3, and
+# the export's own weld and sliver pass left it watertight with no balls,
+# where filling the raw contacts fed itself (22k, 46k, 76k contacts, 3.3M
+# triangles, past 13 GB).
+WELD_TOL = 1e-5
 
 
 def _stl_pinches(part):
     """`part` as an STL stores it (float32, welded by position) and the
     edges of it that are not on exactly two faces: kissing edges, and slits
-    a weld opens. Returns (trimesh, (n, 2) vertex pairs, their length
-    together in mm)."""
-    m = trimesh_from_manifold(part)
-    m.vertices = m.vertices.astype(np.float32).astype(float)
-    m.merge_vertices()
-    e = m.edges_sorted
-    if not len(e):
-        return m, np.zeros((0, 2), np.int64), 0.0
-    u, c = np.unique(e, axis=0, return_counts=True)
-    bad = u[c != 2]
-    return m, bad, float(np.linalg.norm(m.vertices[bad[:, 0]] - m.vertices[bad[:, 1]], axis=1).sum())
+    a weld opens. Returns (welded positions, (n, 2) vertex pairs into them,
+    their length together in mm). _stl_bad_edges: trimesh's weld and an
+    axis-0 unique here took 13 GB on the speaker's cooling part."""
+    mg = part.to_mesh64() if hasattr(part, "to_mesh64") else part.to_mesh()
+    faces = np.asarray(mg.tri_verts, np.int64)
+    if not len(faces):
+        return np.zeros((0, 3)), np.zeros((0, 2), np.int64), 0.0
+    bad, wv = _stl_bad_edges(np.asarray(mg.vert_properties, float)[:, :3], faces)
+    return wv, bad, float(np.linalg.norm(wv[bad[:, 0]] - wv[bad[:, 1]], axis=1).sum())
 
 
 # pinches tried one at a time in a round whose necks, together, did not help
@@ -1135,7 +1142,7 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
             break
         # a ball can leave a contact of its own: each round a size larger
         r = PINCH_R * 1.5 ** k
-        mids = m.vertices[bad].mean(axis=1)
+        mids = m[bad].mean(axis=1)
         # one ball per cluster of pinched edges a ball apart (greedy, in
         # order; kept points hashed by r-sized cell so each test looks at
         # 27 cells, not every ball so far: the plain pass was quadratic and
@@ -1190,16 +1197,33 @@ def _outside(part, keep_out):
     return m3d.Manifold.cube(tuple(map(float, hi - lo))).translate(tuple(map(float, lo))) - keep_out
 
 
+def _stl_bad_edges(verts, faces):
+    """The edges an STL reader would find open or shared by more than two
+    faces: vertices rounded to float32 and welded by position, as every
+    reader does. Returns (bad edges as welded vertex pairs, welded
+    positions). Plain numpy on 1-D keys: trimesh's merge_vertices and an
+    axis-0 unique took ~60 s and 2-3 GB a call on a generated cover skin."""
+    v32 = np.ascontiguousarray(np.asarray(verts, np.float32) + np.float32(0.0))   # -0 welds to +0
+    used = np.unique(faces)
+    key = v32[used].view(np.dtype((np.void, 12))).ravel()
+    uk, inv = np.unique(key, return_inverse=True)
+    weld = np.empty(len(v32), np.int64)
+    weld[used] = inv.ravel()
+    wv = uk.view(np.float32).reshape(-1, 3).astype(float)
+    f = weld[faces]
+    e = np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1)
+    n = np.int64(len(wv))
+    ek, c = np.unique(e[:, 0] * n + e[:, 1], return_counts=True)
+    b = ek[(c > 2) | (c == 1)]
+    return np.stack([b // n, b % n], axis=1), wv
+
+
 def _stl_watertight(mesh) -> bool:
     """Watertight as an STL reader sees it: float32 vertices welded by
     position, every edge on exactly two faces."""
-    m = mesh.copy()
-    m.vertices = m.vertices.astype(np.float32).astype(float)
-    m.merge_vertices()
-    if not len(m.faces):
+    if not len(mesh.faces):
         return False
-    _, c = np.unique(m.edges_sorted, axis=0, return_counts=True)
-    return bool((c == 2).all())
+    return not len(_stl_bad_edges(mesh.vertices, np.asarray(mesh.faces, np.int64))[0])
 
 
 def _drop_slivers(mesh):
@@ -1852,6 +1876,8 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
             info["unformedDropFailed"] = f"{type(exc).__name__}: {exc}"
         if unformed:
             info["unformedDropped"] = unformed
+    if hasattr(part, "simplify"):
+        part = part.simplify(WELD_TOL)
     part, pinches = _fill_pinches(part, clip=clip, keep_out=ko_all, hold=hold)
     if pinches and not _stl_watertight(_drop_slivers(trimesh_from_manifold(part))):
         # contacts the clipped balls could not close (where three drawn
