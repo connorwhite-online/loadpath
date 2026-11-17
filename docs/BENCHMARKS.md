@@ -663,6 +663,40 @@ optimizer per constrained part 492-503 s. The buckling eigen-solves (LOBPCG's
 block solves with the factor, about 8 s an evaluation) are now its largest
 single cost.
 
+## Slowest eval cases: where the time went (2026-11-17)
+
+Full tier, one case alone on a 4-core, 15 GB box, profiled end to end (py-spy over every process of
+the run, and each PARDISO call timed by its caller).
+
+| Case | Before | After | What moved |
+| --- | --- | --- | --- |
+| printed-hook | 3113 s, 37.6 g | 1534 s, 32.7 g | its three pitch starts side by side (search 1474 s -> 774 s); the constrained probe drew one part where it had drawn three |
+| robot-turret | 1955 s, 138.8 g | 2309 s, 126.1 g | search 354 s -> 340 s on the same four parts; then a different draw (below) |
+
+- **The turret's time**: 31% is the main process waiting on a tet confirm (fTetWild 120-130 s a part on
+  about 1.7 cores, then the P2 solve), 27% PARDISO, the rest Python. Its constrained phase is three
+  to four parts of about 450 s. The two runs above are not a before and after of the same work: the
+  search part read 1.0025 on tets in one and 0.999 in the other (fTetWild's mesh differs run to run),
+  and from there the second run confirmed on voxels and drew four constrained parts, not three. A
+  full-tier time on a case like this moves 20% on that alone.
+- **Factor on the last analysis** (`nonlinear._Pardiso.refactor`): the optimizer factors one sparsity
+  layout many times, and the symbolic analysis is a quarter to a third of each factorization. The
+  numbers are now factored on the analysis the solver already holds: the same order, the same bits. A
+  40-iteration optimize of 67k dofs 20.6 s -> 17.2 s; the hook's search spent 155 of its first 780 s
+  in these factorizations.
+- **Pitch starts side by side** (`study._search_bytes`): the plan for one search counted the 150k-cell
+  confirming re-analysis (8.9 GB), which a search confirmed on tets never runs, so three starts never
+  fitted 15 GB and ran in turn. Planned at what they solve (3.0 GB each for the hook; three workers
+  peaked at 5.9 GB together), they run together: the hook's search 1474 s -> 1008 s with the same
+  parts. The longest chain sets the time (381, 615 and 1008 s), each on one thread.
+- **A constrained part out of reach** (`study._PROBE_REACH`): a passing part's mass over its spare ratio
+  is the least its limits can be relaxed to. Over the search's part by 1.1, the constrained run stops
+  (the hook: 61.0 g at 1.21 to spare against 37.6 g, and two more parts after it).
+- **Not moved**: the hook's first constrained part is 700-770 s whatever it finds (60 g against a
+  33-38 g search part, three runs of three), half of the study when it is drawn once. The constrained
+  run cannot start beside the search on 15 GB (`_Speculative.wanted`: its grid is fitted to the
+  memory there is), and the wait on each tet confirm is serial by design.
+
 ## Wall time against nTop and Fusion 360
 
 There is no like-for-like benchmark: neither vendor publishes solver timings
