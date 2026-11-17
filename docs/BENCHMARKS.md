@@ -692,8 +692,8 @@ the run, and each PARDISO call timed by its caller).
 - **A constrained part out of reach** (`study._PROBE_REACH`): a passing part's mass over its spare ratio
   is the least its limits can be relaxed to. Over the search's part by 1.1, the constrained run stops
   (the hook: 61.0 g at 1.21 to spare against 37.6 g, and two more parts after it).
-- **Not moved**: the hook's first constrained part is 700-770 s whatever it finds (60 g against a
-  33-38 g search part, three runs of three), half of the study when it is drawn once. The constrained
+- **Not moved**: the hook's first constrained part is 700-770 s whatever it finds (61.0, 60.2 and
+  55.8 g in three runs, against a 33-38 g search part), half of the study even when it is the only one. The constrained
   run cannot start beside the search on 15 GB (`_Speculative.wanted`: its grid is fitted to the
   memory there is), and the wait on each tet confirm is serial by design.
 
