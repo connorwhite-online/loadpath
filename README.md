@@ -408,7 +408,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [CAD import](docs/IMPORT.md), [scans and splats](docs/SCAN.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md), [breakaway links](docs/FUSES.md),
   [mechanisms](docs/MECHANISMS.md), [a part in one run from a spec](docs/BUILD.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
-  [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
+  [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md), [a first exterior round the parts](docs/ENVELOPE.md),
   [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md), [bought stock](docs/STOCK.md),
   [KiCad boards](docs/KICAD.md), [antennas](docs/ANTENNA.md), [casting](docs/CASTING.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
   [results bundle](docs/BUNDLE.md).
