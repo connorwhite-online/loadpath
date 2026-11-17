@@ -1657,6 +1657,23 @@ def test_constrained_probe_stops_on_heavy_failing_part():
     assert S._AUTO_UTILIZATION_CUT < S._AUTO_PROBE_UTILIZATION
 
 
+def test_constrained_run_stops_when_its_part_cannot_reach_the_search():
+    """A passing constrained part can shed at most its spare ratio by
+    having its limits relaxed (study._PROBE_REACH): one whose mass over
+    that ratio is still over the search's part ends the constrained run."""
+    from loadpath import study as S
+    # the printed hook, search 37.6 g: 61.0 g at 1.206 to spare is 50.6 g at best
+    assert S._out_of_reach(61.0, 1.206, 37.6)
+    # the wall bracket's winning part, and a heavy one with room to come down
+    assert not S._out_of_reach(31.2, 1.067, 53.4)
+    assert not S._out_of_reach(61.0, 1.8, 37.6)
+    # a failing part is the heavy-failing rule's business, and no reading is no verdict
+    assert not S._out_of_reach(61.0, 0.9, 37.6)
+    assert not S._out_of_reach(61.0, None, 37.6) and not S._out_of_reach(None, 1.2, 37.6)
+    assert not S._out_of_reach(61.0, float("inf"), 37.6)
+    assert S._PROBE_REACH >= 1.0
+
+
 def test_constrained_probe_settles_once_it_wins():
     from loadpath import study as S
     # the full-tier wrist yoke's probe: parts at 1313, 2780 and 4021 s, the

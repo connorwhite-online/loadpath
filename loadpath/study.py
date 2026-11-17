@@ -128,6 +128,19 @@ _PROBE_NEAR = 1.1
 # time: not kept.)
 _PROBE_ROUNDS = 2
 _PROBE_HEAVY = 0.97
+# A passing constrained part with `ratio` to spare on what sizes it (stress,
+# deflection, buckling: the least of them) can shed at most that ratio of its
+# mass by having its limits relaxed: a tie's section goes as load over
+# stress, stiffness as the section, and bending or buckling members shed
+# less (a section modulus goes as area^1.5). So mass / ratio is the least
+# the next parts can weigh on this layout, and once that is over the
+# search's part by _PROBE_REACH the constrained run stops. The printed hook
+# (search 37.6 g): 61.0 g at 1.21 to spare (50.6 g at best), then 70.2 g and
+# 47.1 g, 1640 s of a 3113 s study for a part never kept. The slack is for
+# the layout the next part may find instead: those three parts read 50.6,
+# 40.8 and 44.9 g by this measure. Where the constrained method wins it is
+# far inside it (the wall bracket: 31.2 g at 1.07 against a 53.4 g search).
+_PROBE_REACH = 1.1
 # and gives it at most this many times the search's own time
 _AUTO_BUDGET = 3.5
 # ... but no less than this many finished parts (up to twice the box): the
@@ -1613,6 +1626,7 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     won = [False]     # a probe's passing part lighter than the search's
     promising = [False]   # ... or one near its mass with room to lighten
     settled = [False]
+    far = [None]      # a passing part too heavy for its margin to make up (_out_of_reach)
     ms = _weigh(pick.report)
 
     pending = [None, False]   # a probe's last part, awaiting its tet confirm
@@ -1645,6 +1659,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
         if stage == "outcome":
             done[0] += 1
             pending[0], pending[1] = event, False
+        if event.get("reading") == "constrained" and far[0] is None and _out_of_reach(event.get("mass"), event.get("ratio"), ms):
+            far[0] = (event["mass"], event["ratio"])
         if on_progress is not None:
             on_progress(event, x)
 
@@ -1656,7 +1672,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
             pending[0] = None
         # past the outer band: one part, kept going only if it is promising
         short = outer and done[0] >= 1 and pending[0] is None and not promising[0]
-        return beaten[0] is not None or settled[0] or short or (should_stop is not None and should_stop())
+        return beaten[0] is not None or far[0] is not None or settled[0] or short \
+            or (should_stop is not None and should_stop())
 
     def stop():
         over = time.time() > deadline if quick.on() else _box_over(deadline, box, done[0])
@@ -1725,7 +1742,11 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
                         + (f"{mc:.1f} g" if mc is not None
                            else "found no part the process check passes" if unmade else "found no passing part")
                         + f" against search {ms:.1f} g"
-                        + (f" (probe stopped: a {beaten[0]:.1f} g part failed)" if beaten[0] is not None else ""))
+                        + (f" (probe stopped: a {beaten[0]:.1f} g part failed)" if beaten[0] is not None else "")
+                        + (f" (stopped: a {far[0][0]:.1f} g part with {far[0][1]:.2f} to spare cannot be relaxed "
+                           "to the search's mass)" if far[0] is not None else ""))
+    if far[0] is not None:
+        choice["outOfReach"] = {"mass": far[0][0], "ratio": far[0][1]}
     if settled[0]:
         choice["probeSettled"] = True
     if outer:
@@ -1907,6 +1928,14 @@ def _probe_won(event: dict, search_mass: float, margin: float | None = None) -> 
     mg = margin if margin is not None else event.get("margin")
     return m is not None and mg is not None and m < search_mass and mg >= 1.0 \
         and (event.get("bodies") or 1) <= 1
+
+
+def _out_of_reach(mass, ratio, search_mass: float) -> bool:
+    """Whether a passing constrained part of `mass`, `ratio` inside the
+    limits that size it, cannot be relaxed to the search's mass
+    (_PROBE_REACH)."""
+    return mass is not None and ratio is not None and bool(np.isfinite(ratio)) and ratio >= 1.0 \
+        and mass / ratio > _PROBE_REACH * search_mass
 
 
 def _probe_settled(won: bool, start: float, deadline: float, done: int, now: float | None = None) -> bool:
@@ -3144,6 +3173,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 if lo is not None and np.isfinite(lo) and lo > 0:
                     kb = float(np.clip(lo / r["bucklingFactor"], 0.5 * kb, 2.0 * kb))
             ratio = min(v for v in (rs, rd, rb) if v is not None)
+            # (what goal.method auto weighs against the search's part: _out_of_reach)
+            emit({"reading": "constrained", "mass": _weigh(r), "ratio": float(ratio)})   # (no stage: not a step of the run)
             if ratio >= 1.0:
                 if ratio < 1.12:
                     break
