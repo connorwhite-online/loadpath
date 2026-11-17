@@ -34,7 +34,7 @@ jobs:
             files: >-
               tests/test_handoff.py tests/test_shells.py tests/test_shroud.py tests/test_feel.py
               tests/test_touch_zones.py tests/test_cooling.py tests/test_rods.py tests/test_wires.py
-              tests/test_stack.py tests/test_kicad.py
+              tests/test_stack.py tests/test_kicad.py tests/test_cooling_contacts.py tests/test_brief_paths.py
           - group: antenna         # ~10 min (rf 1, antenna 8)
             files: tests/test_rf.py tests/test_antenna.py tests/test_frameband.py
           # the MCP server's tool surface (the mcp extra only here)
