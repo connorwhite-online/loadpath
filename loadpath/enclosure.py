@@ -672,15 +672,32 @@ class _GridShape:
 
     kind = "grid"
 
-    def __init__(self, shape, pitch: float = 0.3, pad: float = 2.0):
+    # Past this many nodes the pitch grows: a 220 x 190 x 95 mm handheld at
+    # 0.3 mm is 150M nodes, and evaluating them in one call asked for tens of
+    # GB (the Imprint Pro scanner was killed at 15 GB before placement began).
+    MAX_NODES = 24_000_000
+    CHUNK = 2_000_000
+
+    def __init__(self, shape, pitch: float = 0.3, pad: float = 2.0, max_nodes: int | None = None):
         from .shapes import Box
         lo, hi = shape.bounds()
         self.lo, self.hi = np.asarray(lo, float), np.asarray(hi, float)
         self.o = self.lo - pad
-        n = np.ceil((self.hi + pad - self.o) / pitch).astype(int) + 1
+        span = self.hi + pad - self.o
+        cap = int(max_nodes or self.MAX_NODES)
+        if np.prod(np.ceil(span / pitch) + 1) > cap:
+            pitch = float((np.prod(span) / cap) ** (1.0 / 3.0)) * 1.02
+        n = np.ceil(span / pitch).astype(int) + 1
         axes = [self.o[i] + np.arange(n[i]) * pitch for i in range(3)]
-        P = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
-        self.g = shape.sdf(P).reshape(tuple(n))
+        # evaluate a slab of x at a time, so memory stays at the grid itself
+        g = np.empty(tuple(n), np.float32)
+        per = max(1, self.CHUNK // int(n[1] * n[2]))
+        yz = np.stack(np.meshgrid(axes[1], axes[2], indexing="ij"), -1).reshape(-1, 2)
+        for i0 in range(0, n[0], per):
+            xs = axes[0][i0:i0 + per]
+            P = np.column_stack([np.repeat(xs, len(yz)), np.tile(yz, (len(xs), 1))])
+            g[i0:i0 + len(xs)] = shape.sdf(P).reshape(len(xs), n[1], n[2])
+        self.g = g
         self.h = pitch
         self.box = Box(self.o, self.o + (n - 1) * pitch)
         self.shape = shape
@@ -1080,6 +1097,8 @@ def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_
         mt = c.get("mount", "cradle" if gmass > 0 else None)
         if not mt:
             continue
+        if mt is True:                     # the schema allows `mount: true`: the default cradle
+            mt = "cradle"
         mt = {"type": mt} if isinstance(mt, str) else dict(mt)
         if mt.get("type") == "holes":
             hm, why = _hole_mount(c, mt, lay, groups, paths, comp_shapes, exterior, skin)

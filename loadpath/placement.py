@@ -599,6 +599,12 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
             continue
         states = new_states
 
+    if on_progress:
+        # say it now: the run goes on without these parts, and the only other
+        # word of it is a warning in enclosure.json at the very end
+        for k, v in blocked.items():
+            on_progress({"stage": "placement", "message": f"NOT PLACED {k}: {v.get('reason', v)}"})
+
     gb = {g.id: g for g in groups}
     layouts = []
     for s in states:
