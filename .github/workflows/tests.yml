@@ -164,7 +164,10 @@ jobs:
   # and held to its expect.json, so the docs can't drift from the code
   tutorials:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # urdf-arm-link runs two studies with tet confirms: 650-820 s for the
+    # derived run on a typical runner, 1170 s on a slow one (same code, same
+    # part), so it gets headroom the others don't need
+    timeout-minutes: ${{ matrix.tutorial == 'urdf-arm-link' && 45 || 30 }}
     strategy:
       fail-fast: false
       matrix:
