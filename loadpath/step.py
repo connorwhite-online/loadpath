@@ -621,7 +621,7 @@ def _on_float32(mesh):
     return trimesh.Trimesh(V, np.asarray(mesh.faces), process=False)
 
 
-def _build(plan, budget, faces, notes):
+def _build(plan, budget, faces, notes, organic=None):
     """(OpenCascade solids, the same thing as a manifold3d Manifold). The
     manifold is the referee: each OpenCascade boolean is tried a few ways
     (fuzz, tools separate or fused) until it is valid and its volume agrees
@@ -635,12 +635,16 @@ def _build(plan, budget, faces, notes):
         return _pieces(plan.shape, faces), exact_manifold(plan.shape)
     if isinstance(plan, Organic):
         m = _on_float32(plan.mesh)
+        if organic is not None:
+            got = organic(m)
+            if got is not None:
+                return [got], manifold_from_trimesh(m)
         d = _decimate(m, budget.get(id(plan), faces))
         if len(d.faces) < len(m.faces):
             notes.append({"leaf": ",".join(plan.names) or "organic", "faces": len(m.faces),
                           "stepFaces": len(d.faces), "deviation": _deviation(m, d)})
         return [_faceted(d)], manifold_from_trimesh(d)
-    kids = [_build(k, budget, faces, notes) for k in plan.kids]
+    kids = [_build(k, budget, faces, notes, organic) for k in plan.kids]
     kind = {"union": m3d.OpType.Add, "intersect": m3d.OpType.Intersect, "subtract": m3d.OpType.Subtract}[plan.op]
     want = m3d.Manifold.batch_boolean([k[1] for k in kids], kind)
     if plan.op == "union":
@@ -1580,6 +1584,80 @@ def _smooth_shape(part, plan, patches, notes, degree=None):
     return solid
 
 
+def _subd_shape(plan, notes, tolerance=None):
+    """surface="subd": the plan's organic body (meshed through where the
+    exact shapes will cut it) as a fitted Catmull-Clark surface in smooth
+    B-spline patches (subd.py); then the plan's own booleans with its exact
+    cylinders, boxes and spheres in OpenCascade: a smooth body with few
+    faces is the boolean OpenCascade is built for. None (and a note) when
+    the surface or a boolean does not come out right; the caller then
+    writes facets."""
+    import os
+    import tempfile
+
+    from .subd import export_surface
+
+    def smooth(mesh):
+        with tempfile.TemporaryDirectory() as td:
+            try:
+                rep = export_surface(mesh, os.path.join(td, "body.step"), tolerance=tolerance)
+            except (RuntimeError, ValueError) as e:
+                notes.append({"warning": f"subd: {e}"})
+                return None
+        solid = rep.pop("shape")
+        notes.append({"leaf": "subd", "cageFaces": rep["cageFaces"], "stepFaces": rep["stepFaces"],
+                      "tolerance": rep["tolerance"], "deviation": rep["deviation"],
+                      "edgeAngle": rep["patches"]["edgeAngle"], "valid": rep["valid"]})
+        return solid if rep["valid"] else None
+
+    got = _normal(plan, {}, 10 ** 9, [])
+    if got is None or got[0].is_empty():
+        # an exact positive body (a boss, a box envelope): the plan's booleans one by one
+        n0 = len(notes)
+        try:
+            shapes, _ = _build(plan, {}, 10 ** 9, notes, organic=smooth)
+        except RuntimeError as e:
+            notes.append({"warning": f"subd: {e}; written the usual way"})
+            return None
+        if any("facets" in str(x.get("warning", "")) for x in notes[n0:]) or \
+                not any(x.get("leaf") == "subd" for x in notes[n0:]):
+            notes.append({"warning": "subd: a boolean fell back to facets; written the usual way"})
+            return None
+        return _fuse_all(shapes) if len(shapes) > 1 else shapes[0]
+    body, tools = got
+    clean = body.simplify(1e-4)
+    if not clean.is_empty():
+        body = clean
+    tools = [t for t in tools if (t[1] ^ body).volume() > 1e-9]
+    solid = smooth(_mesh_of(body))
+    if solid is None:
+        return None
+    if not tools:
+        return solid
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    removed = body.volume() - (body - _union_of([t[1] for t in tools])).volume()
+    want = _volume(solid) - removed
+    occ = [s for t in tools for s in t[0]]
+    for fuzzy in (FUZZY, 1e-6, 0.0, 1e-3):
+        try:
+            r = _bool1(_cls("subtract"), [solid], occ, fuzzy)
+        except RuntimeError:
+            continue
+        err = abs(_volume(r) - want) / max(abs(want), 1e-9)
+        if BRepCheck_Analyzer(r).IsValid() and err < 2e-3:
+            notes[-1]["cutters"] = len(occ)
+            return r
+    notes.append({"warning": "subd: OpenCascade's cut of the exact shapes from the smooth body failed; "
+                             "written the usual way"})
+    return None
+
+
+def _union_of(mans):
+    import manifold3d as m3d
+    return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add)
+
+
 def _unify(shape):
     """Coplanar facets merged into planes, pieces of one cylinder into one
     face (ShapeUpgrade_UnifySameDomain), kept only if the result is valid.
@@ -1626,7 +1704,7 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     facets move where a TPMS core's tunnels keep an organic region over its
     budget."""
     global TOPOLOGY_TOL
-    if tolerance is not None:
+    if tolerance is not None and surface != "subd":
         saved, TOPOLOGY_TOL = TOPOLOGY_TOL, float(tolerance)
         try:
             return export_step(part, path, faces, name, unify, check, surface, patches, degree)
@@ -1652,6 +1730,8 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     shape = None
     if surface == "smooth":
         shape = _smooth_shape(part, mesh_plan if mesh_volume is not None else None, patches, notes, degree)
+    elif surface == "subd":
+        shape = _subd_shape(plan, notes, tolerance)
     if shape is None:
         shape = _build_normal(plan, budget, faces, notes)
         if shape is None:
@@ -1691,7 +1771,8 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
         if isinstance(lf, Exact):
             _planes(lf.shape, planes)
     rep = _faces_report(shape, planes)
-    wrote = write_step(shape, path, name=name, verify=bool(check and valid))
+    wrote = write_step(shape, path, name=name, verify=bool(check and valid),
+                       **({"decimals": None} if surface == "subd" else {}))
     from OCP.TopAbs import TopAbs_SOLID
     from OCP.TopExp import TopExp_Explorer
 

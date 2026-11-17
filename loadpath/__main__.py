@@ -731,6 +731,9 @@ def main(argv=None):
     r.add_argument("--no-bundle", action="store_true",
                    help="skip the results bundle (out/bundle: part.glb, analysis.vtu, surface.vtp, tradeoff.csv "
                         "and manifest.json: the simulation's fields and meaning, for other viewers)")
+    r.add_argument("--step-surface", choices=["facets", "smooth", "subd"], default="facets",
+                   help="with --step: the organic body as facets, smooth Bezier patches, or a fitted "
+                        "subdivision surface in few B-spline faces (subd; the surface extra)")
     r.add_argument("--step", action="store_true",
                    help="also write the best outcome as STEP: keep-outs, preserved shapes and the design space "
                         "exact (planes, cylinders), the organic body faceted (needs loadpath[step])")
@@ -919,6 +922,19 @@ def main(argv=None):
     ex.add_argument("--keep", choices=["largest", "all"], default="largest")
     ex.add_argument("--skin", type=float, default=1.0, help="the wall the study will keep, mm (for the room report)")
     ex.add_argument("--sdf", action="store_true", help="also write exterior.sdf.npz (a signed distance grid)")
+    su = sub.add_parser("surface", help="organic mesh in (a scan, an AI-generated mesh, an optimized part), editable "
+                                        "STEP out: a quad cage whose Catmull-Clark surface is fitted to the mesh "
+                                        "within a tolerance from the process and the input's own noise, written "
+                                        "as smooth B-spline patches (C2, G1 at star points) plus the cage as OBJ")
+    su.add_argument("source")
+    su.add_argument("--out", help="the .step (default <source>.step); the cage goes beside it as .cage.obj")
+    su.add_argument("--size", type=float, help="the real longest extent, mm (generated meshes come at unit scale)")
+    su.add_argument("--scale", type=float, help="a factor instead of --size")
+    su.add_argument("--up", help="the source's up axis (default +y for GLB/glTF, else +z)")
+    su.add_argument("--tolerance", type=float, help="mm, two-way deviation (p99) allowed (default: a third of "
+                                                    "the process accuracy, or twice the input's noise)")
+    su.add_argument("--accuracy", type=float, help="the process's +- mm (default FDM 0.3)")
+    su.add_argument("--faces", type=int, help="cage faces, instead of growing the cage to the tolerance")
     sd = sub.add_parser("sdf", help="a part (STL/STEP/GLB) or an SDF as a signed distance grid (.npz: distance, "
                                     "origin, pitch; mm, negative inside) for SDF tools; loads back as a study "
                                     "shape {type: sdf}")
@@ -1357,6 +1373,8 @@ def main(argv=None):
         return _handoff(args)
     if args.cmd == "exterior":
         return _exterior(args)
+    if args.cmd == "surface":
+        return _surface(args)
     if args.cmd == "sdf":
         return _sdf(args)
     if args.cmd == "split":
@@ -1616,7 +1634,8 @@ def main(argv=None):
 
         bi = result.best if result.best is not None else len(result.outcomes) - 1
         try:
-            st = export_step(result.outcomes[bi].mesh, os.path.join(args.out, stems[bi] + ".step"), name=stems[bi])
+            st = export_step(result.outcomes[bi].mesh, os.path.join(args.out, stems[bi] + ".step"), name=stems[bi],
+                             surface=getattr(args, "step_surface", "facets"))
             st.pop("shape", None)
             summary["outcomes"][bi]["step"] = st
         except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing
@@ -2383,6 +2402,19 @@ def _exterior(args):
         out["sdf"] = save_sdf(e.mesh, os.path.join(args.out, "exterior.sdf.npz"))["path"]
     print(json.dumps(out, default=float))
     return 0 if out["ok"] else 2
+
+
+def _surface(args):
+    from .subd import surface_file
+    out = args.out or os.path.splitext(args.source)[0] + ".step"
+    try:
+        rep = surface_file(args.source, out, size=args.size, scale=args.scale, up=args.up, tolerance=args.tolerance,
+                           accuracy=args.accuracy, faces=args.faces)
+    except (ValueError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps(rep, indent=1, default=float))
+    return 0 if rep["ok"] else 1
 
 
 def _sdf(args):

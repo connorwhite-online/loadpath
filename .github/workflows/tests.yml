@@ -90,9 +90,11 @@ jobs:
           # OpenCascade (the step extra) and build123d only here; without
           # them these files skip or fail to import
           - group: step            # ~16 min there (build 6)
-            extras: ",step"
+            extras: ",step,surface"
             pip: build123d
-            files: tests/test_cadimport.py tests/test_latticestep.py tests/test_sharp.py tests/test_fit.py tests/test_build.py
+            files: >-
+              tests/test_cadimport.py tests/test_latticestep.py tests/test_sharp.py tests/test_fit.py
+              tests/test_subd.py tests/test_build.py
           # NeuralFoil (the aero extra) only here: the propeller's polars
           - group: aero            # ~3 min
             extras: ",aero"

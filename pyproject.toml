@@ -65,6 +65,9 @@ fast = ["pypardiso>=0.4"]
 critic = ["anthropic", "matplotlib>=3.8", "shapely>=2.0"]
 # STEP export with exact planes and cylinders (step.py): OpenCascade's Python bindings
 step = ["cadquery-ocp>=7.7", "embreex>=4.3"]   # embreex: fast ray casts for surface="smooth" (falls back to trimesh's own)
+# organic surfacing (subd.py, `loadpath surface`): Instant Meshes (BSD) lays the
+# quad cage; OpenCascade writes the B-spline STEP; libigl wraps broken inputs
+surface = ["cadquery-ocp>=7.7", "embreex>=4.3", "pyinstantmeshes>=1.0", "libigl>=2.5"]
 # the exterior intake's wrap (exterior.py): libigl's generalized winding number
 # reads open, self-intersecting, double-walled meshes (AI-generated, scanned)
 # right; without it a flood fill seals holes up to a few grid cells
