@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import sys
 import tempfile
 import time
@@ -108,6 +109,56 @@ def _want(c):
                                     (f"<= {c['max']}" if "max" in c else "")) if s)
 
 
+def _event_line(d):
+    """One study event as a short line, or None for the chatty ones."""
+    st = d.get("stage")
+    if st == "outcome":
+        c = d.get("confirm") or {}
+        return (f"outcome vf {d.get('volumeFraction', 0):.3f}  {d.get('mass') or 0:.1f} g  "
+                f"SF {d.get('safetyFactor') or 0:.2f}  passes {d.get('passes')}"
+                + (f"  tet {c.get('nodes')} nodes" if c.get("nodes") else ""))
+    if st in ("method", "confirm", "confirmed", "domain", "bundle"):
+        keep = {k: v for k, v in d.items() if k != "stage" and isinstance(v, (str, int, float, bool))}
+        return f"{st} " + " ".join(f"{k}={round(v, 3) if isinstance(v, float) else v}" for k, v in keep.items())
+    return None
+
+
+def _run_timed(cmd, work, env):
+    """subprocess.run, with the study's stderr events printed as they arrive,
+    stamped with the seconds since the command started: which stage the time
+    went to, and how many parts the search drew, on whatever machine runs it."""
+    t0 = time.time()
+    proc = subprocess.Popen(cmd, shell=True, cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True)
+    err = []
+    counts = {}
+
+    def read_err():
+        for line in proc.stderr:
+            err.append(line)
+            if not line.startswith("{"):
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            st = d.get("stage")
+            counts[st] = counts.get(st, 0) + 1
+            s = _event_line(d)
+            if s:
+                print(f"      t={time.time() - t0:6.0f}s  {s}", flush=True)
+
+    th = threading.Thread(target=read_err, daemon=True)
+    th.start()
+    out = proc.stdout.read()
+    proc.wait()
+    th.join()
+    if counts:
+        print("      events: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: str(kv[0]))),
+              flush=True)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, "".join(err))
+
+
 def run(name, tier="quick", keep=None):
     src = TUTORIALS / name
     base = keep or tempfile.mkdtemp(prefix="lp-tutorial-")
@@ -127,8 +178,7 @@ def run(name, tier="quick", keep=None):
             cmd = f"{sys.executable} " + cmd[len("python "):]
         print(f"  $ {cmd}", flush=True)
         t = time.time()
-        p = subprocess.run(cmd, shell=True, cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           text=True)
+        p = _run_timed(cmd, work, env)
         print(f"    ({time.time() - t:.0f} s, exit {p.returncode})", flush=True)
         if p.returncode != 0:
             failures.append(f"`{cmd}` exited {p.returncode}:\n{p.stdout[-2000:]}\n{p.stderr[-4000:]}")
