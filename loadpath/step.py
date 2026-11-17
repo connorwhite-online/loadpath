@@ -1756,7 +1756,8 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
         if isinstance(lf, Exact):
             _planes(lf.shape, planes)
     rep = _faces_report(shape, planes)
-    wrote = write_step(shape, path, name=name, verify=bool(check and valid))
+    wrote = write_step(shape, path, name=name, verify=bool(check and valid),
+                       **({"decimals": None} if surface == "subd" else {}))
     from OCP.TopAbs import TopAbs_SOLID
     from OCP.TopExp import TopExp_Explorer
 

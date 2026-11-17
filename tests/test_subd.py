@@ -55,10 +55,26 @@ def test_blob_to_step():
     """A curved body with extraordinary vertices: fitted within the
     tolerance, the patches G1 to a fraction of a degree, one valid closed
     solid holding the mesh's volume, and the cage written beside it."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+
+    from loadpath.step import read_step
+
     m = _blob()
     with tempfile.TemporaryDirectory() as td:
         rep = subd.export_surface(m, os.path.join(td, "blob.step"), cage_path=os.path.join(td, "blob.cage.obj"))
         assert os.path.getsize(rep["cage"]) > 0
+        # every face of the file as read back meshes (rounded poles did not)
+        back = read_step(rep["path"])
+        BRepMesh_IncrementalMesh(back, 0.005, False, 0.1, True)
+        ex = TopExp_Explorer(back, TopAbs_FACE)
+        while ex.More():
+            assert BRep_Tool.Triangulation_s(TopoDS.Face(ex.Current()), TopLoc_Location()) is not None
+            ex.Next()
     rep.pop("shape")
     assert rep["valid"] and rep["freeEdges"] == 0, rep
     assert rep["within"], rep["deviation"]
@@ -67,6 +83,23 @@ def test_blob_to_step():
     assert rep["patches"]["edgeAngle"]["max"] < 1.0, rep["patches"]
     assert rep["patches"]["patchToLimit"]["regularMax"] < 1e-9
     assert abs(rep["volume"] / rep["meshVolume"] - 1) < 2e-3, rep
+    # regular quad regions packed into single B-spline faces
+    assert rep["patches"]["packedSurfaces"] > 0
+    assert rep["stepFaces"] < 0.5 * rep["cageFaces"], rep
+
+
+def test_regular_rectangles_pack_into_one_face():
+    """A torus cage with no star points: four faces (a rectangle may not
+    close round the tube), the same limit surface, one valid solid."""
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    cage = _torus_cage()
+    H = subd.Hierarchy(cage, 3)
+    bs, lay = subd.patches(H, cage.V)
+    pk = subd.pack(H, cage.V, bs, lay)
+    assert len(pk) <= 4 and sum(x[0] == "bspline" for x in pk) >= 3, [x[0] for x in pk]
+    shape, free = subd.to_brep(pk)
+    assert free == 0 and BRepCheck_Analyzer(shape).IsValid()
 
 
 def test_tolerance_from_process_and_noise():

@@ -726,8 +726,8 @@ def _elevate(c, to):
 
 
 TANGENT = 3.0        # weight of "lies in the limit's tangent plane" rows against position rows (mm per unit)
-IRREGULAR_DEGREE = 5
-REFINE = 1           # times a face at an extraordinary vertex is split before its corner is fitted
+IRREGULAR_DEGREE = 7
+REFINE = 0           # times a face at an extraordinary vertex is split before its corner is fitted
 
 
 def cells(H, refine=REFINE):
@@ -799,6 +799,11 @@ def patches(H, C, degree=3, irregular=IRREGULAR_DEGREE, tangent=TANGENT, refine=
         return np.full(h + 1, i0), j0 + h - r
 
     curves = {}
+    tq_, _ = _twins(cage)
+    whole_irr = np.zeros(m, bool)              # faces at a star point left whole (refine 0)
+    for q, i0, j0, h, irr in lay:
+        if irr and h == s:
+            whole_irr[q] = True
 
     def curve(q, i0, j0, h, k):
         ii, jj = side_idx(i0, j0, h, k)
@@ -808,7 +813,10 @@ def patches(H, C, degree=3, irregular=IRREGULAR_DEGREE, tangent=TANGENT, refine=
         if key not in curves:
             P = XG[q, ii, jj]
             t = np.arange(h + 1) / h
-            if not (evv[a] or evv[b]):
+            fitted = evv[a] or evv[b]
+            if h == s and whole_irr[q]:
+                fitted = fitted or bool(whole_irr[int(tq_[4 * q + k])])
+            if not fitted:
                 d = degree
                 B = _bern(d, t)
                 ends = np.outer(B[:, 0], P[0]) + np.outer(B[:, d], P[-1])
@@ -947,6 +955,158 @@ def _dbern(d, t):
     return out
 
 
+def _bspline_basis(n_spans, t, d=3):
+    """Clamped uniform B-spline basis of degree d over [0, n_spans] at t:
+    (len(t), n_spans + d)."""
+    kn = np.concatenate([np.zeros(d), np.arange(n_spans + 1, dtype=float), np.full(d, float(n_spans))])
+    t = np.clip(np.asarray(t, float), 0, n_spans)
+    nb = len(kn) - 1
+    N = np.zeros((len(t), nb))
+    for i in range(nb):
+        N[:, i] = (kn[i] <= t) & (t < kn[i + 1])
+    N[t >= n_spans, n_spans + d - 1] = 1.0
+    N[t >= n_spans, :n_spans + d - 1] = 0.0
+    for k in range(1, d + 1):
+        M = np.zeros((len(t), nb - k))
+        for i in range(nb - k):
+            a = kn[i + k] - kn[i]
+            b = kn[i + k + 1] - kn[i + 1]
+            if a > 0:
+                M[:, i] += (t - kn[i]) / a * N[:, i]
+            if b > 0:
+                M[:, i] += (kn[i + k + 1] - t) / b * N[:, i + 1]
+        N = M
+    return N
+
+
+def _oriented(G, q, r):
+    """Face q's sample grid turned so its corner r is (0, 0) and its side r
+    runs along +i."""
+    for k in range(4):
+        A = np.rot90(G[q], k)
+        s = A.shape[0] - 1
+        corner = [G[q, 0, 0], G[q, s, 0], G[q, s, s], G[q, 0, s]][r]
+        nxt = [G[q, s, 0], G[q, s, s], G[q, 0, s], G[q, 0, 0]][r]
+        if A[0, 0] == corner and A[s, 0] == nxt:
+            return k
+    raise RuntimeError("face orientation")
+
+
+def regions(cage, regular, limit=64):
+    """Rectangles of regular cage faces, grown greedily: each a list of
+    rows of (face, r), r the face's side that runs along the rectangle's
+    +u. Inside one the limit surface is one bicubic B-spline."""
+    tq, tk = _twins(cage)
+    tq, tk = tq.reshape(-1, 4), tk.reshape(-1, 4)
+    used = np.zeros(len(cage.Q), bool)
+
+    def step(q, r, d):
+        """Across local side d (0 -v, 1 +u, 2 +v, 3 -u): (face, its r)."""
+        side = (d + r) % 4
+        q2, k2 = int(tq[q, side]), int(tk[q, side])
+        return q2, (k2 - (d + 2)) % 4
+
+    out = []
+    # seeds far from extraordinary vertices first: big rectangles grow there
+    order = np.argsort(-regular.astype(int), kind="stable")
+    for q0 in order:
+        if used[q0] or not regular[q0]:
+            continue
+        R = [[(int(q0), 0)]]
+        inside = {int(q0)}
+        grown = True
+        while grown:
+            grown = False
+            for d in (1, 2, 3, 0):
+                if (d in (1, 3) and len(R[0]) >= limit) or (d in (0, 2) and len(R) >= limit):
+                    continue
+                if d == 1:
+                    edge = [row[-1] for row in R]
+                elif d == 3:
+                    edge = [row[0] for row in R]
+                elif d == 2:
+                    edge = R[-1]
+                else:
+                    edge = R[0]
+                new = [step(q, r, d) for q, r in edge]
+                fs = [q for q, _ in new]
+                if any(used[q] or not regular[q] or q in inside for q in fs) or len(set(fs)) != len(fs):
+                    continue
+                # never close a ring (a rectangle round a tube would meet itself)
+                if any(step(q, r, d)[0] in inside for q, r in new):
+                    continue
+                # the new row/column must itself be a strip: neighbours along it
+                along = 2 if d in (1, 3) else 1
+                if any(step(*new[i], along) != new[i + 1] for i in range(len(new) - 1)):
+                    continue
+                if d == 1:
+                    for row, x in zip(R, new):
+                        row.append(x)
+                elif d == 3:
+                    for row, x in zip(R, new):
+                        row.insert(0, x)
+                elif d == 2:
+                    R.append(new)
+                else:
+                    R.insert(0, new)
+                inside |= set(fs)
+                grown = True
+        # R[j][i]: row j along +v, column i along +u
+        for row in R:
+            for q, _ in row:
+                used[q] = True
+        out.append(R)
+    return out
+
+
+def pack(H, C, bs, lay):
+    """The patch list with every rectangle of whole regular faces merged
+    into one clamped bicubic B-spline surface (exact: inside such a
+    rectangle the limit surface is one C2 bicubic spline). Returns a list
+    of surfaces: ("bezier", poles) or ("bspline", poles (nu, nv, 3), spans
+    (a, b))."""
+    cage = H.cage
+    G = H.G
+    s = G.shape[1] - 1
+    XG = (H.M @ C)[G]
+    whole = {}
+    for k, (q, i0, j0, h, irr) in enumerate(lay):
+        if h == s and not irr:
+            whole[q] = k
+    regular = np.zeros(len(cage.Q), bool)
+    regular[list(whole)] = True
+    out, taken = [], set()
+    for R in regions(cage, regular):
+        b, a = len(R), len(R[0])
+        if a * b == 1:
+            continue
+        U, V, P = [], [], []
+        t = np.arange(s + 1) / s
+        for j, row in enumerate(R):
+            for i, (q, r) in enumerate(row):
+                A = np.rot90(XG[q], _oriented(G, q, r))
+                U.append(np.repeat(i + t, s + 1))
+                V.append(np.tile(j + t, s + 1))
+                P.append(A.reshape(-1, 3))
+        U, V, P = np.concatenate(U), np.concatenate(V), np.concatenate(P)
+        Bu = _bspline_basis(a, U)
+        Bv = _bspline_basis(b, V)
+        A = (Bu[:, :, None] * Bv[:, None, :]).reshape(len(U), -1)
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.linalg import lsqr
+        As = csr_matrix(A)
+        poles = np.stack([lsqr(As, P[:, k], atol=1e-14, btol=1e-14, iter_lim=20000)[0] for k in range(3)], 1)
+        err = float(np.abs(A @ poles - P).max())
+        if err > 1e-6:
+            continue                      # not one spline after all (a fold in the layout): keep its patches
+        out.append(("bspline", poles.reshape(a + 3, b + 3, 3), (a, b)))
+        taken |= {whole[q] for row in R for q, _ in row}
+    for k, bq in enumerate(bs):
+        if k not in taken:
+            out.append(("bezier", bq))
+    return out
+
+
 # ------------------------------------------------------------------ B-rep
 
 def to_brep(b, sew=SEW):
@@ -961,8 +1121,30 @@ def to_brep(b, sew=SEW):
     from .brep import _forward
     from .step import _pnt
 
+    from OCP.Geom import Geom_BSplineSurface
+    from OCP.OCP.collections import Array1_double, Array1_int
+
+    def knots(n):
+        k = Array1_double(1, n + 1)
+        m = Array1_int(1, n + 1)
+        for i in range(n + 1):
+            k.SetValue(i + 1, float(i))
+            m.SetValue(i + 1, 4 if i in (0, n) else 1)
+        return k, m
+
     sw = BRepBuilderAPI_Sewing(sew)
-    for bq in b:
+    for item in b:
+        if isinstance(item, tuple) and item[0] == "bspline":
+            _, P, (na, nb) = item
+            arr = Array2_gp_Pnt(1, P.shape[0], 1, P.shape[1])
+            for i in range(P.shape[0]):
+                for j in range(P.shape[1]):
+                    arr.SetValue(i + 1, j + 1, _pnt(P[i, j]))
+            ku, mu = knots(na)
+            kv, mv = knots(nb)
+            sw.Add(BRepBuilderAPI_MakeFace(Geom_BSplineSurface(arr, ku, kv, mu, mv, 3, 3), 1e-7).Face())
+            continue
+        bq = item[1] if isinstance(item, tuple) else item
         n = bq.shape[0]
         arr = Array2_gp_Pnt(1, n, 1, n)
         for i in range(n):
@@ -991,7 +1173,8 @@ def write_cage_obj(cage, path):
             fh.write("f " + " ".join(str(int(i) + 1) for i in q) + "\n")
 
 
-def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=None, cage_path=None, **kw):
+def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=None, cage_path=None, packed=True,
+                   **kw):
     """Mesh in, STEP of a few smooth patches out. Returns a report."""
     import os
 
@@ -1001,12 +1184,25 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
 
     t0 = time.time()
     cage, H, rep = surface_mesh(mesh, tolerance=tolerance, faces=faces, progress=progress, **kw)
-    Hp = Hierarchy(Cage(cage.V, cage.Q), LEVEL + REFINE)
-    b, lay = patches(Hp, cage.V, degree)
-    rep["patches"] = patch_quality(Hp, cage.V, b, lay)
+    Hp = Hierarchy(Cage(cage.V, cage.Q), LEVEL + 1)
+    # a star point's faces whole, as degree-7 patches; split once toward it
+    # (quintic corners) where that misses the limit surface by more than a
+    # third of the tolerance
+    b, lay = patches(Hp, cage.V, degree, irregular=7, refine=0)
+    q = patch_quality(Hp, cage.V, b, lay)
+    if q["patchToLimit"]["max"] > rep["tolerance"] / 3:
+        b, lay = patches(Hp, cage.V, degree, irregular=5, refine=1)
+        q = patch_quality(Hp, cage.V, b, lay)
+        q["starPointsSplit"] = True
+    rep["patches"] = q
+    if packed:
+        b = pack(Hp, cage.V, b, lay)
+        rep["patches"]["packedSurfaces"] = int(sum(1 for x in b if x[0] == "bspline"))
     shape, free = to_brep(b)
     valid = bool(BRepCheck_Analyzer(shape).IsValid())
-    wrote = write_step(shape, path, verify=valid)
+    # points as OpenCascade writes them: rounding the poles of a degree-7
+    # patch to 10 nm moves it off its own edges, and a reader cannot mesh it
+    wrote = write_step(shape, path, verify=valid, decimals=None)
     rep.update({"path": str(path), "bytes": os.path.getsize(path), "stepFaces": int(len(b)), "freeEdges": free,
                 "valid": bool(valid and wrote.get("readBackValid", valid)),
                 "volume": round(_volume(shape), 3), "meshVolume": round(float(mesh.volume), 3),

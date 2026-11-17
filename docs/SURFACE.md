@@ -48,20 +48,30 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
 
 ## Numbers (2026-11-17)
 
-| input | cage | STEP faces | tolerance | deviation p99 / max | worst kink | valid |
+| input | cage | STEP faces | tolerance | deviation p99 / max | worst kink | valid, re-read |
 |---|---|---|---|---|---|---|
-| Tripo-style pebble (holes, double wall, jitter) | 4954 quads | 5857 | 0.1 mm (FDM) | 0.066 / 0.34 mm | 0.34 deg | yes |
-| Stanford bunny scan, 100 mm (holes) | 12k quads | 13k | 0.016 mm | 0.067 / 0.28 mm | (before G1 fix) | yes |
-| soft plate + exact bore (field part) | 1879 quads | 1933 B-spline + 1 cylinder | 0.1 mm | 0.087 / 0.25 mm | 0.5 deg | yes, re-read valid |
+| Tripo-style pebble (holes, double wall, jitter) | 4954 quads | 426 (102 packed B-splines) | 0.1 mm (FDM) | 0.066 / 0.34 mm | 0.29 deg | yes |
+| soft plate + exact bore (field part) | 1879 quads | 146 B-spline + 1 cylinder | 0.1 mm | 0.087 / 0.25 mm | 0.7 deg | yes |
 
 The pebble's surface lands as close to its true shape (the generator's
 SDF, before it was broken) as the noisy input does: p99 0.11 mm vs 0.10.
 
+**Packing.** Rectangles of regular cage faces are grown greedily and each
+becomes one clamped bicubic B-spline (exact: inside such a rectangle the
+limit surface is one C2 spline; a rectangle never closes round a tube).
+Faces at a star point stay whole as degree-7 patches; where that misses the
+limit by more than a third of the tolerance they are split once toward the
+star point. The file's points are written unrounded: rounding a degree-7
+patch's poles to 10 nm moved it off its own edges and readers could not
+mesh it.
+
 ## Not yet
 
-- Packing: a patch per cage face today. Regular quad regions are single
-  B-spline surfaces in waiting (exact, C2); merging them cuts the face
-  count by an order.
+- Packing is greedy: rectangles end at T-junctions, so some faces are long
+  thin strips; tracing separatrices from the star points would give a
+  cleaner layout.
+- Zebra stripes still wobble on large flats of field parts: the fit follows
+  the marching-cubes mesh's small ripples within the tolerance.
 - Adaptive density: Instant Meshes lays the cage at one density, so flats
   get as many patches as tight blends.
 - Sharp creases on an organic body (a generated mesh's hard rim) are
