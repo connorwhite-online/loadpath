@@ -731,6 +731,9 @@ def main(argv=None):
     r.add_argument("--no-bundle", action="store_true",
                    help="skip the results bundle (out/bundle: part.glb, analysis.vtu, surface.vtp, tradeoff.csv "
                         "and manifest.json: the simulation's fields and meaning, for other viewers)")
+    r.add_argument("--step-surface", choices=["facets", "smooth", "subd"], default="facets",
+                   help="with --step: the organic body as facets, smooth Bezier patches, or a fitted "
+                        "subdivision surface in few B-spline faces (subd; the surface extra)")
     r.add_argument("--step", action="store_true",
                    help="also write the best outcome as STEP: keep-outs, preserved shapes and the design space "
                         "exact (planes, cylinders), the organic body faceted (needs loadpath[step])")
@@ -1610,7 +1613,8 @@ def main(argv=None):
 
         bi = result.best if result.best is not None else len(result.outcomes) - 1
         try:
-            st = export_step(result.outcomes[bi].mesh, os.path.join(args.out, stems[bi] + ".step"), name=stems[bi])
+            st = export_step(result.outcomes[bi].mesh, os.path.join(args.out, stems[bi] + ".step"), name=stems[bi],
+                             surface=getattr(args, "step_surface", "facets"))
             st.pop("shape", None)
             summary["outcomes"][bi]["step"] = st
         except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing

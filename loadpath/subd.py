@@ -220,7 +220,7 @@ def quad_cage(mesh, faces, crease=None, seed=0):
         raise RuntimeError("quad remesh returned faces that are not quads")
     v = np.asarray(v, float)
     f = np.asarray(f, np.int64)
-    f = f[(f[:, 0] != f[:, 1]) & (f[:, 1] != f[:, 2]) & (f[:, 2] != f[:, 3]) & (f[:, 3] != f[:, 0])]
+    f = f[np.array([len(set(x)) == 4 for x in f.tolist()], bool)]      # no repeated corner
     used = np.unique(f)
     remap = np.full(len(v), -1)
     remap[used] = np.arange(len(used))
@@ -326,6 +326,8 @@ def _dissolve_doublets(v, f):
             break
         w = int(bad[0])
         fs = np.nonzero((f == w).any(1))[0]
+        if len(fs) != 2:
+            raise ValueError("quad cage has a folded doublet")
         q1, q2 = f[fs[0]], f[fs[1]]
         k1 = int(np.nonzero(q1 == w)[0][0])
         r1 = np.roll(q1, -k1)                     # (w, a, x, b)
@@ -544,9 +546,10 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
     best = None
     for r in range(rounds):
         cage = None
-        for k in range(4):                    # an odd hole or a fold at this density: nudge it
+        for k, f in enumerate((1.0, 1.08, 0.93, 1.17, 1.3, 1.5, 1.8, 2.2)):
+            # an odd or pinched hole, a fold at this density: nudge it
             try:
-                cage = quad_cage(mesh, int(n * (1 + 0.07 * k)), crease=crease)
+                cage = quad_cage(mesh, int(n * f), crease=crease)
                 break
             except ValueError as err:
                 if progress:

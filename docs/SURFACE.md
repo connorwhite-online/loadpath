@@ -52,6 +52,7 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
 |---|---|---|---|---|---|---|
 | Tripo-style pebble (holes, double wall, jitter) | 4954 quads | 426 (102 packed B-splines) | 0.1 mm (FDM) | 0.066 / 0.34 mm | 0.29 deg | yes |
 | soft plate + exact bore (field part) | 1879 quads | 146 B-spline + 1 cylinder | 0.1 mm | 0.087 / 0.25 mm | 0.7 deg | yes |
+| optimized arm link (`loadpath run --step-surface subd`) | 9499 quads | 1956 B-spline + 26 plane + 13 cylinder | 0.1 mm | 0.097 / 0.67 mm | 1.4 deg | yes, volume +0.02% |
 
 The pebble's surface lands as close to its true shape (the generator's
 SDF, before it was broken) as the noisy input does: p99 0.11 mm vs 0.10.
@@ -76,3 +77,5 @@ mesh it.
   get as many patches as tight blends.
 - Sharp creases on an organic body (a generated mesh's hard rim) are
   rounded to within the tolerance, not kept as creases.
+- Speed: the arm link takes about 20 minutes on a cloud container, most
+  of it in the density and fairing searches.
