@@ -598,6 +598,16 @@ def _materials(args):
     return 0
 
 
+def _put_json(path: str, obj) -> None:
+    """Written whole beside the file and swapped in: a poll that opened
+    status.json between a plain write's truncate and its first byte read an
+    empty file (the MCP status call failed on a JSON error that way)."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump(obj, fh)
+    os.replace(tmp, path)
+
+
 def run_status(out: str) -> dict:
     """out/status.json, with `running` checked against the process: a run
     the OOM killer or a closed shell took down (SIGKILL) never gets to write
@@ -1515,8 +1525,7 @@ def main(argv=None):
     status_path = os.path.join(args.out, "status.json")
 
     def _status(state, **kw):
-        with open(status_path, "w") as fh:
-            json.dump({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study), **kw}, fh)
+        _put_json(status_path, {"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study), **kw})
 
     _status("running", started=time.time())
     import signal
@@ -1712,9 +1721,8 @@ def _run_multimaterial(args, study):
     status_path = os.path.join(args.out, "status.json")
 
     def _status(state, **kw):
-        with open(status_path, "w") as fh:
-            json.dump(_jsonable({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study),
-                                 "multiMaterial": True, **kw}), fh)
+        _put_json(status_path, _jsonable({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study),
+                                          "multiMaterial": True, **kw}))
 
     started = time.time()
     _status("running", started=started)
@@ -1785,9 +1793,8 @@ def _heatx(args):
         if status_path is None:
             return
         try:
-            with open(status_path, "w") as fh:
-                json.dump(_jsonable({"state": state, "pid": os.getpid(), "spec": os.path.abspath(args.spec),
-                                     "started": started, "updated": time.time(), **kw}), fh)
+            _put_json(status_path, _jsonable({"state": state, "pid": os.getpid(), "spec": os.path.abspath(args.spec),
+                                              "started": started, "updated": time.time(), **kw}))
         except OSError:
             pass
 

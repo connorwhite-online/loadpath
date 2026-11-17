@@ -1014,6 +1014,33 @@ def test_mesh_fidelity_counts_cells_the_mesh_dropped():
     assert 0.4 < f["lostSolidCells"] < 0.6, f
 
 
+def test_status_file_is_never_read_half_written():
+    # the writer used to truncate status.json in place: a reader polling it
+    # (the MCP status call) could open it empty
+    import json, os, tempfile, threading
+    from loadpath.__main__ import _put_json
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "status.json")
+        _put_json(path, {"state": "running", "n": 0})
+        stop = threading.Event()
+
+        def write():
+            n = 0
+            while not stop.is_set():
+                n += 1
+                _put_json(path, {"state": "running", "n": n, "pad": "x" * 4000})
+        th = threading.Thread(target=write)
+        th.start()
+        try:
+            for _ in range(3000):
+                with open(path) as fh:
+                    assert json.load(fh)["state"] == "running"
+        finally:
+            stop.set()
+            th.join()
+        assert os.listdir(d) == ["status.json"]
+
+
 def test_run_status_notices_a_dead_run():
     """A run killed outright cannot write its own end: `loadpath status`
     checks the pid and says `died` instead of `running` forever."""
@@ -1430,6 +1457,7 @@ TESTS = [
     test_heat_exchanger_rating_limits_and_geometry,
     test_fasteners_expand_to_rings_keepouts_and_preload,
     test_mesh_fidelity_counts_cells_the_mesh_dropped,
+    test_status_file_is_never_read_half_written,
     test_run_status_notices_a_dead_run,
     test_status_hands_over_a_confirmed_part,
     test_viewer_page_carries_fields_and_history,
