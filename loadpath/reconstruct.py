@@ -1060,15 +1060,6 @@ def _attach_plan(mesh, study, organic):
 
 
 PINCH_R = 0.08
-# Geometry finer than an STL keeps (float32: 1.2e-5 mm steps at 100 mm) is
-# collapsed before pinch filling (manifold3d's simplify). The full-tier
-# remote's cover came out of its booleans with slivers a few 1e-7 mm thick
-# where the cut interior met the exact skin on the envelope (174k triangles,
-# genus -60, 191 contacts): simplified it was 66k triangles, genus 3, and
-# the export's own weld and sliver pass left it watertight with no balls,
-# where filling the raw contacts fed itself (22k, 46k, 76k contacts, 3.3M
-# triangles, past 13 GB).
-WELD_TOL = 1e-5
 
 
 def _stl_pinches(part):
@@ -1881,8 +1872,6 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
             info["unformedDropFailed"] = f"{type(exc).__name__}: {exc}"
         if unformed:
             info["unformedDropped"] = unformed
-    if hasattr(part, "simplify"):
-        part = part.simplify(WELD_TOL)
     part, pinches = _fill_pinches(part, clip=clip, keep_out=ko_all, hold=hold)
     if pinches and not _stl_watertight(_drop_slivers(trimesh_from_manifold(part))):
         # contacts the clipped balls could not close (where three drawn
