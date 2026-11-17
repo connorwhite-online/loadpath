@@ -1212,6 +1212,48 @@ def test_last_stage_ends_on_its_schedule(monkeypatch):
     assert np.median([h["volumeSolves"] for h in a.history[1:]]) <= 12
 
 
+def test_stiffness_bound_part_runs_to_the_stall():
+    """A part held by a stiffness limit does not end its sharpest stage on
+    the schedule: the iterations past it are stiffness at the same volume
+    (the MJF wrist link, 0.82 to 1.10 of its travel limit at 54 g on the
+    schedule and 1.42 run on). The schedule holds for the rest."""
+    import dataclasses
+    from loadpath import study as S
+    s = study_from_dict(LUG)
+    d = build_domain(s)
+    opts = SimpOptions(volume_fraction=0.35, filter_radius=filter_radius(d, None), max_iterations=200)
+    a = optimize(d, 0.39, opts)
+    b = optimize(d, 0.39, dataclasses.replace(opts, stiffness_bound=True))
+    assert a.converged and b.converged and b.iterations > a.iterations
+    assert b.compliance < a.compliance
+    assert abs(b.xphys[~d.preserve].mean() - a.xphys[~d.preserve].mean()) < 1e-3
+    g = s.goal
+    assert not S._stiffness_limited(s) or g.max_deflection or g.clearances
+    assert S._stiffness_limited(dataclasses.replace(s, goal=dataclasses.replace(g, max_deflection=0.5)))
+    assert not S._stiffness_limited(dataclasses.replace(s, goal=dataclasses.replace(
+        g, max_deflection=None, clearances=[], max_displacement=None)))
+
+
+def test_cold_rerun_does_not_replace_a_passing_part_with_a_failing_one():
+    """A malformed warm start is run cold too (study._cold_instead). The
+    cold part is kept when it is clean or stronger, but not when the warm
+    one holds the limits and it does not: the wrist link's 54.1 g part at
+    margin 1.10, 231 mm of crease, was replaced by a clean one at 0.82."""
+    from types import SimpleNamespace as NS
+    from loadpath import study as S
+    s = study_from_dict(LUG)
+
+    def part(margin, crease):
+        return NS(passes=margin >= 1.0, report={"margin": margin, "creaseLength": crease})
+
+    assert not S._cold_instead(s, part(1.10, 231.0), part(0.82, 30.0))
+    assert S._cold_instead(s, part(0.90, 231.0), part(1.05, 250.0))      # the cold one passes
+    assert S._cold_instead(s, part(1.10, 231.0), part(1.02, 30.0))       # both pass: the clean one
+    assert S._cold_instead(s, part(0.70, 231.0), part(0.60, 30.0))       # both fail: the clean one
+    assert not S._cold_instead(s, part(1.30, 231.0), part(1.10, 260.0))  # both creased: the margin
+    assert S._cold_instead(s, part(1.10, 231.0), part(1.30, 260.0))
+
+
 def test_voxelize_keeps_a_whole_grid_box():
     """A box a whole number of cells across voxelizes to exactly that many:
     (hi - lo) / pitch read just over n at 107 of 400 pitches, and the

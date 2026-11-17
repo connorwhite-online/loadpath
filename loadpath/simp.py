@@ -504,6 +504,15 @@ class SimpOptions:
     # cross it: docs/CONVERGENCE.md.)
     stall_rtol: float = 2e-3
     stall_window: int = 6
+    # The part is held by a stiffness limit (a deflection, a clearance, a
+    # travel): the sharpest stage then runs until its compliance stalls
+    # instead of ending on its schedule. The schedule's case is that the
+    # iterations past it buy no strength a larger volume fraction does not;
+    # stiffness they do buy. The MJF wrist link, held by 0.12 mm of travel at
+    # its J6 mount, read 0.82 to 1.10 of that limit at 54 g on the schedule
+    # (40 iterations) and 1.42 run to the stall (64); its search, which
+    # passed at 45.8 g before the schedule, ended at 61 g with it.
+    stiffness_bound: bool = False
     eta: float = 0.5
     # Stiffness is credited to the ERODED design (projected at eta + this),
     # while volume is counted on the blueprint (eta) we deliver. A member
@@ -1239,9 +1248,11 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
     # 0.1% apart in strength; on the schedule, equal to 8 digits). A problem
     # with a weight still climbing (buckling, vibration, warp, centre of
     # mass, casting feed, a maximum member, a temperature swing) is not at
-    # rest on a schedule and keeps the stall rule.
+    # rest on a schedule and keeps the stall rule; so does a part held by its
+    # stiffness (opts.stiffness_bound), whose limit is the compliance itself.
     # (LOADPATH_STOP=stall restores the stall rule, to measure against.)
     scheduled = (measured and os.environ.get("LOADPATH_STOP", "hold") != "stall"
+                 and not opts.stiffness_bound
                  and not (heat is not None and heat.swing_limit is not None)
                  and buck is None and modal is None and domain.warp is None and com_cfg is None and feed_t is None)
     mu = 0.0

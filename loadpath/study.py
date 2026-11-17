@@ -215,6 +215,13 @@ def _making(study: Study) -> dict:
                 dilate=_DILATE if study.min_hole else 0.0, escape=study.drains)
 
 
+def _stiffness_limited(study: Study) -> bool:
+    """The goal holds a stiffness: a deflection at the loads, a clearance or
+    a travel anywhere (simp.SimpOptions.stiffness_bound)."""
+    g = study.goal
+    return bool(g.max_deflection or g.clearances or getattr(g, "max_displacement", None))
+
+
 # simp.SimpOptions.dilate when the study has a minimum hole: the erosion's twin
 _DILATE = 0.15
 
@@ -473,6 +480,21 @@ def _malformed(study: Study, report: dict) -> str | None:
     return None
 
 
+def _cold_instead(study: Study, warm, cold) -> bool:
+    """A warm-started outcome came out malformed and the same fraction was
+    run cold: is the cold part the one to keep? The one that holds the
+    limits, when only one does; else the cold one when it is well formed or
+    has the better margin. (The clean part used to win whatever it held: the
+    MJF wrist link, whose every warm part carries over 200 mm of crease, had
+    its passing 54.1 g part, margin 1.10, replaced by a cold one at 0.82,
+    and at the next fraction 48.0 g at 1.15 by one at 0.68, so the search
+    ended at 61 g.)"""
+    if warm.passes != cold.passes:
+        return bool(cold.passes)
+    return not _malformed(study, cold.report) or \
+        (cold.report.get("margin") or 0.0) > (warm.report.get("margin") or 0.0)
+
+
 def _warp_delivered(study: Study, mesh) -> dict | None:
     """The as-built measures of the delivered part (buildsim.simulate_part
     at buildSim.cells, on the plate or bed at the end of the build, as the
@@ -519,7 +541,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     res = optimize(domain, study.elastic(design=True),
                    SimpOptions(volume_fraction=vf, filter_radius=radius,
                                max_iterations=max_iterations or study.max_iterations, x0=x0, beta_start=beta0,
-                               **_making(study)),
+                               stiffness_bound=_stiffness_limited(study), **_making(study)),
                    on_iter=on_iter, should_stop=should_stop)
     note({"stage": "mesh", "volumeFraction": vf})
     mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
@@ -2448,7 +2470,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                                        max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
                                        buckling=breq, buckling_modulus=study.material.E,
                                        binding=_binding(study, domain, src),
-                                       **_making(study)),
+                                       stiffness_bound=_stiffness_limited(study), **_making(study)),
                            on_iter=on_iter, should_stop=should_stop)
             x, xphys = res.x, res.xphys
             warp = res.warp
@@ -2607,8 +2629,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                     c = cold()
                     ran_cold = True
                     c.report["start"] = f"cold (the warm start came out {why})"
-                    if not _malformed(study, c.report) or \
-                            (c.report.get("margin") or 0.0) > (o.report.get("margin") or 0.0):
+                    if _cold_instead(study, o, c):
                         o, c = c, o
                     o.report["alternative"] = {k: c.report.get(k) for k in
                                                ("start", "mass", "safetyFactor", "margin")} | {"passes": c.passes}

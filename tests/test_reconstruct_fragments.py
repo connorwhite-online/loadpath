@@ -145,6 +145,10 @@ def test_feather_edges_at_a_bore_are_cut_to_what_prints():
     w = check_process(mesh, "mjf", build="+z", material="pa12")["walls"]
     assert w["ok"] is True and not w["unformed"], w
     assert mesh.volume > 13500, mesh.volume   # 13543 mm^3 before: a round, not a groove widened
+    # and the cut runs out into the surface: ending at a wall it left 41.6 mm
+    # of crease along the bore (38 of the wrist yoke's 50 mm, for 40 allowed)
+    from loadpath.verify import _creases
+    assert _creases(s, mesh)["creaseLength"] < 10.0
 
 
 def test_pinch_balls_never_stand_in_a_bore():

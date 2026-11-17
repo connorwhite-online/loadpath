@@ -675,12 +675,17 @@ def _drop_unformed_once(part, study, cut_ko, min_wall):
     # surface at a ball's radius from the cells a ball fits in (the opening's
     # own boundary) meets the printed surface tangentially, a round, where a
     # cut round the cells left a new knife edge to peel again. Only near the
-    # pieces (two cells round them).
+    # pieces, and running out from them: the full cut within a cell of a
+    # piece, a cell shallower for each cell further, so its end is a ramp
+    # into the surface. (It used to end at the edge of a mask two cells
+    # round the pieces, a staircase wall through whatever thin material ran
+    # on past it: 8 mm of the wrist yoke's 13 mm of crease on one part, 38
+    # of 50 mm on the part its eval failed on.)
     r = 0.5 * min_wall / p
     core = ndimage.distance_transform_edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1] > r
     far = ndimage.distance_transform_edt(~core).astype(np.float32) - r
-    near = ndimage.binary_dilation(cut, iterations=2)
-    f = np.pad(np.where(near, np.clip(far, -2.0, 2.0), -2.0), 2, constant_values=-2.0)
+    away = ndimage.distance_transform_edt(~cut).astype(np.float32)
+    f = np.pad(np.clip(far, -2.0, 2.0) - np.maximum(away - 1.0, 0.0), 2, constant_values=-2.0)
     if f.max() <= 0.0:
         return part, []
     v, faces, _, _ = marching_cubes(f, 0.0)
