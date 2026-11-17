@@ -1,6 +1,6 @@
 {
   "name": "robot-wrist-link-mjf",
-  "description": "The arm's v0.3 wrist link (J5 to J6, examples/robot-arm/studies/wrist_link.json at fa8119c) printed in HP MJF PA12 instead of SLS PA12-GF, built along +z. Exercises the powder-bed process checks on the delivered part: walls at least MJF's 0.8 mm, no powder trapped in a cavity or behind an exit under 5 mm, and no thin flat panel long enough to warp, on top of the usual SF 2 and interfaces. Before fa8119c the J5 idler bearing pocket came out wrapped in a 5 mm shell with only narrow gaps out (1.7 cm^3 of trapped powder, no way to fit the bearing); this case is what caught it. Stiffness: the J6 mount may move no more in any load case than it does on the v0.3 part it replaces, printed in the same MJF PA12 and read both ways the delivered part is, on the same 60k-cell grid and on tets, the larger reading standing (most any node of j6-mount travels: reaching 0.89 mm on the grid and 0.84 on tets, J6 rated torque 3.08 and 3.37, lateral push 0.12 and 0.14). The tool sits about 97 mm past the mount (the reach moment over its force), so the mount's travel and tilt are the gripper's positioning error; without this the lightest SF-2 part (30.7 g) moved 2-8x more than the original.",
+  "description": "The arm's v0.3 wrist link (J5 to J6, examples/robot-arm/studies/wrist_link.json at fa8119c) printed in HP MJF PA12 instead of SLS PA12-GF, built along +z. Exercises the powder-bed process checks on the delivered part: walls at least MJF's 0.8 mm, no powder trapped in a cavity or behind an exit under 5 mm, and no thin flat panel long enough to warp, on top of the usual SF 2 and interfaces. Before fa8119c the J5 idler bearing pocket came out wrapped in a 5 mm shell with only narrow gaps out (1.7 cm^3 of trapped powder, no way to fit the bearing); this case is what caught it. Stiffness: the J6 mount may move no more in any load case than it does on the v0.3 part it replaces, printed in the same MJF PA12 and read both ways the delivered part is, on the same 60k-cell grid and on tets, the larger reading standing (most any node of j6-mount travels: reaching 0.89 mm on the grid and 0.84 on tets, J6 rated torque 3.08 and 3.37, lateral push 0.12 and 0.14). The tool sits about 97 mm past the mount (the reach moment over its force), so the mount's travel and tilt are the gripper's positioning error; without this the lightest SF-2 part (30.7 g) moved 2-8x more than the original. The parent's two J5 mount bosses pass 0.58 mm from the idler shaft through the drawn shoulder; MJF does not form a wall under 0.8 mm, so j5-shoulder-web opens each boss's hole into the shaft bore (a slot as wide as the boss), and the shoulder bears on the ring that is left.",
   "designSpace": [
     {
       "type": "box",
@@ -441,6 +441,42 @@
               16.35,
               -37.0,
               544.3
+            ],
+            "r": 3.5
+          }
+        ]
+      }
+    },
+    {
+      "id": "j5-shoulder-web",
+      "shape": {
+        "type": "union",
+        "shapes": [
+          {
+            "type": "cylinder",
+            "p0": [
+              -5.524,
+              -8.4,
+              576.3
+            ],
+            "p1": [
+              -5.524,
+              -4.0,
+              576.3
+            ],
+            "r": 3.5
+          },
+          {
+            "type": "cylinder",
+            "p0": [
+              5.524,
+              -8.4,
+              576.3
+            ],
+            "p1": [
+              5.524,
+              -4.0,
+              576.3
             ],
             "r": 3.5
           }
