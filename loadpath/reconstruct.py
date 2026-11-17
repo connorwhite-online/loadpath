@@ -688,9 +688,16 @@ def _drop_unformed_once(part, study, cut_ko, min_wall):
     f = np.pad(np.clip(far, -2.0, 2.0) - np.maximum(away - 1.0, 0.0), 2, constant_values=-2.0)
     if f.max() <= 0.0:
         return part, []
+    # the ramp is whole cells deep and the clip whole cells high, so the
+    # field lands on the level exactly at grid points, where marching cubes
+    # joins sheets at a vertex: not a manifold, and the cut was silently
+    # skipped (the MJF wrist link's horn-bore skin, 2123 cells, 329 zeros)
+    f[f == 0.0] = -1e-3
     v, faces, _, _ = marching_cubes(f, 0.0)
     v = origin + (v - 2 + 0.5) * p
     blob = m3d.Manifold(m3d.Mesh(vert_properties=v.astype(np.float32), tri_verts=faces[:, ::-1].astype(np.uint32)))
+    if blob.status() != m3d.Error.NoError:
+        raise ValueError(f"the cut along the ball's sweep is not a solid ({blob.status()})")
     if blob.is_empty():
         return part, []
     if drawn:
