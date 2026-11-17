@@ -109,6 +109,17 @@ def _want(c):
                                     (f"<= {c['max']}" if "max" in c else "")) if s)
 
 
+def _machine():
+    """The CPU and core count: a part the search finds differs by CPU."""
+    model = ""
+    try:
+        with open("/proc/cpuinfo") as f:
+            model = next((l.split(":", 1)[1].strip() for l in f if l.startswith("model name")), "")
+    except OSError:
+        pass
+    return f"{model or 'unknown CPU'}, {os.cpu_count()} cores"
+
+
 def _event_line(d):
     """One study event as a short line, or None for the chatty ones."""
     st = d.get("stage")
@@ -200,7 +211,7 @@ def main():
     names = [a for a in args if not a.startswith("--")] or tutorials()
     bad = 0
     for name in names:
-        print(f"== {name} ({tier})", flush=True)
+        print(f"== {name} ({tier}) on {_machine()}", flush=True)
         failures, sec = run(name, tier, keep)
         if failures:
             bad += 1
