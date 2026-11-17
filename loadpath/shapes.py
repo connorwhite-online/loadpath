@@ -519,6 +519,8 @@ class MeshShape(Shape):
         return manifold_from_trimesh(self.mesh)
 
     def to_spec(self):
+        if getattr(self, "brep", None) is not None:
+            return dict(self.brep)
         if self.path is None:
             raise ValueError("an in-memory mesh shape has no JSON form")
         return {"type": "mesh", "path": self.path}
@@ -1257,6 +1259,22 @@ def _shape(spec, base_dir):
             return MeshShape(load_part(path).mesh, spec["path"])
         mesh = trimesh.load(path, force="mesh")
         return MeshShape(mesh, spec["path"])
+    if kind == "brep":
+        # an exact solid drawn in a B-rep kernel (build123d, CadQuery, STEP):
+        # 'file.py:name' runs that file (brepio.load_brep)
+        import os
+        from .brepio import load_brep
+        path = spec.get("path")
+        if not path:
+            raise ValueError("brep shape needs 'path' ('file.py:name', a STEP file or a mesh file)")
+        if base_dir is not None:
+            root = os.path.realpath(base_dir)
+            full = os.path.realpath(os.path.join(root, str(path).split(".py:")[0] + (".py" if ".py:" in str(path) else "")))
+            if os.path.commonpath([root, full]) != root:
+                raise ValueError(f"brep path {path!r} must stay inside the study's folder")
+        shape = MeshShape(load_brep(path, base_dir, tolerance=float(spec.get("tolerance", 0.005))).mesh, None)
+        shape.brep = dict(spec)
+        return shape
     if kind == "sdf":
         import os
         if spec.get("shroud") is not None:
@@ -1276,7 +1294,7 @@ def _shape(spec, base_dir):
         if not os.path.isfile(full):
             raise ValueError(f"sdf file {path!r} not found")
         return GridSDF.load(full, path)
-    raise ValueError(f"unknown shape type {kind!r} (box, cylinder, tube, sphere, mesh, sdf, union, intersect, "
+    raise ValueError(f"unknown shape type {kind!r} (box, cylinder, tube, sphere, mesh, brep, sdf, union, intersect, "
                      "subtract)")
 
 

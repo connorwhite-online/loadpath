@@ -270,6 +270,8 @@ class Outcome:
             "overhangArea": r.get("overhangArea"),
             "keepOutIntrusion": r.get("keepOutIntrusion"),
             "preserveMissing": r.get("preserveMissing"),
+            **({"drawn": r["drawn"]} if r.get("drawn") else {}),
+            **({"exterior": r["exterior"]} if r.get("exterior") else {}),
             "bodies": r.get("bodies"),
             "boundaryCutArea": r.get("boundaryCutArea"),
             **({"closedBores": r["closedBores"]} if r.get("closedBores") else {}),
@@ -530,6 +532,11 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     if report.get("closedBores"):
         o.passes = False
         report.setdefault("warnings", []).append(closed_bore_warning(report["closedBores"]))
+    from .drawncheck import drawn_failures
+    lost = drawn_failures(report)
+    if lost:
+        o.passes = False
+        report.setdefault("warnings", []).extend(lost)
     return o
 
 

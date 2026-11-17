@@ -99,6 +99,20 @@ _SHAPES = {
         "x-requireOne": [["path"], ["stlBase64"]],
         "additionalProperties": False,
     },
+    "brep": {
+        "type": "object",
+        "description": "An exact CAD solid (build.py, docs/BUILD.md): a build123d or CadQuery object in a "
+                       "Python file beside the study, as 'cad.py:name' (a module-level solid, or a function "
+                       "with no arguments that returns one), or a STEP file. Its faces and edges are kept: "
+                       "a build cuts and adds with the solid itself, and the checks read its fillet radii "
+                       "from the CAD kernel. The Python file is run, so it is the agent's own file. Needs "
+                       "loadpath[step].",
+        "properties": {"type": {"const": "brep"}, "path": {"type": "string"},
+                       "tolerance": {**_POS, "description": "mm the tessellation may stray from a curved face "
+                                                            "(default 0.005)"}},
+        "required": ["type", "path"],
+        "additionalProperties": False,
+    },
     "sdf": {
         "type": "object",
         "description": "A sampled signed distance field: an .npz (distance, origin, pitch; mm, negative "
@@ -139,11 +153,11 @@ _SHAPES = {
     },
 }
 _SHAPE_TYPES = {"box": "box", "cylinder": "cylinder", "tube": "cylinder", "sphere": "sphere",
-                "mesh": "mesh", "sdf": "sdf", "heightfield": "heightfield", "union": "union", "intersect": "intersect", "subtract": "subtract"}
+                "mesh": "mesh", "brep": "brep", "sdf": "sdf", "heightfield": "heightfield", "union": "union", "intersect": "intersect", "subtract": "subtract"}
 
 _SHAPE = {
-    "title": "a shape object (box, cylinder, tube, sphere, heightfield, mesh, sdf, union, intersect, subtract)",
-    "description": "A shape: box, cylinder (tube), sphere, heightfield, mesh, sdf, union, intersect or subtract. "
+    "title": "a shape object (box, cylinder, tube, sphere, heightfield, mesh, brep, sdf, union, intersect, subtract)",
+    "description": "A shape: box, cylinder (tube), sphere, heightfield, mesh, brep, sdf, union, intersect or subtract. "
                    "Units mm.",
     "oneOf": [{"$ref": f"#/$defs/{k}"} for k in _SHAPES],
     "x-discriminator": {"property": "type", "mapping": {k: f"#/$defs/{v}" for k, v in _SHAPE_TYPES.items()}},
@@ -1613,6 +1627,123 @@ _STOCK_MEMBER = {
     },
 }
 
+# ---- build: a part made in one run from a spec (build.py, docs/BUILD.md) --------------
+_DIR = {"type": "string", "pattern": "^[+-]?[xyz]$"}
+_BUILD_INTERFACE = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "shape": {"$ref": "#/$defs/shape", "description": "the feature as an exact solid (a brep shape); any "
+                                                          "other shape works but brings no CAD faces to read"},
+        "op": {"enum": ["add", "cut"], "description": "add: material that must be there (a boss, a plunger, a "
+                                                      "cradle); cut: space that must be open (a port, a bore, "
+                                                      "a lid opening)"},
+        "blend": {"type": "number", "minimum": 0,
+                  "description": "mm, radius of the fillet where an add meets the body's inner wall (default "
+                                 "0.5; 0: a sharp meeting). A cut's own rounds are drawn on its solid"},
+        "wall": {"type": "number", "minimum": 0,
+                 "description": "(cut) mm of material kept round the cut inside the part: a tunnel through "
+                                "the cavity"},
+        "proud": {"type": "boolean", "description": "(add) the solid may stand outside the exterior (default: "
+                                                    "it is trimmed to it, the exterior unchanged)"}},
+    "required": ["id", "shape", "op"], "additionalProperties": False,
+}
+_BUILD_COMPONENT = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "shape": {"$ref": "#/$defs/shape", "description": "the bought part's body where it sits"},
+        "clearance": {"type": "number", "minimum": 0,
+                      "description": "mm the printed part keeps off it everywhere (default 0): its pocket is "
+                                     "the body grown by this, cut exactly"},
+        "mass": {"type": "number", "minimum": 0, "description": "g, counted in an assembly target mass"},
+        "keepIn": {"type": "number", "minimum": 0,
+                   "description": "mm of the exterior that must stay between the component and the outside"},
+        "insertFrom": {"anyOf": [_DIR, {"type": "object", "properties": {
+                           "toward": _DIR, "length": _POS}, "required": ["toward"],
+                           "additionalProperties": False}],
+                       "description": "the way it goes in, as the side it comes from ('-z': from below): "
+                                      "the path it sweeps is cut, and the check fails if no way in is left"}},
+    "required": ["id", "shape"], "additionalProperties": False,
+}
+_BUILD_TARGET = {"anyOf": [_POS, {
+    "type": "object",
+    "properties": {
+        "grams": _POS,
+        "tolerance": {**_POS, "description": "g either side (default 2 % of the target, at least 0.05 g)"},
+        "of": {"enum": ["assembly", "part"], "description": "assembly (default): the print with its "
+                                                            "components' masses; part: the print alone"},
+        "adjust": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+                       "skin": {"const": True}, "zone": {"type": "string", "description": "a skin zone's id"},
+                       "min": _POS, "max": _POS},
+                       "x-requireOne": [["skin"], ["zone"]], "additionalProperties": False},
+                   "description": "the walls the solve may move, each between min and max mm (default: the "
+                                  "whole skin, from the thickness given to five of it). Only inner surfaces "
+                                  "move: the exterior and every interface stay as drawn"}},
+    "required": ["grams"], "additionalProperties": False}],
+    "description": "The mass the part is solved to, heavier or lighter, by wall thickness."}
+_BUILD_ASSERT = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "type": {"enum": ["surface", "fillet", "wall", "clearance", "keepIn", "mass", "open", "present", "distance"]},
+        "interface": {"type": "string"}, "component": {"type": "string"},
+        "from": {"type": "string"}, "to": {"type": "string"},
+        "min": {"type": "number"}, "max": {"type": "number"}, "margin": {"type": "number", "minimum": 0},
+        "near": {"$ref": "#/$defs/shape", "description": "(surface, fillet) the window: only the interface's "
+                                                         "faces inside this"},
+        "tolerance": {**_POS, "description": "(surface) mm the delivered surface may sit off the drawn one "
+                                             "(default 0.03)"},
+        "maxEdge": {"type": "number", "description": "(fillet) degrees: the sharpest edge the delivered mesh "
+                                                     "may have on the feature (default 50)"},
+        "of": {"enum": ["assembly", "part"]}},
+    "required": ["type"], "additionalProperties": False,
+    "description": "A feature the part must have, measured on the delivered mesh every build. surface "
+                   "{interface, near}: by region, the surest: inside the window the interface's drawn surface "
+                   "is on the part and the part's surface is on something drawn (the exterior, an interface, "
+                   "a pocket), within tolerance, so a feature filled, patched or rounded off fails outright. fillet "
+                   "{interface, min, near?}: the interface's rounds are at least min mm, by the CAD kernel's "
+                   "curvature and by the mesh, and survived the build; wall {min}; clearance {component, min}; "
+                   "keepIn {component, margin}; mass {min, max, of}; open / present {interface}; distance "
+                   "{from, to, min, max} between two interfaces or components.",
+}
+_CAMERA = {"type": "object", "properties": {
+    "position": _VEC3, "lookAt": _VEC3, "up": _VEC3,
+    "lens": {**_POS, "description": "mm focal length on a 36 mm sensor (as Blender's)"},
+    "fov": {**_POS, "description": "degrees across the width, instead of lens"},
+    "ortho": {**_POS, "description": "mm across the width: an orthographic view"},
+    "direction": {"type": "string", "description": "an orthographic view by name: +x, -x, +y, -y, +z, -z"},
+    "width": {"type": "integer", "minimum": 16}, "height": {"type": "integer", "minimum": 16},
+    "sensor": _POS, "fit": {"type": "boolean"}}, "additionalProperties": False,
+    "description": "A fixed camera, mm, in the part's frame: the one the reference image was made with."}
+_BUILD_REFERENCE = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "image": {"type": "string", "description": "a render or sketch, relative to the study's folder"},
+        "camera": {"anyOf": [_CAMERA, {"const": "fit"}],
+                   "description": "the image's camera; 'fit' (or fit: true with a start) finds it from the "
+                                  "exterior's outline once, and reports it so it can be fixed in the spec"},
+        "start": _CAMERA,
+        "mask": {"type": "string", "description": "the subject's silhouette as an image (white on black)"},
+        "gate": {"type": "boolean", "description": "false: scored and drawn side by side, but never fails the "
+                                                   "build (the default for a fitted camera: a sketch is not "
+                                                   "to scale, so its score is for a reviewer's eye)"},
+        "tolerance": {**_POS, "description": "mm an outline may sit off the reference's edge (default 1)"},
+        "minMatch": {"type": "number", "minimum": 0, "maximum": 1,
+                     "description": "share of the part's outline that must lie on a reference edge (default 0.85)"},
+        "minIou": {"type": "number", "minimum": 0, "maximum": 1,
+                   "description": "silhouette overlap required (with a mask or a mesh; mesh default 0.95)"},
+        "mesh": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/shape"}],
+                 "description": "instead of an image: a reference solid, compared in six views and in sections"},
+        "cameras": {"type": "array", "items": {"anyOf": [_CAMERA, {"type": "string"}]}},
+        "sections": {"type": "array", "items": {"type": "object"},
+                     "description": "planes {axis, at} the two are cut on (default: the three mid-planes)"},
+        "maxSectionDifference": {"type": "number", "minimum": 0,
+                                 "description": "share of a section's area that may differ (default 0.05)"}},
+    "x-requireOne": [["image"], ["mesh"]], "additionalProperties": False,
+}
+
 STUDY_SCHEMA = {
     "$schema": _DIALECT,
     "$id": "https://github.com/connorwhite-online/loadpath/schema/study.schema.json",
@@ -1662,6 +1793,7 @@ STUDY_SCHEMA = {
                             "description": "the exterior the skin lines when the design space is only part of it "
                                            "(a split half): the skin follows it and stops at the cut"},
                      "zones": {"type": "array", "items": {"type": "object", "properties": {
+                         "id": {"type": "string", "description": "a name targetMass.adjust can refer to"},
                          "shape": {"$ref": "#/$defs/shape"},
                          "thickness": {**_POS, "description": "mm of skin inside the zone"},
                          "blend": {"type": "number", "minimum": 0,
@@ -1964,6 +2096,21 @@ STUDY_SCHEMA = {
                     "additionalProperties": False,
                     "description": "`loadpath explore`: solve the study once per manufacturing method and "
                                    "material, with cost and lead time, ranked (explore.py). `run` ignores it."},
+        "interfaces": {"type": "array", "items": _BUILD_INTERFACE,
+                       "description": "`loadpath build` (docs/BUILD.md): the features that must be exact, as "
+                                      "CAD solids. The body between them is filled from the exterior and the "
+                                      "skin; they are added and cut last, with exact booleans, so their "
+                                      "edges and rounds arrive as drawn."},
+        "components": {"type": "array", "items": _BUILD_COMPONENT,
+                       "description": "`loadpath build`: the bought parts inside, as solids where they sit. "
+                                      "Each gets its pocket, its clearance and its way in, all checked."},
+        "targetMass": _BUILD_TARGET,
+        "assert": {"type": "array", "items": _BUILD_ASSERT,
+                   "description": "`loadpath build`: features checked on every build; one that fails fails "
+                                  "the build."},
+        "references": {"type": "array", "items": _BUILD_REFERENCE,
+                       "description": "`loadpath build`: concept images or a reference solid the part is "
+                                      "scored against from fixed cameras, with a side-by-side sheet each build."},
         "switch": _SWITCH,
         "feel": _FEEL,
         "split": {"type": "object", "properties": _SPLIT_PROPS, "additionalProperties": False,
@@ -1993,7 +2140,7 @@ STUDY_SCHEMA = {
                            "directory the environment variable `env` names; the case is skipped without it."},
     },
     "required": ["designSpace"],
-    "x-requireOne": [["loadCases"], ["loads"], ["feel"], ["cooling"]],
+    "x-requireOne": [["loadCases"], ["loads"], ["feel"], ["cooling"], ["interfaces"], ["components"]],
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
               "switchClearance": _SWITCH_CLEARANCE,
@@ -3776,7 +3923,9 @@ def lint(doc, kind: str = "study") -> list[dict]:
         except ValueError as exc:
             out.append(("error", "$.nodes", str(exc)))
     if kind == "study" and isinstance(doc, dict) and not doc.get("supports") and not doc.get("feel") \
-            and not doc.get("cooling") and not doc.get("inertiaRelief"):
+            and not doc.get("cooling") and not doc.get("inertiaRelief") \
+            and not ((doc.get("interfaces") or doc.get("components")) and not doc.get("loadCases")
+                     and not doc.get("loads")):      # a build spec without loads (build.py) is held by nothing
         # beyond JSON Schema: supports are optional only for pressure vessels
         cases = doc.get("loadCases") or ([{"loads": doc["loads"]}] if isinstance(doc.get("loads"), list) else [])
         loads = [ld for c in cases if isinstance(c, dict) for ld in (c.get("loads") or [])]

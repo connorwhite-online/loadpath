@@ -816,6 +816,56 @@ microphone the 1 mm model read the skin ~30% soft, and ribs that met 13
 of 14 there met 0 of 14 on their mesh. The report also gives powder escape
 and the material added inside each keep-out and its path.
 
+## A part in one run from a spec (build)
+
+When the job is "make this part" from a sketch, a parts list and a few
+hard requirements (a port that must stay rounded, a board that must go
+in, a weight it should have), write it as a spec and build it:
+`loadpath build spec.json --out dir` (MCP `loadpath_build`;
+docs/BUILD.md). The spec is a study with no loads needed:
+
+- `designSpace`: the exterior, kept exactly (0.0 mm on the delivered mesh).
+- `skin`: the wall, `zones` where it is thicker or thinner.
+- `interfaces`: every feature that must be exact, drawn once as a CAD
+  solid in a build123d file beside the spec
+  (`{"type": "brep", "path": "cad.py:port"}`) or a STEP file, `op` `cut`
+  or `add`. They are cut and added with exact booleans last, so their
+  edges and rounds arrive as drawn. Draw a round on the cut's own solid;
+  `blend` is the fillet where an add meets the inner wall.
+- `components`: the bought parts as solids, with `clearance`, `mass`,
+  `keepIn` and `insertFrom` (the side each goes in from).
+- `targetMass`: grams and the walls that may move (`adjust`), heavier or
+  lighter.
+- `assert`: what must be true, measured every build (`fillet` radius of
+  an interface, `wall`, `clearance`, `keepIn`, `mass`, `distance`).
+- `references`: the concept images with their cameras (`"camera": "fit"`
+  finds one for a sketch; copy the camera it reports into the spec), or a
+  reference solid.
+
+Rules:
+
+- State a requirement as an assertion the first time the user says it
+  ("keep the mouth rounded" is `{"type": "surface", "interface": "port",
+  "near": <a box round the mouth>}`, which holds that window of the part
+  to the drawing both ways, plus `{"type": "fillet", ..., "min": r}` for
+  the number), so it is checked on every later build and cannot be lost
+  to a later edit.
+- An exterior that is a mesh has no face to round a port's mouth against:
+  `loadpath.brepio.outside_of(mesh, "+y", center, size)` gives the space
+  outside it as a CAD solid; unite it with the cut and fillet the edge.
+- A sketch is not to scale: give it `"camera": "fit"` and it is drawn
+  side by side but never gates. Freeze the exterior as a mesh or STEP;
+  the `exterior` check holds the form.
+- When a check fails, fix the spec or the CAD file it points at and build
+  again. Never patch the mesh.
+- Exit code 0 (MCP `ok: true`) means every check passed. Then look at
+  `closeups/<id>.png` for every interface and component and at
+  `references/<id>.png` before handing the part over.
+- The `dfm` check holds the part to Materialize's published limits for
+  its material; `process` is loadpath's own reading of the same mesh.
+- `loadpath check-build spec.json part.stl` runs the checks on a part made
+  another way.
+
 ## Designing for feel (grip, drop, handling noise)
 
 Inside the same kind of exterior, a `feel` block designs for how the

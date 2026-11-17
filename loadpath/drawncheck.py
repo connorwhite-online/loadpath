@@ -70,3 +70,20 @@ def exterior_report(study, mesh) -> dict | None:
         out["why"] = ("the part is missing some of the exterior (a keep-out crossing the skin where it has no "
                       "opening?)" if out["coverage"] < 0.999 else "the part stands proud of the exterior")
     return out
+
+
+def drawn_failures(report: dict) -> list[str]:
+    """What a verify report's drawn and exterior readings fail on, as
+    sentences (empty: kept). A region fails when it lacks more than
+    MISSING_SHARE of itself and more than 1 mm^3 (the volume verify has
+    always held preserveMissing to: under it is mesh tolerance)."""
+    out = []
+    for g in (report.get("drawn") or {}).get("regions") or []:
+        if g.get("ok") is False and (g.get("missing") or 0.0) > 1.0:
+            out.append(f"preserved region {g['id']!r} lost {100 * g['missingShare']:.0f}% of itself "
+                       f"({g['missing']:.1f} mm^3): what is drawn must arrive as drawn")
+    ext = report.get("exterior")
+    if ext and ext.get("untouched") is False:
+        out.append(f"the exterior was changed: {ext.get('why') or 'see exterior'} (coverage "
+                   f"{ext.get('coverage')}, {ext.get('maxProud')} mm proud)")
+    return out

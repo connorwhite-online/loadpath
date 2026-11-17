@@ -138,6 +138,16 @@ class _Exact:
         T = np.ascontiguousarray(T[area > 1e-12 * max(float(area.max()), 1e-30)])
         lo, hi = T.min(axis=(0, 1)) - 1e-6, T.max(axis=(0, 1)) + 1e-6
         h = max(float(np.max(hi - lo)) / 160.0, 0.25)
+        # a CAD tessellation's flat faces are a few triangles the size of
+        # the part: binned as they are, one spans a hundred cells a side and
+        # the binning below walks every offset in that cube (37 s on a 50 mm
+        # puck). Split them to a few cells first; the surface is the same.
+        if float(np.ptp(T, axis=1).max()) > 8.0 * h:
+            from trimesh.remesh import subdivide_to_size
+
+            V, F = subdivide_to_size(T.reshape(-1, 3), np.arange(3 * len(T)).reshape(-1, 3), max_edge=6.0 * h,
+                                     max_iter=30)
+            T = np.ascontiguousarray(V[F], float)
         n = np.maximum(np.ceil((hi - lo) / h).astype(np.int64), 1)
         i0 = np.floor((T.min(axis=1) - lo) / h).astype(np.int64)
         i1 = np.floor((T.max(axis=1) - lo) / h).astype(np.int64)

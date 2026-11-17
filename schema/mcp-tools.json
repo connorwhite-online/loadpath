@@ -8,6 +8,16 @@
    "base_dir"
   ]
  },
+ "loadpath_build": {
+  "effect": "job",
+  "required": [
+   "spec"
+  ],
+  "optional": [
+   "base_dir",
+   "quick"
+  ]
+ },
  "loadpath_buildsim": {
   "effect": "job",
   "required": [

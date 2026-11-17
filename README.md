@@ -84,6 +84,17 @@ Where it is strongest:
 - **The analysis behind the shape**: buckling, fatigue and creep,
   large-deflection compliant mechanisms, loads of unknown direction, thermal
   loads and print warp, all checked on the delivered mesh.
+- **A part in one run**: the requirements an agent usually loses between
+  edits are written down once and measured on every build. `loadpath
+  build` takes a spec: the exterior, the features that must be exact as
+  CAD solids (drawn in build123d, or STEP), the parts inside with their
+  clearances, a target mass, asserted features ("the port mouth's round
+  is at least 1 mm") and the concept images with their cameras. The body
+  between the features is filled, the features are cut and added with
+  exact booleans so their edges arrive as drawn, the walls move until the
+  mass is right, and the part is scored against each reference from a
+  fixed camera ([docs/BUILD.md](docs/BUILD.md)): a desk pod with a
+  board, a switch and a rounded USB-C mouth, 19 checks in 40 seconds.
 - **Inside an industrial design**: a designer can stop at the outside.
   `loadpath enclosure` takes the exterior and a list of what goes in it (a
   battery, a board and its connector, a motor, with masses), places each
@@ -396,7 +407,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
   [CAD import](docs/IMPORT.md), [scans and splats](docs/SCAN.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md), [breakaway links](docs/FUSES.md),
-  [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
+  [mechanisms](docs/MECHANISMS.md), [a part in one run from a spec](docs/BUILD.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
   [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md), [bought stock](docs/STOCK.md),
   [KiCad boards](docs/KICAD.md), [antennas](docs/ANTENNA.md), [casting](docs/CASTING.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),

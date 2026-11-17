@@ -127,6 +127,33 @@ def test_size_heat_exchanger_is_quick():
     assert r["ok"] is False and "duty" in r["error"]
 
 
+def test_verify_names_a_region_the_part_lost():
+    # any study's verify reads what was drawn by region (drawncheck.py), not only as one total
+    import trimesh
+
+    from loadpath.shapes import manifold_from_trimesh, trimesh_from_manifold
+    from loadpath.tasks import verify_mesh
+
+    study = {**TINY, "preserve": TINY["preserve"] + [
+        {"id": "tab", "shape": {"type": "box", "min": [10, 11, -4], "max": [14, 15, 4]}}]}
+    slab = trimesh.creation.box((60, 30, 8))
+    slab.apply_translation((30, 0, 0))
+    pin = trimesh.creation.cylinder(radius=4, height=12, sections=96)
+    pin.apply_translation((48, 0, 0))
+    whole = manifold_from_trimesh(slab) - manifold_from_trimesh(pin)
+    bite = trimesh.creation.box((6, 6, 10))
+    bite.apply_translation((12, 13, 0))
+    with tempfile.TemporaryDirectory() as tmp:
+        trimesh_from_manifold(whole).export(os.path.join(tmp, "whole.stl"))
+        trimesh_from_manifold(whole - manifold_from_trimesh(bite)).export(os.path.join(tmp, "bitten.stl"))
+        r = verify_mesh(study, os.path.join(tmp, "whole.stl"))
+        assert r["ok"] and r["drawn"]["ok"] and {g["id"] for g in r["drawn"]["regions"]} == {"eye", "tab"}, r
+        r = verify_mesh(study, os.path.join(tmp, "bitten.stl"))
+        tab = [g for g in r["drawn"]["regions"] if g["id"] == "tab"][0]
+        assert r["passes"] is False and tab["ok"] is False and tab["missingShare"] > 0.9, r
+        assert any("'tab'" in w for w in r["warnings"]), r["warnings"]
+
+
 def test_mcp_study_job_end_to_end():
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["LOADPATH_HOME"] = tmp
@@ -168,6 +195,7 @@ TESTS = [
     test_check_returns_all_errors_at_once_and_parses_good_studies,
     test_cli_check_schema_examples,
     test_size_heat_exchanger_is_quick,
+    test_verify_names_a_region_the_part_lost,
     test_mcp_study_job_end_to_end,
 ]
 

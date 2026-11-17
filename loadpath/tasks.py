@@ -193,6 +193,21 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     if errors:
         return {"ok": False, "error": "; ".join(f"{i['path']}: {i['message']}" for i in errors),
                 "issues": issues, "schema": "loadpath schema study (MCP: loadpath_schema)"}
+    if isinstance(raw, dict) and not raw.get("loadCases") and not raw.get("loads"):
+        from .build import build_spec, has_build
+        if has_build(raw):      # a build spec (`loadpath build`): a part made from its interfaces, no loads
+            try:
+                b = build_spec(raw, base_dir or os.getcwd())
+            except (ValueError, KeyError, TypeError, IndexError, ImportError, OSError) as exc:
+                return {"ok": False, "error": str(exc) or type(exc).__name__, "issues": issues}
+            lo, hi = b.exterior.bounds()
+            return jsonable({"ok": True, "kind": "build", "name": b.name,
+                             "exteriorSize": [float(v) for v in (np.asarray(hi) - np.asarray(lo))],
+                             "interfaces": [{"id": i.id, "op": i.op} for i in b.interfaces],
+                             "components": [c.id for c in b.components], "targetMass": b.target,
+                             "asserts": len(b.asserts), "references": len(b.references),
+                             "process": b.process, "warnings": [f"{i['path']}: {i['message']}" for i in issues],
+                             "next": "loadpath build (MCP: loadpath_build)"})
     try:
         s = study_from_dict(raw, base_dir=base_dir or os.getcwd())
         d = build_domain(s)
@@ -330,8 +345,16 @@ def verify_mesh(raw, path: str, base_dir: str | None = None, max_cells: int = 60
     if rep.get("durability"):
         out["durability"] = {k: rep["durability"].get(k) for k in ("safetyFactor", "target", "warnings")}
     out["margin"] = margin
-    out["passes"] = bool(margin is not None and margin >= 1.0 and rep.get("bodies") == 1
+    from .drawncheck import drawn_failures
+    lost = drawn_failures(rep)
+    for k in ("drawn", "exterior"):
+        if rep.get(k):
+            out[k] = rep[k]
+    out["passes"] = bool(margin is not None and margin >= 1.0 and rep.get("bodies") == 1 and not lost
                          and (rep.get("keepOutIntrusion") or 0) <= 1.0 and (rep.get("preserveMissing") or 0) <= 1.0)
+    if lost:
+        rep.setdefault("warnings", []).extend(lost)
+        out["warnings"] = rep["warnings"]
     out["attention"] = attention({**rep, "passes": out["passes"]}, raw)
     return jsonable({"ok": True, "stl": full, "safetyFactorMethod": "voxel", **out})
 

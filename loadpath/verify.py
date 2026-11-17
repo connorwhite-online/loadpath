@@ -1761,6 +1761,20 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         report["preserveMissing"] = _preserve_missing(pres_eff, part, mesh)
     else:
         report["preserveMissing"] = 0.0
+    # what was drawn, by region, and the exterior a skin keeps (drawncheck.py):
+    # until 2026-11-17 only switch and feel parts were read this way, so an
+    # ordinary study could lose one small boss inside a total that passed
+    if pres_eff is not None or (getattr(study, "raw", None) or {}).get("skin"):
+        try:
+            from .drawncheck import drawn_check, exterior_report
+            if pres_eff is not None:
+                report["drawn"] = drawn_check(study, mesh)
+            ext = exterior_report(study, mesh) if mesh.is_watertight else None
+            if ext is not None:
+                report["exterior"] = ext
+        except Exception as exc:  # noqa: BLE001 - a check that cannot run says so; it does not stop the analysis
+            report.setdefault("warnings", []).append(f"the drawn-geometry check did not run: "
+                                                     f"{type(exc).__name__}: {exc}")
     report["outsideDesignSpace"] = float((part - design).volume())
     report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
     report.update(_creases(study, mesh))

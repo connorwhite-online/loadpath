@@ -578,6 +578,35 @@ def feel(study, base_dir: str | None = None, pitches: list | None = None) -> dic
     return out
 
 
+def build(spec, base_dir: str | None = None, quick: bool = False) -> dict:
+    """Validate a build spec (a study with interfaces, components,
+    targetMass, assert, references) and build its part (build.py) as a
+    background job."""
+    if isinstance(spec, str):
+        from .tasks import read_doc
+        try:
+            spec, base_dir = read_doc(spec, base_dir)
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "error": f"spec is not valid JSON (pass the spec, its JSON text, or a path "
+                                         f"to a .json file): {exc}"}
+    from .build import has_build
+    if not isinstance(spec, dict) or not has_build(spec):
+        return {"ok": False, "error": "a build spec needs interfaces or components (see loadpath_schema('study'): "
+                                      "$.interfaces, $.components, $.targetMass, $.assert, $.references)"}
+    from .schema import lint
+    issues = lint(spec, "study")
+    errors = [i for i in issues if i["level"] == "error"]
+    if errors:
+        return {"ok": False, "error": "; ".join(f"{i['path']}: {i['message']}" for i in errors), "issues": issues}
+    args = ["build", "{dir}/spec.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    if quick:
+        args.append("--quick")
+    out = _spawn("build", spec.get("name") or "part", {"spec.json": spec}, args,
+                 warnings=[f"{i['path']}: {i['message']}" for i in issues], base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def cooling(study, base_dir: str | None = None, pitches: list | None = None) -> dict:
     """Validate a study with a `cooling` block and design its interior
     (cooling.py) as a background job."""
@@ -1112,6 +1141,29 @@ def status(job_id: str) -> tuple[dict, list]:
                     "limit the filled interior still misses needs a change the designer owns: more exterior "
                     "area, vents, a metal spreader, or less power."}
         pngs = []
+    elif kind == "build":
+        out_dir = os.path.join(d, "out")
+        failed = [c for c in r.get("checks", []) if c.get("ok") is False]
+        info = {"status": "done", "kind": kind, "ok": r.get("ok"), "name": r.get("name"),
+                "part": os.path.join(out_dir, r["part"]) if r.get("part") else None,
+                "mass": r.get("mass"), "targetMass": r.get("targetMass"), "failed": failed,
+                "checks": [{k: c.get(k) for k in ("id", "ok", "value", "limit")} for c in r.get("checks", [])],
+                "images": [os.path.join(out_dir, i) for i in r.get("images", [])],
+                "seconds": r.get("seconds"), "report": report,
+                "next": ("Every check passed: look at the close-up of each interface and component "
+                         "(images) and the reference sheets before handing the part over."
+                         if r.get("ok") else
+                         "The part failed the checks in `failed`: each says what was measured, the limit and "
+                         "where. Change the spec or the CAD the check points at and build again; do not "
+                         "patch the mesh.")}
+        pngs = []
+        for i in r.get("images", []):
+            if os.path.basename(i) == "views.png" or "reference" in i:
+                try:
+                    with open(os.path.join(out_dir, i), "rb") as fh:
+                        pngs.append(fh.read())
+                except OSError:
+                    pass
     elif kind == "lattice":
         info = {"status": "done", "kind": kind, "parent": meta.get("parent"), **r}
         pngs = [_png(d, r.get("render"))]
@@ -1264,6 +1316,7 @@ TOOLS = {
     "loadpath_exterior": ("Clean an exterior into a skin", "write"),
     "loadpath_kicad": ("Read a KiCad board", "read"),
     "loadpath_enclosure": ("Design a product inside its exterior", "job"),
+    "loadpath_build": ("Build a part from a spec in one run", "job"),
     "loadpath_handoff": ("Designer handoff to a push-pad study", "job"),
     "loadpath_split": ("Split an exterior into base and cover", "job"),
     "loadpath_switch": ("Design a push pad to a click force", "job"),
@@ -1460,6 +1513,23 @@ def build_server():
         on the meshes, every load case verified on the part). Starts a job; poll loadpath_status; the
         study is out/<name>.study.json, the report out/enclosure.json, checks out/checks.json."""
         return enclosure(brief, base_dir, run)
+
+    @tool
+    def loadpath_build(spec: dict | str, base_dir: str | None = None, quick: bool = False) -> dict:
+        """Make a printable part in one run from a spec, checked: a study (loadpath_schema('study')) whose
+        designSpace is the exterior (kept exactly), with `skin` (the wall, and zones of other walls),
+        `interfaces` (the features that must be exact, as CAD solids: {"type": "brep", "path":
+        "cad.py:name"} is a build123d solid in a Python file beside the spec, or a STEP file; op add |
+        cut), `components` (the bought parts as solids where they sit, with clearance, mass, keepIn and
+        insertFrom), `targetMass` (grams, reached by moving the walls named in adjust, heavier or
+        lighter), `assert` (features measured every build: fillet radius of an interface, wall,
+        clearance, keepIn, mass, distance) and `references` (concept images with their cameras, or a
+        reference solid). The body between the interfaces is filled from the exterior and the skin and
+        blended into each add with a fillet; cuts and pockets are exact booleans, so drawn edges and
+        rounds arrive as drawn. No loads or supports needed. Out: out/part.stl, out/checks.json,
+        out/report.json, a close-up sheet of every interface and component and a side-by-side per
+        reference. ok only when every check passes. Starts a job; poll loadpath_status."""
+        return build(spec, base_dir, quick)
 
     @tool
     def loadpath_wires(brief: dict | str, base_dir: str | None = None) -> dict:

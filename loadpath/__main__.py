@@ -1031,6 +1031,25 @@ def main(argv=None):
     stb.add_argument("brief")
     stb.add_argument("--out", help="write the report JSON here")
     stb.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
+    bld = sub.add_parser("build", help="make a part in one run from a spec: the exterior and the features that "
+                                       "must be exact as CAD solids (interfaces), the parts inside (components), "
+                                       "a target mass, asserted features and reference images; the body between "
+                                       "is filled, the features cut and added exactly, and every check and a "
+                                       "side-by-side against the references are written each build (docs/BUILD.md). "
+                                       "Exit 0 only when every check passes")
+    bld.add_argument("spec")
+    bld.add_argument("--out", default="loadpath-build")
+    bld.add_argument("--quick", action="store_true", help="a coarser inner surface, for a first look")
+    bld.add_argument("--pitch", type=float, help="mm the inner surface is sampled at (default: from the walls)")
+    bld.add_argument("--no-render", action="store_true", help="skip the close-up and view sheets")
+    bld.add_argument("--base-dir")
+    cbd = sub.add_parser("check-build", help="run a build spec's checks on a mesh that already exists (one made "
+                                             "another way, or edited since)")
+    cbd.add_argument("spec")
+    cbd.add_argument("part")
+    cbd.add_argument("--out", help="write checks.json and the sheets here")
+    cbd.add_argument("--no-render", action="store_true")
+    cbd.add_argument("--base-dir")
     mfp = sub.add_parser("massfill", help="make a product as heavy as it can be (or a target mass) without changing "
                                           "how it presses, swings or assembles: fill only the room under the skin it "
                                           "never reaches, off keep-outs, clear of a hinge's sweep (docs/STABILITY.md)")
@@ -1328,6 +1347,8 @@ def main(argv=None):
         return _feel(args)
     if args.cmd == "massfill":
         return _massfill(args)
+    if args.cmd in ("build", "check-build"):
+        return _build(args)
     if args.cmd == "stability":
         return _stability(args)
     if args.cmd == "cooling":
@@ -2442,6 +2463,44 @@ def _feel(args):
         return 2
     _write_report(args.out, {"ok": rep["passes"], **rep})
     return 0 if rep["passes"] else 1
+
+
+def _build_lines(rep):
+    """A build's checks as lines: what failed first, each with its number."""
+    rows = sorted(rep["checks"], key=lambda c: (c["ok"] is not False, c["ok"] is None))
+    out = []
+    for c in rows:
+        mark = "FAIL" if c["ok"] is False else ("  ? " if c["ok"] is None else " ok ")
+        val = "" if c.get("value") is None else f"  {c['value']}"
+        lim = "" if c.get("limit") is None else f"  (limit {c['limit']})"
+        det = f"  {c['detail']}" if c.get("detail") and c["ok"] is not True else ""
+        out.append(f"{mark} {c['id']}{val}{lim}{det}")
+    return out
+
+
+def _build(args):
+    from .build import check_part, run_build
+    from .tasks import read_doc
+    try:
+        doc, base = read_doc(args.spec, args.base_dir)
+    except (json.JSONDecodeError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": f"cannot read the spec: {exc}"}))
+        return 2
+    try:
+        if args.cmd == "check-build":
+            rep = check_part(doc, args.part, base_dir=base, out=args.out, render=not args.no_render)
+        else:
+            rep = run_build(doc, base_dir=base, out=args.out, quick=args.quick, pitch=args.pitch,
+                            render=not args.no_render,
+                            progress=lambda e: print(json.dumps(e, default=float), file=sys.stderr, flush=True))
+    except (ValueError, KeyError, ImportError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc) or type(exc).__name__}))
+        return 2
+    print("\n".join(_build_lines(rep)))
+    print(json.dumps({"ok": rep["ok"], "failed": rep["failed"], "mass": rep["mass"],
+                      "out": os.path.abspath(args.out) if args.out else None, "seconds": rep["seconds"]},
+                     default=float))
+    return 0 if rep["ok"] else 1
 
 
 def _massfill(args):
