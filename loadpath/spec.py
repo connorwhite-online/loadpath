@@ -384,6 +384,11 @@ class Goal:
     # dropped 3.9. A clearance caps the most any node in a region moves (or
     # moves along a direction), "keep this face within d of where it is".
     clearances: list = field(default_factory=list)
+    # The most any point of the part may move, in any case (mm): a
+    # clearance over the whole part (in `clearances` as "maxDisplacement").
+    # The loads' mean (maxDeflection) hides a span that sags between stiff
+    # loaded rims; this does not.
+    max_displacement: float | None = None
 
 
 # How the part will be made. Each process sets what the design must respect:
@@ -1822,7 +1827,15 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         restarts=int(g.get("restarts", 1)),
         buckling=bool(g.get("buckling", True)),
         clearances=_clearances(g.get("clearances"), base_dir),
+        max_displacement=g.get("maxDisplacement"),
     )
+    if goal.max_displacement is not None:
+        md = goal.max_displacement
+        if isinstance(md, bool) or not isinstance(md, (int, float)) or not md > 0:
+            raise ValueError("goal.maxDisplacement is how far (mm, > 0) any point of the part may move")
+        goal.max_displacement = float(md)
+        # a clearance with no region: every node of the part (verify._clearance_nodes)
+        goal.clearances.append(Clearance(None, None, float(md), None, [], "maxDisplacement"))
     if goal.restarts < 1:
         raise ValueError("goal.restarts must be 1 or more")
     if goal.minimize not in ("mass", "printTime", "filament"):
@@ -1843,8 +1856,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if not (0.02 <= v <= 0.95):
             raise ValueError("goal.outcomes values must be between 0.02 and 0.95")
     if goal.clearances and goal.safety_factor is None and goal.max_deflection is None:
-        raise ValueError("goal.clearances are held by the search for the lightest passing part: give the goal a "
-                         "safetyFactor or maxDeflection too")
+        raise ValueError("goal.clearances and goal.maxDisplacement are held by the search for the lightest passing "
+                         "part: give the goal a safetyFactor or maxDeflection too")
     names = {c.get("name") for c in d.get("loadCases") or [] if isinstance(c, dict)}
     for i, c in enumerate(goal.clearances):
         for n in c.cases:

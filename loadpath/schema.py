@@ -448,6 +448,11 @@ _GOAL = {
         "maxDeflection": {**_POS, "description": "mm, at the loads: the mean displacement of the loaded "
                                                  "nodes. A load spread over a stiff rim reads low while the span "
                                                  "between sags: cap that with clearances."},
+        "maxDisplacement": {**_POS, "description": "mm: the most any point of the part may move, in any case "
+                                                   "(the peak, where maxDeflection is the loads' mean). A clearance "
+                                                   "over the whole part: each case reports it as its "
+                                                   "'maxDisplacement' clearance. Needs safetyFactor or "
+                                                   "maxDeflection too."},
         "clearances": {"type": "array", "items": {
             "type": "object",
             "description": "A travel limit away from the loads: no node of the target moves more than maxTravel "

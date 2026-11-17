@@ -288,6 +288,7 @@ class Outcome:
             "bodies": r.get("bodies"),
             "boundaryCutArea": r.get("boundaryCutArea"),
             **({"closedBores": r["closedBores"]} if r.get("closedBores") else {}),
+            **({"sound": r["sound"]} if r.get("sound") else {}),
             **({"fits": r["fits"]} if r.get("fits") else {}),
             # designed weak links (fuse.py): each link's size, its break window and the crash cases it caps
             **({"fuses": r["fuses"]} if r.get("fuses") else {}),
@@ -423,7 +424,33 @@ def _whole(report: dict) -> bool:
     wall bracket with fasteners at 5.6%, tets 3.52 for 2.5, came out with
     one closed over; the search delivered it), so the search counts it
     failing and steps on to a fraction that keeps the bore."""
-    return report.get("bodies", 1) <= 1 and not report.get("closedBores")
+    return report.get("bodies", 1) <= 1 and not report.get("closedBores") \
+        and (report.get("sound") or {}).get("ok", True)
+
+
+def _sound(report: dict, mesh) -> None:
+    """report["sound"]: the part as its STL stores it (float32, welded by
+    position) has every edge on exactly two faces, no face crossing
+    another, and sections that are simple closed loops
+    (buildcheck.sound_check). Watertight and one body is not sound: a
+    fan bracket that was both had 0.06-0.2 mm slits, and four of five
+    runs of another wrote 250-2,700 edges on four faces where the iso
+    surface met a preserve, which the voxel analysis reads as solid
+    material. Not sound is not whole (_whole): it is not delivered."""
+    from .buildcheck import sound_check
+
+    try:
+        r = sound_check(mesh)
+    except Exception as exc:  # noqa: BLE001 - a check that cannot run is said, not a failed part
+        report.setdefault("warnings", []).append(f"the soundness check could not run: {exc}")
+        return
+    report["sound"] = {k: r[k] for k in ("ok", "nonManifoldEdges", "crossingFaces", "selfCrossings", "openLoops",
+                                         "at") if k in r}
+    if not r["ok"]:
+        report.setdefault("warnings", []).append(
+            f"the STL is not sound: {r['detail']}. Watertight and one body is not enough: the analysis reads "
+            "the part as solid there, the printed part is not, so this outcome is not delivered (report it with "
+            "the study and the saved field)")
 
 
 # A warm-started outcome is rerun cold when it meshes into members under
@@ -523,6 +550,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
         report["manufacturing"] = making
         report.setdefault("warnings", []).extend(making.get("warnings", []))
     report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
+    _sound(report, mesh)
     if res.warp:
         report["warp"] = res.warp
     o.report = report
@@ -545,6 +573,8 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     if report.get("closedBores"):
         o.passes = False
         report.setdefault("warnings", []).append(closed_bore_warning(report["closedBores"]))
+    if (report.get("sound") or {}).get("ok") is False:
+        o.passes = False
     from .drawncheck import drawn_failures
     lost = drawn_failures(report)
     if lost:
@@ -611,6 +641,39 @@ def contact_band(study: Study, domain: Domain) -> float:
     from .crosscheck import element_size
 
     return max(2.0 * element_size(study), 1.5 * domain.pitch)
+
+
+def _travel_on_both(voxel_cases: list, tet_cases: list) -> list:
+    """The cases whose travel gates a pass, read on voxels and on tets: per
+    case the larger deflection, and per clearance the larger travel. Hex
+    cells a few across a thin deck read it stiff (a fan plate 1.7-2x), so a
+    tet-confirmed part held its safety factor on tets and its travel on the
+    voxel grid alone; now both methods must hold the travel limits.
+    (deflectionMethod / clearance method say which reading set the row.)"""
+    tet = {c["name"]: c for c in tet_cases}
+    out = []
+    for c in voxel_cases:
+        t = tet.get(c.get("name"))
+        if t is None:
+            out.append(c)
+            continue
+        row = dict(c)
+        if t.get("deflection") is not None and t["deflection"] > (c.get("deflection") or 0.0):
+            row["deflection"], row["deflectionMethod"] = t["deflection"], "tet"
+        if t.get("maxDisplacement") is not None and t["maxDisplacement"] > (c.get("maxDisplacement") or 0.0):
+            row["maxDisplacement"] = t["maxDisplacement"]
+        if c.get("clearances"):
+            tc = {q["name"]: q for q in t.get("clearances") or []}
+            rows = []
+            for q in c["clearances"]:
+                w = tc.get(q["name"])
+                if w is not None and w.get("travel") is not None and (q.get("travel") is None
+                                                                       or w["travel"] > q["travel"]):
+                    q = {**w, "method": "tet"}
+                rows.append(q)
+            row["clearances"] = rows
+        out.append(row)
+    return out
 
 
 def _confirm_on_tets(study: Study, outcomes: list) -> bool:
@@ -2432,6 +2495,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             report["manufacturing"] = making
             report.setdefault("warnings", []).extend(making.get("warnings", []))
         report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
+        _sound(report, mesh)
         fid = mesh_fidelity(domain, xphys, mesh)
         if fid is not None:
             report["meshFidelity"] = fid
@@ -2473,6 +2537,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         if report.get("closedBores"):
             o.passes = False
             report.setdefault("warnings", []).append(closed_bore_warning(report["closedBores"]))
+        if (report.get("sound") or {}).get("ok") is False:
+            o.passes = False
         return o
 
     def run_one(vf: float) -> Outcome:
@@ -2614,13 +2680,17 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 memory.confirmed(o.volume_fraction, rep)
         mc = _margin(study, rep)
         o.report["confirm"] = {"safetyFactor": rep["safetyFactor"], "margin": mc,
+                               # the design grid's own reading: how far the finer grid moved it
+                               # (delivery.confirmation calls a gap over CONVERGED unconverged)
+                               "designGridMargin": o.report.get("margin"),
                                "analysisPitch": rep["analysisPitch"], "analysisCells": rep["analysisCells"],
                                **({"cellsCapped": "by free memory (LOADPATH_CONFIRM_CELLS sets it)"}
                                   if not recalled and cc < _CONFIRM_CELLS and not os.environ.get("LOADPATH_CONFIRM_CELLS")
                                   else {}),
                                **({"cellsRaised": "to 1.5x the analysis grid's: the confirm is never coarser"}
                                   if not recalled and raised else {}),
-                               "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
+                               "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection",
+                                                            "maxDisplacement", "clearances") if k in c}
                                          for c in rep["cases"]]}
         # recorded, not adopted: the finer grid also resolves small features
         # the analysis grid smooths over, so its percentile is not comparable
@@ -2666,6 +2736,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         r["voxelSafetyFactor"] = o.voxel_sf
         r["safetyFactor"] = cc["safetyFactor"]
         r.pop("calibration", None)
+        r["voxelCases"] = r["cases"]
+        r["cases"] = _travel_on_both(r["cases"], cc["cases"])
         mt = _margin(study, r)
         r["margin"] = mt
         r["confirm"] = {"method": "tet", "safetyFactor": cc["safetyFactor"], "margin": mt,
@@ -2673,7 +2745,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         "elementSize": cc["elementSize"], "contactBand": band, "nodes": cc["nodes"], "elements": cc["elements"],
                         **({"stressReading": cc["stressReading"]} if "stressReading" in cc else {}),
                         "seconds": cc["seconds"],
-                        "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
+                        "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection", "maxDisplacement",
+                                                     "clearances") if k in c}
                                   for c in cc["cases"]]}
         o.passes = bool(mt >= 1.0) and _whole(r)
         emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mt, "method": "tet"})
@@ -2687,6 +2760,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         c = r.pop("confirm")
         o.tet_k = None
         r.pop("voxelSafetyFactor", None)
+        if "voxelCases" in r:
+            r["cases"] = r.pop("voxelCases")
         r["safetyFactor"] = o.voxel_sf
         r["margin"] = _margin(study, r)
         o.passes = bool(r["margin"] >= 1.0) and _whole(r)
@@ -3068,6 +3143,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 prefetch.drop(job)
             raise
         report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
+        _sound(report, mesh)
         opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
                "limits": {"stress": limits.stress, "deflection": limits.deflection,

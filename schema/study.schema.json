@@ -5575,6 +5575,11 @@
           "exclusiveMinimum": 0,
           "description": "mm, at the loads: the mean displacement of the loaded nodes. A load spread over a stiff rim reads low while the span between sags: cap that with clearances."
         },
+        "maxDisplacement": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm: the most any point of the part may move, in any case (the peak, where maxDeflection is the loads' mean). A clearance over the whole part: each case reports it as its 'maxDisplacement' clearance. Needs safetyFactor or maxDeflection too."
+        },
         "clearances": {
           "type": "array",
           "items": {

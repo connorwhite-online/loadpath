@@ -412,7 +412,14 @@ buckling, printability) you can report to the user.
    `safetyFactor` and `safetyFactorMethod` (which analysis it comes from:
    `tet`, `voxel-fine`, or `voxel`), `governedBy` (the limit that set its
    size), per-case numbers, and `warnings` gathered from every check (print,
-   process, durability). Quote those numbers. To check any STL against a
+   process, durability). Quote those numbers. `deliver.confirmation.limits`
+   says how each number that gates the pass was read (`tet`, `voxel+tet`,
+   `voxel-fine`, `voxel`) and its margin; any in `unconfirmed` was read by
+   one method with under 2x margin (two methods have read one part 1.7-2x
+   apart), so say so or check it on tets before relying on it.
+   `deliver.sound` is the STL as stored: edges on exactly two faces, no
+   face crossing another, sections simple loops. A part that is not sound
+   is never delivered as passing (watertight and one body is not enough). To check any STL against a
    study later (an edited part, an older outcome):
    `loadpath verify study.json part.stl` (its own grid, as the run's
    outcome check; `--cells N` for a grid of about N cells, finer or not, so it
@@ -464,7 +471,11 @@ buckling, printability) you can report to the user.
   else, add `"clearances": [{"region": "deck", "maxTravel": 2, "direction":
   "-z"}]`: no node of that region moves more than 2 mm (down, with a
   direction; any way without); `cases` limits it to named load cases. Each
-  case reports `clearances` with the travel, the limit and where. A
+  case reports `clearances` with the travel, the limit and where.
+  `"maxDisplacement": 2` caps the peak travel of any point of the part (a
+  clearance over all of it); `deliver` warns when the loads' mean hides a
+  peak over the `maxDeflection` asked. With tets, travel limits must hold
+  on both the voxel and the tet reading (hex cells read thin decks stiff). A
   `thinPreserves` warning means a preserved wall or deck is under 3 analysis
   cells thick: its bending reads stiff (up to ~2x), so check it on tets.
   If no fraction passes the finer-grid confirm, nothing is delivered as

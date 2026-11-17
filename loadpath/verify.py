@@ -1220,6 +1220,10 @@ def _clearance_nodes(study: Study, hm, pitch: float, report: dict) -> list:
 
     out = []
     for i, c in enumerate(getattr(study.goal, "clearances", None) or []):
+        if c.region is None and c.shape is None:
+            # goal.maxDisplacement: the whole part
+            out.append(np.arange(len(hm.node_xyz)))
+            continue
         try:
             out.append(np.flatnonzero(_region_nodes(study, hm, c.region, c.shape, f"goal.clearances[{i}]",
                                                     tol_floor=pitch)))

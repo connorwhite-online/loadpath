@@ -384,7 +384,17 @@ def sound_check(mesh) -> dict:
             if hit is not None and where is None:
                 w = np.asarray(T) @ np.array([hit.x, hit.y, 0.0, 1.0])
                 where = [round(float(v), 2) for v in w[:3]]
-    ok = bad_edges == 0 and crossings == 0 and open_loops == 0
+    # every face against every face it does not share a vertex with (exact,
+    # selfx): a fold too small or too oblique for nine planes to cut
+    crossing_faces, face_at = 0, None
+    if len(m.faces):
+        from .crease import crossing_faces as _crossing
+
+        x = _crossing(np.asarray(m.vertices, float), np.asarray(m.faces), np.arange(len(m.faces)))
+        crossing_faces = int(len(x))
+        if crossing_faces:
+            face_at = [round(float(v), 2) for v in m.vertices[m.faces[x[0]]].mean(axis=0)]
+    ok = bad_edges == 0 and crossings == 0 and open_loops == 0 and crossing_faces == 0
     detail = None
     if not ok:
         bits = []
@@ -396,9 +406,13 @@ def sound_check(mesh) -> dict:
                         + (f" (first near {where})" if where else ""))
         if open_loops:
             bits.append(f"{open_loops} section loops do not close")
+        if crossing_faces:
+            bits.append(f"{crossing_faces} faces cross another face (first near {face_at}): the surface folds "
+                        "through itself, a slit or a doubled skin the voxel analysis reads as solid")
         detail = "; ".join(bits)
-    return _row("sound", "sound", ok, value=bad_edges + crossings + open_loops, limit=0, detail=detail,
-                nonManifoldEdges=bad_edges, selfCrossings=crossings, openLoops=open_loops)
+    return _row("sound", "sound", ok, value=bad_edges + crossings + open_loops + crossing_faces, limit=0,
+                detail=detail, nonManifoldEdges=bad_edges, selfCrossings=crossings, openLoops=open_loops,
+                crossingFaces=crossing_faces, **({"at": edge_at or where or face_at} if not ok else {}))
 
 
 def _taken(spec, it, P):

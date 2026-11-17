@@ -553,6 +553,44 @@ def _region_nodes(study, shape, pts, tol, among=None):
     return got
 
 
+def _clearance_nodes(study, pts, tol):
+    """Per goal.clearances entry, the mesh points it covers: every point
+    for goal.maxDisplacement (no region), else the points within `tol` of
+    its region (a keep-out region: the points lining it), as verify reads
+    them on voxels. An entry that reaches no point gets none."""
+    out = []
+    for c in getattr(study.goal, "clearances", None) or []:
+        if c.region is None and c.shape is None:
+            out.append(np.arange(len(pts)))
+            continue
+        if c.shape is not None:
+            shape, kind = c.shape, "inline"
+        else:
+            shape, kind = study.region_shape(c.region)
+        d = shape.sdf(pts)
+        out.append(np.nonzero(d <= (2.0 * tol if kind == "keepOut" else tol))[0])
+    return out
+
+
+def _clearance_rows(study, name, pts, u, nodes_per):
+    """cases[].clearances on the tets: per entry that applies to case
+    `name`, the most any of its points travels (along its direction, when
+    it has one), in verify's row shape."""
+    rows = []
+    for c, nodes in zip(getattr(study.goal, "clearances", None) or [], nodes_per):
+        if c.cases and name not in c.cases:
+            continue
+        if not len(nodes):
+            rows.append({"name": c.name, "travel": None, "maxTravel": c.max_travel})
+            continue
+        d = u[nodes]
+        t = d @ c.direction if c.direction is not None else np.linalg.norm(d, axis=1)
+        k = int(np.argmax(t))
+        rows.append({"name": c.name, "travel": max(float(t[k]), 0.0), "maxTravel": c.max_travel,
+                     "at": [round(float(v), 3) for v in pts[nodes[k]]]})
+    return rows
+
+
 def _load_vectors(study, pts, surf, tol, faces=None):
     """Per load case: nodal force array (n, 3), and the load node indices.
     `faces`: the boundary triangles, for each vertex's share of a loaded
@@ -1249,6 +1287,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         return best, at
 
     radius, reading = stress_radius(study, size)
+    clear_nodes = _clearance_nodes(study, pts, tol)
 
     def summarize(results):
         cases = []
@@ -1278,6 +1317,8 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                           "hotspots": hot.tolist(),
                           "deflection": float(np.linalg.norm(u[lnodes].mean(axis=0))),
                           "maxDisplacement": float(np.linalg.norm(u, axis=1).max()),
+                          **({"clearances": _clearance_rows(study, name, pts, u, clear_nodes)}
+                             if clear_nodes else {}),
                           "safetyFactor": raw / STRESS_ALLOWANCE, **row})
         return {"safetyFactor": min(sfs), "safetyFactorNoAllowance": min(sfs_raw), "cases": cases}
 
