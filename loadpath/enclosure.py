@@ -1692,6 +1692,84 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
     return out
 
 
+def _designed(sp, design, pitches=None, iterations=None, nonlinear=None, on_progress=None):
+    """A switch, feel or cooling study designed and its report written."""
+    from .__main__ import _write_report
+    from .spec import study_from_dict
+
+    raw = json.load(open(sp))
+    st = study_from_dict(raw, os.path.dirname(os.path.abspath(sp)))
+    if raw.get("cooling"):
+        from .cooling import run_cooling
+        rep = run_cooling(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress)
+    elif raw.get("feel"):
+        from .feel import run_feel
+        rep = run_feel(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress,
+                       nonlinear=nonlinear)
+    else:
+        from .switch import run_switch
+        rep = run_switch(st, design, pitches=pitches, iterations=iterations, nonlinear=nonlinear,
+                         on_progress=on_progress)
+    _write_report(design, {"ok": rep["passes"], **rep})
+    return {"passes": bool(rep["passes"])}
+
+
+_PROGRESS = "@loadpath-progress "
+
+
+def _progress_line(ev, _x=None):
+    import sys
+    from .__main__ import _jsonable
+    print(_PROGRESS + json.dumps(_jsonable(ev), default=float), file=sys.stderr, flush=True)
+
+
+def _fresh(what: str, *args, on_progress=None, **kw):
+    """_designed or check_delivered run in a fresh Python process, its
+    progress events passed on to on_progress; returns its result. A
+    ValueError there is raised here."""
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        job, res = os.path.join(tmp, "job.json"), os.path.join(tmp, "result.json")
+        with open(job, "w") as fh:
+            json.dump({"what": what, "args": args, "kw": kw, "progress": on_progress is not None, "result": res}, fh)
+        cmd = [sys.executable, "-c", "import sys; from loadpath.enclosure import _child; _child(sys.argv[1])", job]
+        with subprocess.Popen(cmd, stdout=sys.stderr, stderr=subprocess.PIPE, text=True) as proc:
+            for line in proc.stderr:
+                if line.startswith(_PROGRESS) and on_progress is not None:
+                    try:
+                        on_progress(json.loads(line[len(_PROGRESS):]), None)
+                        continue
+                    except Exception:  # noqa: BLE001 - a progress line is only a note
+                        pass
+                sys.stderr.write(line)
+            code = proc.wait()
+        if not os.path.exists(res):
+            raise RuntimeError(f"{what} process ended with code {code} and no result (out of memory?)")
+        out = json.load(open(res))
+    if "valueError" in out:
+        raise ValueError(out["valueError"])
+    return out["result"]
+
+
+def _child(job_path: str):
+    from .__main__ import _jsonable
+
+    job = json.load(open(job_path))
+    fn = {"design": _designed, "check": check_delivered}[job["what"]]
+    kw = dict(job["kw"])
+    if job["progress"]:
+        kw["on_progress"] = _progress_line
+    try:
+        out = {"result": fn(*job["args"], **kw)}
+    except ValueError as exc:
+        out = {"valueError": str(exc)}
+    with open(job["result"], "w") as fh:
+        json.dump(_jsonable(out), fh, default=float)
+
+
 def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_limit: float | None = None,
                      quick: bool = False, nonlinear: bool | None = None, on_progress=None) -> dict:
     """Design what run_enclosure wrote and check it as delivered. `r` is
@@ -1702,9 +1780,8 @@ def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_
     and cover, each designed and checked on its own. Writes
     <out>/design[-half]/ and <out>/checks.json; returns {parts: {half:
     checks}, ok}."""
-    from .__main__ import _jsonable, _write_report
+    from .__main__ import _jsonable
     from .__main__ import main as cli
-    from .spec import study_from_dict
 
     halves = dict(r.get("split") or {}) or {"whole": r["studyPath"]}
     parts = {}
@@ -1715,19 +1792,12 @@ def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_
         code = 0
         try:
             if raw.get("cooling") or raw.get("feel") or raw.get("switch"):
-                st = study_from_dict(raw, os.path.dirname(os.path.abspath(sp)))
-                if raw.get("cooling"):
-                    from .cooling import run_cooling
-                    rep = run_cooling(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress)
-                elif raw.get("feel"):
-                    from .feel import run_feel
-                    rep = run_feel(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress,
-                                   nonlinear=nonlinear)
-                else:
-                    from .switch import run_switch
-                    rep = run_switch(st, design, pitches=pitches, iterations=iterations, nonlinear=nonlinear,
-                                     on_progress=on_progress)
-                _write_report(design, {"ok": rep["passes"], **rep})
+                # in a process of its own, as the check after it: what the
+                # design leaves allocated (factor pools, meshes) stayed in
+                # the process, and the speaker's delivered check (11.9 GB
+                # alone) was killed beside it
+                _fresh("design", sp, design, pitches=pitches, iterations=iterations, nonlinear=nonlinear,
+                       on_progress=on_progress)
             else:
                 argv = ["run", sp, "--out", design, "--viewer", "none"] + \
                     (["--time-limit", str(time_limit)] if time_limit else []) + (["--quick"] if quick else [])
@@ -1745,7 +1815,7 @@ def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_
         except ValueError as exc:
             parts[half] = {"ok": False, "error": str(exc), "designSeconds": round(time.time() - t0, 1)}
             continue
-        chk = check_delivered(sp, design, quick=quick, on_progress=on_progress)
+        chk = _fresh("check", sp, design, quick=quick, on_progress=on_progress)
         chk["designSeconds"] = round(time.time() - t0, 1)
         chk["ok"] = bool(chk["ok"] and code in (0, None))
         parts[half] = chk
