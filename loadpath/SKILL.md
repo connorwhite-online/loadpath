@@ -679,6 +679,15 @@ reads the button off the shape and checks every part's room) and hand them
 to `handoff` or `enclosure` as given. Handoff takes the same sources directly, as a
 path or `{path, size, up}`.
 
+**No exterior yet, and the designer wants to see what the parts allow:
+`envelope.py` (docs/ENVELOPE.md).** Draw a style field (`sweep` for a
+grip, `funnel` for each lens's or laser's view, `sdf_kit.smin` to blend),
+make each part a `Keepout(name, mesh, gap)`, `wrap` them, and mesh it
+with `exterior.mesh_from_sdf`. Report `pushes` (the surfaces the parts fix),
+`clearances`, `view_check` per optic and `grip_report` against
+`data/hands.json` percentiles. Call it a starting form, never the
+surfacing; the designer's model replaces it through `loadpath exterior`.
+
 **Any product inside a designer's exterior: `loadpath enclosure brief.json
 --out dir [--run]` (MCP `loadpath_enclosure`; `loadpath schema
 enclosure`).** Use it whenever the outside is fixed (a rendering, a

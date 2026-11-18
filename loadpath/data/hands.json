@@ -1,0 +1,12 @@
+{
+ "source": "Hand length by percentile: Pheasant & Haslegrave, Bodyspace (3rd ed., 2006), British adults aged 19-65. Grip rules of thumb: power-grip handles of about 30-50 mm diameter are the usual handbook range (Pheasant & Haslegrave; Kroemer, Fitting the Task to the Human); the per-hand-length ratios below put the centre of that range at a mid-size hand and are working values to be confirmed with foam mock-ups. Trigger reach: handgun trigger reach (back of grip to trigger face) is commonly 66-74 mm for adult hands; 0.37 x hand length gives that range.",
+ "verify": true,
+ "percentiles": ["p5", "p50", "p95"],
+ "hand_length": {"female": {"p5": 159, "p50": 174, "p95": 189},
+                 "male": {"p5": 173, "p50": 189, "p95": 205}},
+ "hand_breadth": {"female": {"p5": 69, "p50": 76, "p95": 83},
+                  "male": {"p5": 78, "p50": 87, "p95": 95}},
+ "grip": {"diameter_per_hand_length": 0.21, "trigger_reach_per_hand_length": 0.37,
+          "grip_angle_deg": [15, 22],
+          "notes": "grip angle: the handle's tilt back from the line of sight that keeps the wrist near neutral when pointing (typical pistol grips 15-22 deg)."}
+}
