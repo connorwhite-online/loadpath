@@ -159,6 +159,13 @@ the port's own section is cut, so its rounded wall stays), the whole interior as
 design space, components as keep-outs with their paths, cradles as
 preserves, supports on a small patch of the rest face (the drop and
 squeeze cases balance themselves; the patch only holds the part still).
+With `fixed` parts the supports and mounts are checked against them,
+because that is what `verify` reads: a rest face with a window in its
+middle stands on three points of the fixed part round it instead, and a
+cradle that overlaps no fixed material hands its mass to the nearest
+mount that does. A part with no room for a cradle (every side is in
+another part's way in) has its mass carried by the mounted part it rests
+on; `installedOn` says the same thing explicitly.
 `out/cad/` has every placed part as an STL in product coordinates and
 `out/enclosure.json` says how each value was found.
 
@@ -379,6 +386,12 @@ Running them found and fixed these:
   checked, and fails with numbers.
 - The support of a product with a hollow middle landed outside the part;
   it now goes at the interior's centre.
+- A housing given as `fixed`, with a 30 mm window in its floor for a heat
+  plate, stopped `verify` twice: "supports[0] touches no material" (the
+  support sat in the window) and then the same for the engine's cradle
+  over it. Parts stacked on others (a board on a shield on a magnet ring)
+  dropped their mass from the drop cases. Supports and mounts now land on
+  the fixed part, and stacked parts' mass rides on what they rest on.
 - The `cooling` block now takes each part's watts and limit from the
   parts list.
 
