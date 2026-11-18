@@ -983,22 +983,41 @@ def _way_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, hint=None, tilt=
                 "at": _r(where, 2), "after": round(dist, 2)}
     # a big part in a snug place: past placement._PATH_CELLS the grid's
     # pitch grows to a millimetre or more, every contact reads as blocked
-    # and the grid search finds nothing. Try each straight way out exactly
-    # at the part's surface points
-    if last is None or last.get("closest") is None:
+    # and the grid search finds nothing, or only a route that is blocked
+    # when checked exactly. Try each straight way out exactly at the part's
+    # surface points, then each two-leg way (a short move along an axis,
+    # then out along an axis: a board pressed down out of a cup, then back)
+    if last is None or last.get("insertFrom") is None:
         from .placement import _DIRS
         _an = _axis_name
         hv = _axis_vec(hint) if isinstance(hint, str) else np.zeros(3)
-        best = None
-        for d in sorted(_DIRS, key=lambda v: -float(v @ hv)):
-            lg = [(d, None)]
-            ok, pen, _, where, dist = _path_check(pts, _Pen(obstacles), lg, exit_bounds[0], exit_bounds[1], tol)
+        order = sorted(_DIRS, key=lambda v: -float(v @ hv))
+        best = last if last is not None and last.get("closest") is not None else None
+        pen_ = _Pen(obstacles)
+        lo_, hi_ = exit_bounds
+        for d in order:
+            ok, pen, _, where, dist = _path_check(pts, pen_, [(d, None)], lo_, hi_, tol)
             if ok:
                 return {"insertFrom": _an(d), "legs": 1, "worstPenetration": round(float(pen), 3),
                         "search": "straight, exact (the grid was too coarse)"}
             if best is None or dist > best["after"]:
                 best = {"insertFrom": None, "closest": _an(d), "worstPenetration": round(float(pen), 3),
                         "at": _r(where, 2), "after": round(dist, 2)}
+        axes = [v for v in order if np.count_nonzero(np.abs(v) > 1e-9) == 1]
+        span = float(np.max(np.asarray(hi_, float) - np.asarray(lo_, float)))
+        for d2 in axes:
+            for d1 in axes:
+                if abs(float(d1 @ d2)) > 0.5:
+                    continue
+                for L in (2.0, 5.0, 10.0, 20.0, 40.0):
+                    if L > span:
+                        break
+                    lg = [(d1, L), (d2, None)]
+                    ok, pen, _, where, dist = _path_check(pts, pen_, lg, lo_, hi_, tol)
+                    if ok:
+                        return {"insertFrom": [{"toward": _an(d1), "length": L}, _an(d2)], "legs": 2,
+                                "worstPenetration": round(float(pen), 3),
+                                "search": "two legs, exact (the grid was too coarse)"}
         last = best
     if tilt and float(tilt.get("max", 0)) > 0:
         rec = _tilt_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, tilt)
