@@ -193,3 +193,57 @@ def test_fill_pinches_keeps_only_what_helps():
     assert opened.volume() < part.volume() and part.volume() - opened.volume() < 0.5
     same, n = _fill_pinches(a)
     assert n == 0 and abs(same.volume() - a.volume()) < 1e-9
+
+
+def test_drawn_bodies_the_field_joins_across_a_hairline_are_welded():
+    # A drawn cradle standing 0.05 mm off a wall: less than the grid can
+    # see. Their cells share faces, so the optimizer carried the load
+    # through that joint with no material of its own (a speaker's driver
+    # cradle at its grille); the delivered part must have it too, not a
+    # loose cradle with the load on it. A body the field holds apart stays.
+    import manifold3d as m3d
+
+    from loadpath.reconstruct import _weld_field_joints
+
+    class Field:
+        def __init__(self, labels):
+            self.labels = labels
+
+        def of(self, man):
+            return self.labels[round(man.volume())]
+
+    wall = m3d.Manifold.cube((24, 24, 4), True)
+    cradle = m3d.Manifold.cube((10, 10, 6), True).translate((0, 0, 5.05))
+    apart = m3d.Manifold.cube((4, 4, 4), True).translate((0, 0, 5.05 + 3.0 + 0.05 + 2.0))
+    part = wall + cradle + apart
+    kept = sorted(part.decompose(), key=lambda b: -b.volume())
+    assert len(kept) == 3
+    clip = m3d.Manifold.cube((24, 24, 40), True)
+    field = Field({round(wall.volume()): {1}, round(cradle.volume()): {1}, round(apart.volume()): {2}})
+    out, left, welded = _weld_field_joints(part, kept, field, 2.0, clip)
+    assert welded > 0
+    assert len(left) == 2, [b.volume() for b in left]
+    bodies = sorted(out.decompose(), key=lambda b: -b.volume())
+    assert len(bodies) == 2
+    # the weld spans the gap, with at most a small fillet round the joint
+    # (the facing surfaces within half a cell of each other)
+    w = bodies[0] - wall - cradle
+    assert 10 * 10 * 0.05 * 0.95 <= w.volume() <= 2 * 10 * 10 * 0.05
+    from loadpath.reconstruct import trimesh_from_manifold
+
+    lo, hi = trimesh_from_manifold(w).bounds
+    assert lo[2] >= 2.0 - 1e-6 and hi[2] <= 2.05 + 1.0 + 1e-6
+    assert max(abs(lo[0]), abs(hi[0]), abs(lo[1]), abs(hi[1])) <= 5.0 + 1.0 + 1e-6
+
+
+def test_gap_weld_leaves_bodies_a_cell_apart_alone():
+    import manifold3d as m3d
+
+    from loadpath.reconstruct import _gap_weld, trimesh_from_manifold
+
+    a = m3d.Manifold.cube((10, 10, 4), True)
+    b = m3d.Manifold.cube((10, 10, 4), True).translate((0, 0, 7.0))
+    assert _gap_weld(trimesh_from_manifold(a), trimesh_from_manifold(b), 1.0, 2.0) is None
+    b = m3d.Manifold.cube((10, 10, 4), True).translate((0, 0, 4.1))
+    w = _gap_weld(trimesh_from_manifold(a), trimesh_from_manifold(b), 1.0, 2.0)
+    assert w is not None and len((a + b + w).decompose()) == 1
