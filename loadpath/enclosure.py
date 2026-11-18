@@ -87,6 +87,103 @@ def _surface_point(exterior, centre, d, reach=None):
     return pts[int(np.argmax(out))]
 
 
+
+def _touches(material, pts, tol: float) -> np.ndarray:
+    """Which points lie within `tol` of any of the material shapes."""
+    pts = np.atleast_2d(np.asarray(pts, float))
+    d = np.full(len(pts), np.inf)
+    for m in material:
+        d = np.minimum(d, m.sdf(pts))
+    return d <= tol
+
+
+def _support_points(exterior, centre, rest, r: float, material, lo, hi, n_ang: int = 24):
+    """Where the part stands for its load cases: the middle of its rest face,
+    or, when that point has no fixed material under it (a window cut in the
+    floor), three points around it on the fixed material, as far apart as
+    the face allows. Returns (points, moved)."""
+    centre = np.asarray(centre, float)
+    rest = np.asarray(rest, float)
+    sp = _surface_point(exterior, centre, rest)
+    k = int(np.argmax(np.abs(rest)))
+    u, v = [np.eye(3)[i] for i in range(3) if i != k]
+    ring = [np.zeros(3)] + [0.5 * r * w for w in (u, -u, v, -v)]
+
+    def solid_under(q):
+        # material just inside the face there and half a support radius
+        # round it (not a rib a little above it, nor the edge of a window)
+        q = np.atleast_2d(q) - 0.3 * rest[None, :]
+        ok = np.ones(len(q), bool)
+        for o in ring:
+            ok &= _touches(material, q + o[None, :], 0.05)
+        return ok
+
+    if not material or solid_under(sp)[0]:
+        return [sp], False
+    reach = 0.5 * float(np.max(np.delete(np.asarray(hi) - np.asarray(lo), k)))
+    ang = np.linspace(0.0, 2 * np.pi, n_ang, endpoint=False)
+    fallback = (None, -1.0)
+    for rad in np.arange(0.5 * r, reach, 0.5 * r):
+        cand = [_surface_point(exterior, centre + rad * (np.cos(a) * u + np.sin(a) * v), rest) for a in ang]
+        ok = solid_under(np.array(cand))
+        if ok.sum() < 3:
+            continue
+        # three of them, as near 120 degrees apart as the material allows
+        idx = np.flatnonzero(ok)
+        best, spread = None, -1.0
+        for i in idx:
+            pick = [i]
+            for t in (n_ang // 3, 2 * n_ang // 3):
+                j = idx[np.argmin(np.abs(((idx - (i + t)) + n_ang // 2) % n_ang - n_ang // 2))]
+                pick.append(j)
+            if len(set(pick)) < 3:
+                continue
+            gaps = np.diff(sorted(ang[pick].tolist()) + [ang[min(pick)] + 2 * np.pi])
+            if gaps.min() > spread:
+                best, spread = pick, float(gaps.min())
+        if best is not None and spread >= np.radians(100):
+            return [cand[i] for i in best], True
+        if best is not None and spread > fallback[1]:
+            fallback = ([cand[i] for i in best], spread)
+    if fallback[0] is not None:                 # the widest three found
+        return fallback[0], True
+    return [sp], False
+
+
+def _mounts_on_material(mounts, material, lay, base_dir, warnings):
+    """A mount whose cradle has no fixed material under it (it sits over a
+    window, or on another part) cannot carry its mass into the fixed part
+    in verify: give that mass to the nearest mount that does touch it."""
+    from .handoff import _samples
+    from .shapes import shape_from_spec
+    on, off = {}, {}
+    for k, v in mounts.items():
+        try:
+            try:                           # absolute paths before the study is localized
+                sh = shape_from_spec(v["shape"], None)
+            except ValueError:
+                sh = shape_from_spec(v["shape"], base_dir)
+            pts = _samples(sh, step=0.5, cap=4000)
+            # a cradle bears on the part where it overlaps it, not where it
+            # passes a rib a fraction of a millimetre away
+            hit = int(_touches(material, pts, 0.0).sum()) >= max(10, len(pts) // 100)
+        except Exception as e:             # a shape we cannot sample: leave it be
+            warnings.append(f"mount-{k}: could not check it against the fixed parts ({e})")
+            hit = True
+        (on if hit else off)[k] = v
+    if not off or not on:
+        return mounts
+    centre = {k: np.asarray(lay["components"][k]["centre"], float) for k in mounts if k in lay["components"]}
+    out = {k: dict(v) for k, v in on.items()}
+    for k, v in off.items():
+        if v.get("mass", 0) <= 0:
+            continue
+        near = min(out, key=lambda m: float(np.linalg.norm(centre.get(m, 0) - centre.get(k, 0))))
+        out[near]["mass"] = out[near].get("mass", 0.0) + v["mass"]
+        warnings.append(f"mount-{k}: its cradle has no fixed material under it, so its {v['mass'] * 1000:.1f} g "
+                        f"is carried by mount-{near} in the drop cases")
+    return out
+
 def _r(v, n=4):
     return np.round(np.asarray(v, float), n).tolist()
 
@@ -449,9 +546,25 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
                                 "each an `rf` material, or \"ignore\", if it is not)")
 
     # 4. supports and loads
-    sp = _surface_point(exterior, centre, rest)
     r_sup = float(b.get("supportRadius", max(3.0, 2.0 * t_skin)))
-    supports = b.get("supports") or [{"shape": {"type": "sphere", "center": _r(sp), "r": round(r_sup, 3)}}]
+    # what verify will find under a support or a mount: the fixed parts
+    # when the brief has them (they are what gets checked), else the skin
+    material = [sh for _, sh in fixed]
+    supports = b.get("supports")
+    if not supports:
+        pts, moved = _support_points(exterior, centre, rest, r_sup, material, lo, hi)
+        supports = [{"shape": {"type": "sphere", "center": _r(q), "r": round(r_sup, 3)}} for q in pts]
+        if moved:
+            warnings.append(f"supports: the middle of the {_axis_name(rest)} face has no fixed material under it "
+                            f"(a window or opening), so the part stands on {len(pts)} points of the fixed part "
+                            "around it instead")
+    if material:
+        kept = _mounts_on_material(mounts, material, lay, out_dir, warnings)
+        # a cradle that carries nothing now is not material verify should
+        # expect to find on the fixed part
+        gone = {f"mount-{k}" for k in mounts if k not in kept}
+        preserve[:] = [p for p in preserve if p["id"] not in gone]
+        mounts = kept
     cases = list(b.get("loadCases") or [])
     loads = b.get("loads") or {}
 
@@ -1097,7 +1210,7 @@ def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_
     for cid in byid:
         if cid in comp_shapes:
             groups.setdefault(root(cid), []).append(cid)
-    mounts, warn = {}, []
+    mounts, warn, unmounted = {}, [], []
     for c in comps:
         if c.get("installedOn") or c["id"] not in groups:
             continue
@@ -1183,11 +1296,41 @@ def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_
                 chosen = (side, spec)
                 break
         if chosen is None:
-            warn.append(f"{c['id']}: every side for its cradle is in another part's way in; no mount, so its mass "
-                        "is not carried in the drop cases")
+            unmounted.append((c["id"], gmass))
             continue
         mounts[c["id"]] = {"side": chosen[0], "mass": gmass, "shape": chosen[1]}
+    # a part with no room for a cradle stands on another part (a board on a
+    # shield on a magnet ring): its mass goes to the mounted part it is
+    # nearest to, which is what carries it into the shell in a drop
+    for cid, gmass in unmounted:
+        near = _resting_on(cid, groups, mounts, comp_shapes, lay)
+        if near is None or gmass <= 0:
+            warn.append(f"{cid}: every side for its cradle is in another part's way in; no mount, so its mass "
+                        "is not carried in the drop cases")
+            continue
+        mounts[near]["mass"] = mounts[near]["mass"] + gmass
+        warn.append(f"{cid}: no room for a cradle (every side is in another part's way in); it rests on {near}, "
+                    f"so its {gmass * 1000:.1f} g is carried by mount-{near} in the drop cases (say so with "
+                    f"`installedOn: {near}` to silence this)")
     return mounts, warn
+
+
+def _resting_on(cid, groups, mounts, comp_shapes, lay):
+    """The mounted part an unmounted one is closest to: the one whose
+    surface comes nearest the unmounted part's surface."""
+    if not mounts:
+        return None
+    mesh = (lay.get("meshes") or {}).get(cid)
+    if mesh is not None:
+        pts = _surface_points(mesh, spacing=1.0, cap=1500)
+    else:
+        pts = np.atleast_2d(np.asarray(lay["components"][cid]["centre"], float))
+    best, dist = None, np.inf
+    for m in mounts:
+        d = float(np.min(_group_sdf(groups.get(m, [m]), comp_shapes)(pts)))
+        if d < dist:
+            best, dist = m, d
+    return best if dist < 2.0 else None
 
 
 def _hole_mount(c, mt, lay, groups, paths, comp_shapes, exterior, skin):
