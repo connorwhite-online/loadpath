@@ -284,7 +284,7 @@ def _offset_below(H, step: float, t: float):
     """The cradle layer's lower surface: `t` mm below the part's underside
     h(u, v) along n, except where the underside tilts past 60 degrees
     (a layer t deep along n is t * cos(tilt) thick there, under half of
-    t), where the layer stops: the surface itself. Along n alone the
+    t), where the layer stops. Along n alone the
     speaker's driver cradle came out a 0.05 mm film down the driver's
     flange step, carrying the driver's whole drop load (its part read SF
     0.03 against 1.5). Thickening it square to the step instead (an
@@ -293,7 +293,11 @@ def _offset_below(H, step: float, t: float):
     H = np.asarray(H, float)
     gy, gx = np.gradient(H, step)
     steep = np.hypot(gx, gy) > np.sqrt(3.0)     # tilt over 60 degrees
-    return np.where(steep, H, H - t)
+    # (past the surface there, not on it: a layer of no thickness over a
+    # stretch put the two heightfields face to face, and the delivered
+    # speaker came out not watertight; between samples the layer now
+    # closes across a clean line)
+    return np.where(steep, H + t, H - t)
 
 
 def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None) -> dict:
