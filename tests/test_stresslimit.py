@@ -47,3 +47,24 @@ def test_a_loose_piece_reads_over_the_limit():
     p.it = 0
     b = max(v for v, _, _ in p.evaluate(thin))
     assert b > a
+
+
+def test_a_guarded_design_ends_inside_its_stress_limit():
+    """optimize_switch with the stress limit alone, stepped as the
+    stress-constrained method steps (guarded): the delivered design is
+    sharp and inside the limit, lighter than solid."""
+    from loadpath.domain import build_domain
+    from loadpath.spec import study_from_dict
+    from loadpath.stresslimit import StressLimit
+    from loadpath.switch import optimize_switch
+
+    st = study_from_dict(json.load(open(os.path.join(HERE, "data", "two-case-bracket.json"))),
+                         os.path.join(HERE, "data"))
+    st.goal.safety_factor = st.goal.safety_factor or 2.0
+    r = optimize_switch(st, pitches=[4.0], iterations=[150], guarded=True,
+                        providers=[lambda s, d, nu, E: StressLimit(s, d, nu, E)])
+    assert r.history[-1]["beta"] >= 16.0
+    assert r.volume < 0.9
+    dom = build_domain(st, 4.0)
+    p = StressLimit(st, dom, st.elastic(design=True), float(st.material.E))
+    assert max(v for v, _, _ in p.evaluate(r.xphys)) <= 0.05

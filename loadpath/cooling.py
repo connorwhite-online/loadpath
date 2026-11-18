@@ -1244,6 +1244,8 @@ def run_cooling(study, out_dir: str, pitches=None, iterations=None, on_progress=
     # skin: 2.1 g more and the back 0.5 K over its limit
     mesh_opts = ReconstructOptions(close=0.0)
     opt_opts = {}
+    if stress_limit_applies(study):
+        opt_opts["guarded"] = True
     if has_feel:
         from .feel import FeelProblem
         providers.append(lambda st, domain, nu, modulus: FeelProblem(st, domain, nu, modulus))
