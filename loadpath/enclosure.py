@@ -559,7 +559,12 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
                             f"(a window or opening), so the part stands on {len(pts)} points of the fixed part "
                             "around it instead")
     if material:
-        mounts = _mounts_on_material(mounts, material, lay, out_dir, warnings)
+        kept = _mounts_on_material(mounts, material, lay, out_dir, warnings)
+        # a cradle that carries nothing now is not material verify should
+        # expect to find on the fixed part
+        gone = {f"mount-{k}" for k in mounts if k not in kept}
+        preserve[:] = [p for p in preserve if p["id"] not in gone]
+        mounts = kept
     cases = list(b.get("loadCases") or [])
     loads = b.get("loads") or {}
 
