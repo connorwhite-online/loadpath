@@ -1230,6 +1230,11 @@ def run_cooling(study, out_dir: str, pitches=None, iterations=None, on_progress=
         return CoolingProblem(st, domain, nu, modulus)
 
     providers = [make]
+    from .stresslimit import StressLimit, stress_limit_applies
+    if stress_limit_applies(study):
+        # the study's load cases held too: a design made for its heat alone
+        # left the speaker's driver cradle a loose piece (stresslimit.py)
+        providers.append(lambda st, domain, nu, modulus: StressLimit(st, domain, nu, modulus))
     feel_readback = None
     from .reconstruct import ReconstructOptions
     # no closing: it fills slots under twice its radius (1 mm here) as
