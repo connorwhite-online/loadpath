@@ -271,12 +271,29 @@ def _conforming_cradle(meshes, bounds, side: np.ndarray, thickness: float, ext_s
     except Exception:  # noqa: BLE001 - the bounding slab stands in
         return None
     hf = {"type": "heightfield", "normal": _r(n, 6), "axes": [_r(e1, 6), _r(e2, 6)],
-          "origin": _r(lo, 4), "step": step, "heights": np.round(H, 4).tolist()}
+          "origin": _r(lo, 4), "step": step}
+    low = _offset_below(H, step, float(thickness))
     return {"type": "intersect", "shapes": [
         {"type": "mesh", "path": os.path.abspath(path)},
-        {**hf, "side": "below", "depth": round(float(thickness) + 1.0, 4)},
-        {**hf, "side": "above", "offset": -round(float(thickness), 4), "depth": round(float(thickness) + 1.0, 4)},
+        {**hf, "heights": np.round(H, 4).tolist(), "side": "below", "depth": round(float(thickness) + 1.0, 4)},
+        {**hf, "heights": np.round(low, 4).tolist(), "side": "above", "depth": round(float(thickness) + 1.0, 4)},
         ext_spec]}
+
+
+def _offset_below(H, step: float, t: float):
+    """The cradle layer's lower surface: `t` mm below the part's underside
+    h(u, v) along n, except where the underside tilts past 60 degrees
+    (a layer t deep along n is t * cos(tilt) thick there, under half of
+    t), where the layer stops: the surface itself. Along n alone the
+    speaker's driver cradle came out a 0.05 mm film down the driver's
+    flange step, carrying the driver's whole drop load (its part read SF
+    0.03 against 1.5). Thickening it square to the step instead (an
+    envelope of balls) moved the cradle into the desk hub's board's tilted
+    way in."""
+    H = np.asarray(H, float)
+    gy, gx = np.gradient(H, step)
+    steep = np.hypot(gx, gy) > np.sqrt(3.0)     # tilt over 60 degrees
+    return np.where(steep, H, H - t)
 
 
 def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None) -> dict:
