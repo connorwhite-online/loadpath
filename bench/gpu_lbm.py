@@ -6,11 +6,18 @@ bounce-back at a sphere, regularized collision, Smagorinsky subgrid viscosity,
 float32, the ingredients of loadpath/windtunnel.py's kernel without its
 nesting and curved walls) written twice:
 
-- for the CPU, as a numba kernel on all cores (what loadpath ships today);
+- for the CPU, as a numba kernel on all cores, in the form loadpath's kernels
+  have today (a loop over the 19 directions per cell), and again in a form
+  the compiler can vectorize (cpu_vector_kernel);
 - for the GPU, as a WGSL compute shader run through wgpu (pip install wgpu:
   Metal on a Mac, Vulkan on Linux, D3D12 on Windows, no vendor SDK).
 
-It checks the two give the same field, then times both.
+It checks they give the same field, then times each.
+
+Measured 2026-11-19 at 128 cells a side: 4 cloud cores (Xeon, AVX-512) loop
+9.5, vector 58 (gcc -O3 with restrict and omp simd on the same code: 56);
+Apple M1 (8 cores, 8-core GPU) loop 23, GPU 151 with a 4 x 4 x 16 workgroup
+(11 to 34 with other shapes: the long side must run along memory).
 
     pip install numpy numba wgpu
     python gpu_lbm.py            # 64, 96, 128 cells a side
@@ -118,9 +125,79 @@ def cpu_kernel():
     return step
 
 
+def _rows(zs, zm, zp, ind):
+    L = []
+    pickz = lambda c: zm if c > 0 else zp if c < 0 else zs
+    L.append(f"w = wr[{zs}]")
+    for i in range(19):
+        if i == 0:
+            L.append(f"f0 = r0[{zs}]")
+        else:
+            L.append(f"f{i} = o{int(OPP[i])}[{zs}] if (w >> {i}) & 1 else r{i}[{pickz(int(C[i][2]))}]")
+    L.append("rho = " + " + ".join(f"f{i}" for i in range(19)))
+    for k, nm in enumerate("xyz"):
+        pos = " + ".join(f"f{i}" for i in range(19) if C[i][k] > 0)
+        neg = " + ".join(f"f{i}" for i in range(19) if C[i][k] < 0)
+        L.append(f"u{nm} = (({pos}) - ({neg})) / rho")
+    L.append("usq = ux * ux + uy * uy + uz * uz")
+    for i in range(19):
+        t = [("+" if c > 0 else "-") + " u" + nm for c, nm in zip(C[i], "xyz") if c != 0]
+        cu = " ".join(t) if t else "f32(0.0)"
+        cu = cu[2:] if cu.startswith("+ ") else cu
+        L.append(f"cu = {cu}")
+        L.append(f"e{i} = f32({float(W[i])!r}) * rho * (f32(1.0) + f32(3.0) * cu + f32(4.5) * cu * cu - f32(1.5) * usq)")
+        L.append(f"d{i} = f{i} - e{i}")
+    for nm, (a, b) in {"pxx": (0, 0), "pyy": (1, 1), "pzz": (2, 2), "pxy": (0, 1), "pxz": (0, 2), "pyz": (1, 2)}.items():
+        t = [("+ " if C[i][a] * C[i][b] > 0 else "- ") + f"d{i}" for i in range(19) if C[i][a] * C[i][b] != 0]
+        L.append(f"{nm} = f32(0.0) " + " ".join(t))
+    L.append("pn = np.sqrt(pxx * pxx + pyy * pyy + pzz * pzz + f32(2.0) * (pxy * pxy + pxz * pxz + pyz * pyz))")
+    L.append("tau = f32(0.5) * (tau0 + np.sqrt(tau0 * tau0 + f32(25.455844) * cs2 * pn / rho))")
+    L.append("keep = (f32(1.0) - f32(1.0) / tau) * f32(4.5)")
+    L.append("tr = (pxx + pyy + pzz) / f32(3.0)")
+    for i in range(19):
+        cx, cy, cz = (int(v) for v in C[i])
+        q = [f"+ {nm}" for c, nm in ((cx * cx, "pxx"), (cy * cy, "pyy"), (cz * cz, "pzz")) if c]
+        q += [("+ " if c > 0 else "- ") + f"f32(2.0) * {nm}" for c, nm in ((cx * cy, "pxy"), (cx * cz, "pxz"), (cy * cz, "pyz")) if c]
+        L.append(f"buf[{i}, {zs}] = e{i} + keep * f32({float(W[i])!r}) * (f32(0.0) {' '.join(q)} - tr)")
+    return "\n".join(" " * ind + l for l in L)
+
+def cpu_vector_kernel():
+    """The same step written so the compiler can run it 4 to 16 cells at a
+    time (AVX, NEON): every direction straight-line with literal offsets, an
+    inner loop along the contiguous axis with no branches (walls by select
+    from a link mask), unsigned indices (numba checks signed ones for
+    wraparound, which stops vectorization), and results written to a buffer
+    private to the thread, then copied (numba cannot promise the compiler
+    that the output does not overlap the 38 input rows; a fresh buffer does)."""
+    import numba as nb
+    src = ["def step(f, fn, walls, tau0, cs2):",
+           "    _, nx, ny, nz = f.shape",
+           "    for x in nb.prange(nx):",
+           "        buf = np.empty((19, nz), np.float32)",
+           "        xm = (x - 1) % nx; xp = (x + 1) % nx",
+           "        for y in range(ny):",
+           "            ym = (y - 1) % ny; yp = (y + 1) % ny",
+           "            wr = walls[x, y]"]
+    for i in range(19):
+        cx, cy = int(C[i][0]), int(C[i][1])
+        sx = "xm" if cx > 0 else "xp" if cx < 0 else "x"
+        sy = "ym" if cy > 0 else "yp" if cy < 0 else "y"
+        src.append(f"            r{i} = f[{i}, {sx}, {sy}]; o{i} = f[{i}, x, y]; n{i} = fn[{i}, x, y]")
+    src.append(_rows("0", "nz - 1", "1", 12))
+    src.append("            for zz in range(1, nz - 1):")
+    src.append("                z = U(zz)")
+    src.append(_rows("z", "z - U(1)", "z + U(1)", 16))
+    src.append(_rows("nz - 1", "nz - 2", "0", 12))
+    src.append("            for i in range(19):")
+    src.append("                fn[i, x, y, :] = buf[i]")
+    ns = {"nb": nb, "np": np, "f32": np.float32, "U": np.uint64}
+    exec("\n".join(src), ns)
+    return nb.njit(parallel=True, fastmath=True, error_model="numpy")(ns["step"])
+
+
 # ------------------------------------------------------------------- GPU --
 
-def wgsl(group=(8, 8, 4)):
+def wgsl(group=(4, 4, 16)):
     """The step as straight-line WGSL: every direction written out with its
     own literal offsets (no loops over constant arrays, no integer modulo),
     and the walls as one bit per link in a mask per cell."""
@@ -201,7 +278,7 @@ def wall_mask(solid):
 
 
 class Gpu:
-    def __init__(self, group=(8, 8, 4)):
+    def __init__(self, group=(4, 4, 16)):
         import wgpu
         self.wgpu = wgpu
         self.adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
@@ -274,11 +351,12 @@ def main():
     try:
         import numba
         step = cpu_kernel()
+        vstep = cpu_vector_kernel()
         out["cpuThreads"] = numba.get_num_threads()
     except ImportError:
         step = None
         print("numba missing: GPU only")
-    group = (8, 8, 4)
+    group = (4, 4, 16)
     for a in sys.argv[1:]:
         if a.startswith("--group="):
             group = tuple(int(v) for v in a.split("=")[1].split(","))
@@ -313,6 +391,20 @@ def main():
                 f, fn = fn, f
             dt = time.perf_counter() - t
             row["cpuMlups"] = round(cells * steps / dt / 1e6, 1)
+            walls = wall_mask(solid)
+            a, b = f0.copy(), f0.copy()
+            vstep(a, b, walls, np.float32(TAU0), np.float32(CS2))       # compile
+            a = f0.copy()
+            for _ in range(check):
+                vstep(a, b, walls, np.float32(TAU0), np.float32(CS2))
+                a, b = b, a
+            row["vectorDifference"] = float(np.abs(a[:, ~solid] - ref[:, ~solid]).max())
+            steps = 4 if quick else max(10, int(1.5e9 / max(cells, 1) / 4))
+            t = time.perf_counter()
+            for _ in range(steps):
+                vstep(a, b, walls, np.float32(TAU0), np.float32(CS2))
+                a, b = b, a
+            row["cpuVectorMlups"] = round(cells * steps / (time.perf_counter() - t) / 1e6, 1)
         if gpu is not None and f0.nbytes <= gpu.max_binding:
             try:
                 gpu.load(f0, solid)
