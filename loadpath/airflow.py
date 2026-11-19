@@ -524,7 +524,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
         if ml_p is None or it % 25 == 1:
             import pyamg
             ml_p = pyamg.smoothed_aggregation_solver(Mp, symmetry="symmetric", max_coarse=500)
-        pp = ml_p.solve(bp, tol=1e-6, accel="cg", maxiter=60) if npn > 1 else bp / dg
+        pp = ml_p.solve(bp, tol=1e-6, accel="cg", maxiter=150) if npn > 1 else bp / dg
         pcorr = np.zeros(N)
         pcorr[fl] = pp
         P = P + ap * pcorr
@@ -629,6 +629,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
         if it > 20 and mres < tol and du < tol and dTmax < 1e-3 and abs(bal["closure"]) < 5e-3:
             converged = True
             break
+    solve_t.free()
     Tc = T.reshape(shape)
     vel = np.zeros((3,) + shape)
     for a in range(3):
@@ -674,6 +675,16 @@ class _TSolve:
             self.analysed = False
         except Exception:
             self.pardiso = None
+
+    def free(self):
+        """Give MKL's factorization memory back (it is not freed with the
+        object, and a few solves in one process otherwise pile up)."""
+        self.fac = None
+        if self.pardiso is not None:
+            try:
+                self.pardiso.free_memory(everything=True)
+            except Exception:
+                pass
 
     def _factor(self, M):
         M = M.tocsr()
