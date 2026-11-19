@@ -458,14 +458,17 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             if fan is not None and a == fan.axis:
                 ff = cp_["num"].ravel()[fan_faces]
                 if fan.dp is not None:
-                    dp = float(fan.dp)
+                    dp = float(fan.dp) * min(1.0, it / 30.0)        # brought up over the first passes
+                    air["fan dp Pa"] = round(dp, 3)
                 else:
                     flow = float(np.sum(U[a].ravel()[fan_faces]) * A * fan.sign) / max(layers - 1, 1)
                     dp0, q0 = fan.curve
                     target = max(dp0 * (1.0 - flow / (fan.share * q0)), 0.0)
                     # read off the line explicitly, so moved toward it slowly:
                     # the flow answers a pressure change over many passes
-                    dp = target if fan_dp is None else fan_dp + 0.1 * (target - fan_dp)
+                    # (from zero: the full shut-off head on still air throws the
+                    # first passes far past the answer)
+                    dp = 0.1 * target if fan_dp is None else fan_dp + 0.1 * (target - fan_dp)
                     fan_dp = dp
                     air["fan dp Pa"] = round(dp, 3)
                     air["fan flow m3/s"] = flow
