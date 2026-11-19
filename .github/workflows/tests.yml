@@ -83,7 +83,7 @@ jobs:
               tests/test_manufacture.py tests/test_thermal.py tests/test_mg.py tests/test_mesh_block.py
               tests/test_slicer.py tests/test_crease.py
             pytest: >-
-              tests/test_flow.py tests/test_heatx_rating.py tests/test_printsetup.py tests/test_metal.py
+              tests/test_flow.py tests/test_airflow.py tests/test_heatx_rating.py tests/test_printsetup.py tests/test_metal.py
               tests/test_amgfast.py tests/test_selfsupport.py tests/test_cutcell.py tests/test_explore.py
               tests/test_porous.py tests/test_meshops.py tests/test_massfill.py tests/test_femops.py
               tests/test_stability.py tests/test_fieldtorch.py
