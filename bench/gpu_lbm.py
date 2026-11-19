@@ -7,17 +7,26 @@ float32, the ingredients of loadpath/windtunnel.py's kernel without its
 nesting and curved walls) written twice:
 
 - for the CPU, as a numba kernel on all cores, in the form loadpath's kernels
-  have today (a loop over the 19 directions per cell), and again in a form
-  the compiler can vectorize (cpu_vector_kernel);
+  had (a loop over the 19 directions per cell), and again as straight-line
+  generated source (cpu_vector_kernel);
 - for the GPU, as a WGSL compute shader run through wgpu (pip install wgpu:
   Metal on a Mac, Vulkan on Linux, D3D12 on Windows, no vendor SDK).
 
 It checks they give the same field, then times each.
 
 Measured 2026-11-19 at 128 cells a side: 4 cloud cores (Xeon, AVX-512) loop
-9.5, vector 58 (gcc -O3 with restrict and omp simd on the same code: 56);
-Apple M1 (8 cores, 8-core GPU) loop 23, GPU 151 with a 4 x 4 x 16 workgroup
-(11 to 34 with other shapes: the long side must run along memory).
+9.5 to 12, straight-line 58 to 66 (gcc -O3 with restrict and omp simd on the
+same code: 56 to 60); Apple M1 (8 threads, 8-core GPU) loop 22 to 31,
+straight-line 79 to 100, GPU 138 to 188 with a 4 x 4 x 16 or 1 x 1 x 64
+workgroup (11 to 42 with shapes whose long side does not run along memory).
+So the GPU is 1.4 to 1.9 times the best CPU form on that machine, and the
+form of the CPU kernel is worth more than the GPU.
+
+The straight-line form is not faster because it is vectorized: numba's
+machine code for it is scalar (LLVM gives up on a loop with this many
+output rows), and gcc's vectorized build of the same code is no faster.
+What it saves is the per-direction loop, the table lookups and a remainder
+for every neighbour's index.
 
     pip install numpy numba wgpu
     python gpu_lbm.py            # 64, 96, 128 cells a side
@@ -162,13 +171,13 @@ def _rows(zs, zm, zp, ind):
     return "\n".join(" " * ind + l for l in L)
 
 def cpu_vector_kernel():
-    """The same step written so the compiler can run it 4 to 16 cells at a
-    time (AVX, NEON): every direction straight-line with literal offsets, an
-    inner loop along the contiguous axis with no branches (walls by select
-    from a link mask), unsigned indices (numba checks signed ones for
-    wraparound, which stops vectorization), and results written to a buffer
-    private to the thread, then copied (numba cannot promise the compiler
-    that the output does not overlap the 38 input rows; a fresh buffer does)."""
+    """The same step as straight-line source: every direction written out
+    with literal offsets, an inner loop along the contiguous axis with no
+    branches (walls by select from a link mask), unsigned indices (numba
+    checks signed ones for wraparound), and results written to a buffer
+    private to the thread, then copied. (Written hoping the compiler would
+    run it several cells at a time; it does not, see the module's notes, and
+    it is 2 to 6 times the loop form all the same.)"""
     import numba as nb
     src = ["def step(f, fn, walls, tau0, cs2):",
            "    _, nx, ny, nz = f.shape",

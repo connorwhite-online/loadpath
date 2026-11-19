@@ -121,6 +121,56 @@ def test_nested_levels_only_read_cells_that_hold_data():
     assert distance_transform_edt(~body_p)[par.ntype == FLUID].min() >= 2.0
 
 
+def test_row_step_kernel_matches_the_cell_by_cell_one():
+    """The generated step kernel (straight-line source, a row at a time) and
+    the cell-by-cell kernel it replaced are the same arithmetic: the same
+    populations, moments and wall forces out, on every kind of level (far
+    boundary and sponge, plain, body with cut links) under each closure."""
+    from loadpath.cutcell import scan_voxelize
+    from loadpath.windtunnel import Tunnel, _kernels, layout, wall_links
+
+    m = trimesh.creation.icosphere(subdivisions=3, radius=D / 2)
+    h = D / 12
+
+    def vox(hh, corner, dims):
+        return scan_voxelize(m, hh, np.asarray(corner, float), np.asarray(dims))
+
+    lev = layout(*m.bounds, h * 2, D, shells=1, voxelize=vox)
+    origin = lev[-1]["origin"] - 0.5 * h
+    solid = vox(h, origin, lev[-1]["shape"])
+    bid, q, _, _ = wall_links(solid, np.ascontiguousarray(m.triangles), lev[-1]["origin"], h)
+    t = Tunnel(lev, solid, 0.004, 0.1, q=q, bid=bid)
+    for _ in range(6):
+        t.step()
+    K = _kernels()
+    if "step_cells" not in K:
+        pytest.skip("LOADPATH_WINDTUNNEL_STEP=cells: only the one kernel")
+    n = len(t.levels)
+    rng = np.random.default_rng(0)
+    cases = 0
+    for k, L in enumerate(t.levels):
+        sc = 2 ** (n - 1 - k)
+        for sgs, force in ((0, False), (1, True), (2, False), (2, True)):
+            frc = (1e-5 * rng.standard_normal((3,) + L.shape)).astype(np.float32) if force else L.frc
+            # the stream is still starting: a disturbance on top, so every term is at work
+            f0 = L.f + (1e-3 * rng.standard_normal(L.f.shape)).astype(np.float32)
+            u0 = L.u + (1e-2 * rng.standard_normal(L.u.shape)).astype(np.float32)
+            outs = []
+            for name in ("step", "step_cells"):
+                a = [f0.copy(), L.fn.copy(), L.ntype, t.per, L.tau0, sgs, L.csq, u0.copy(), L.un.copy(), L.rho.copy(),
+                     L.P.copy(), L.tau.copy(), L.bid, L.q, np.zeros_like(L.facc), np.zeros_like(L.fb), True,
+                     L.sig, L.has_sig, t.ufar, 1e-6 * sc, 0.0, -2e-6 * sc, frc, force or L.has_frc]
+                K[name](*a)
+                outs.append([a[i] for i in (1, 8, 9, 10, 11, 14, 15)])
+            for new, old in zip(*outs):
+                assert np.isfinite(old).all()
+                # float32 fields of order 1e-2 to 1: equal to the last bit or two
+                assert np.allclose(new, old, rtol=1e-5, atol=1e-8), (k, sgs, force, float(np.abs(new - old).max()))
+            assert np.abs(outs[1][0]).max() > 1e-3
+            cases += 1
+    assert cases == 4 * n and any(L.has_sig for L in t.levels) and (q[q >= 0] != 0.5).any()
+
+
 def test_rotor_disk_in_still_air_matches_momentum_theory():
     # an actuator disk in hover passes v_i = sqrt(T / (2 rho A))
     hub = trimesh.creation.icosphere(subdivisions=3, radius=6.0)
