@@ -71,7 +71,8 @@ def _catmull(points, samples=24):
 def sweep(P, spine, half_w, half_d, n=2.5, side=(1.0, 0.0, 0.0), cap=True, samples=24):
     """A superellipse section swept along a smooth spine (Catmull-Rom through
     `spine`). `half_w`, `half_d`: section half sizes, each a number or a list
-    with one value per spine point (interpolated), across `side` and across
+    with one value per spine point (interpolated along the curve between
+    the points, however unevenly they are spaced), across `side` and across
     side x tangent. A grip, a handle, a boom.
 
     The distance is measured in the plane of the nearest spine sample, so it
@@ -86,7 +87,10 @@ def sweep(P, spine, half_w, half_d, n=2.5, side=(1.0, 0.0, 0.0), cap=True, sampl
     u = side - (tang @ side)[:, None] * tang
     u /= np.linalg.norm(u, axis=1)[:, None]
     v = np.cross(tang, u)
-    ks = np.linspace(0, 1, len(spine))
+    # each spine point's place along the curve (it passes through point i
+    # at sample i * samples), so sizes stay with their points however
+    # unevenly the points are spaced
+    ks = s[np.arange(len(spine)) * samples]
     hw = np.interp(s, ks, np.broadcast_to(np.asarray(half_w, float), (len(spine),)))
     hd = np.interp(s, ks, np.broadcast_to(np.asarray(half_d, float), (len(spine),)))
     P = np.asarray(P, float)
