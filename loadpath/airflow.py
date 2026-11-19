@@ -376,7 +376,10 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
     d_store = [None, None, None]
     q_in_total = float(q_cell.sum())
 
+    mres = np.inf
+    dc_on = False              # deferred correction: on once the flow nearly conserves mass, and stays on
     for it in range(1, max_iter + 1):
+        dc_on = dc_on or mres < 1e-2
         rho, mu = air["rho"], air["mu"]
         padded = [_pad(U[c], per) for c in range(3)]
         flat_pad = [p_.ravel() for p_ in padded]
@@ -415,7 +418,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
                     phi_nb = np.where(still, 0.0, phi_nb)
                 phi_nb = np.where(zg, uf, phi_nb)
                 # deferred correction: central minus upwind face value, explicit
-                if deferred:
+                if deferred and dc_on:
                     face_c = 0.5 * (uf + phi_nb)
                     face_u = np.where(out_f > 0, uf, phi_nb)
                     dc -= deferred * out_f * (face_c - face_u) * (kind != 2)
@@ -463,7 +466,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
                 else:
                     flow = float(np.sum(U[a].ravel()[fan_faces]) * A * fan.sign) / max(layers - 1, 1)
                     dp0, q0 = fan.curve
-                    target = max(dp0 * (1.0 - flow / (fan.share * q0)), 0.0)
+                    target = min(max(dp0 * (1.0 - flow / (fan.share * q0)), 0.0), dp0)
                     # read off the line explicitly, so moved toward it slowly:
                     # the flow answers a pressure change over many passes
                     # (from zero: the full shut-off head on still air throws the
@@ -569,7 +572,10 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             f_out += np.bincount(hi, fm, minlength=f_out.size)
             f_in += np.bincount(hi, fp, minlength=f_in.size)
             f_in += np.bincount(lo, fm, minlength=f_in.size)
-            if deferred:
+            if deferred and dc_on:
+                # only once the flow nearly conserves mass: the explicit
+                # correction on a flow still far from it (a fan spinning up)
+                # drives the temperatures unbounded
                 tc = 0.5 * (T[lo] + T[hi])
                 tu = np.where(F > 0, T[lo], T[hi])
                 corr = deferred * F * (tc - tu)              # extra carried lo -> hi
@@ -628,7 +634,8 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             max(np.abs(U[c]).max() for c in range(3)))})
         if verbose and (it % report_every == 0 or it == 1):
             print(f"airflow {it}: mass {mres:.2e} du {du:.1e} dT {dTmax:.2e} K balance {bal['closure']:+.3%} "
-                  f"umax {hist[-1]['umax']:.4f} m/s T {T.min():.2f}..{T.max():.2f} C", flush=True)
+                  + (f"fan {air.get('fan dp Pa', 0.0):.2f} Pa " if fan is not None else "")
+                  + f"umax {hist[-1]['umax']:.4f} m/s T {T.min():.2f}..{T.max():.2f} C", flush=True)
         if it > 20 and mres < tol and du < tol and dTmax < 1e-3 and abs(bal["closure"]) < 5e-3:
             converged = True
             break
