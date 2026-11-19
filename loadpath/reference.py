@@ -40,7 +40,8 @@ import numpy as np
 
 from .raster import Camera, outline, render, shade_image
 
-__all__ = ["score_image", "score_mesh", "score_references", "fit_camera", "reference_edges", "reference_mask"]
+__all__ = ["score_image", "score_mesh", "score_references", "fit_camera", "reference_edges", "reference_mask",
+           "sketch_strokes", "sketch_silhouette"]
 
 SIX = ("top", "bottom", "front", "back", "left", "right")
 MATCH_SHARE = 0.85      # share of the part's outline that must lie on reference edges
@@ -120,6 +121,111 @@ def reference_mask(rgb, alpha=None):
     return blob, "backdrop"
 
 
+def sketch_strokes(rgb, dot: float = 0.008, dark: float = 0.82):
+    """The pencil or pen strokes of a sketch (bool H, W), without the paper.
+
+    A photographed sketch has uneven light across the page, a printed dot or
+    line grid, hatching and smudges, and Canny finds edges in all of them:
+    an outline laid anywhere near a grid dot scores as on an edge. Here the
+    page's light is divided out (the image over a heavy blur of itself),
+    what is darker than `dark` of the local paper is ink, and ink blobs
+    smaller than `dot` of the image's shorter side across (grid dots,
+    specks) are dropped. Hatching stays: it is ink, and it is inside the
+    outline anyway."""
+    from scipy import ndimage
+
+    g = rgb @ np.array([0.299, 0.587, 0.114])
+    n = min(g.shape)
+    paper = ndimage.grey_closing(g, size=max(3, int(0.02 * n)))       # strokes closed over: the page alone
+    paper = ndimage.gaussian_filter(paper, max(1.0, 0.02 * n))
+    ink = g / np.maximum(paper, 1.0) < dark
+    lab, k = ndimage.label(ink, structure=np.ones((3, 3)))
+    if k == 0:
+        return ink
+    # a blob's extent, not its area: a stroke is long and thin, a dot is not
+    sl = ndimage.find_objects(lab)
+    span = np.array([max(a.stop - a.start, b.stop - b.start) for a, b in sl], float)
+    keep = np.r_[False, span >= dot * n * 2.0]
+    return keep[lab]
+
+
+def _enclosed(strokes, gap, seed=None):
+    from scipy import ndimage
+
+    r = max(1, int(round(gap * min(strokes.shape))))
+    disk = np.hypot(*np.mgrid[-r:r + 1, -r:r + 1]) <= r
+    pad = 2 * r + 2                                  # room round a view cropped tight to its outline
+    st = np.pad(strokes, pad)
+    wall = ndimage.binary_dilation(st, structure=disk)
+    lab, n = ndimage.label(~wall)
+    border = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
+    inside = ndimage.binary_fill_holes(~np.isin(lab, border[border > 0]))   # enclosed regions and their strokes
+    lab2, n2 = ndimage.label(inside)
+    if n2 == 0:
+        return None, 0.0
+    if seed is not None:
+        k = lab2[pad + int(seed[1] * strokes.shape[0]), pad + int(seed[0] * strokes.shape[1])]
+        if k == 0:
+            return None, 0.0
+        blob = lab2 == k
+    else:
+        sizes = ndimage.sum(inside, lab2, range(1, n2 + 1))
+        blob = lab2 == (int(np.argmax(sizes)) + 1)
+    paper = float((blob & ~wall).sum())               # enclosed page, not counting the strokes' own width
+    # the dilation pushed the outline out by r: erode it back, to the
+    # middle of the stroke
+    return ndimage.binary_erosion(blob, structure=disk, border_value=0)[pad:-pad, pad:-pad], paper
+
+
+def sketch_silhouette(strokes, gap: float = 0.02, cover: float = 0.6, seed=None):
+    """(mask or None): the region the sketch's outermost closed stroke
+    encloses. A quick line rarely closes, so gaps are bridged: from `gap`
+    of the shorter side up, widening until the enclosed blob spans at least
+    `cover` of the box the ink spans (a too small bridge leaves the outside
+    leaking in, and the largest closed blob is some inner detail). The
+    outside is flooded from the border, the largest enclosed blob is the
+    object (or, with `seed` (x, y as shares of the image), the blob that
+    holds that point: for a page where another view runs into this one),
+    and the bridge is taken back off."""
+    if not strokes.any():
+        return None
+    ys, xs = np.nonzero(strokes)
+    ink = np.ptp(np.percentile(xs, [2, 98])) * np.ptp(np.percentile(ys, [2, 98]))
+    best = None
+    for g in (gap, 1.75 * gap, 2.5 * gap, 4.0 * gap):
+        blob, paper = _enclosed(strokes, g, seed)
+        if blob is None or not blob.any():
+            continue
+        if best is None or paper > best[0]:
+            best = (paper, blob)
+        if paper >= cover * 0.5 * ink:             # a solid outline fills about half its box or more
+            break
+    if best is None or best[1].mean() < 0.01:
+        return None
+    return best[1]
+
+
+def _reference(rgb, alpha, kind):
+    """(edges, mask, how) for a reference of this kind ("render" or "sketch")."""
+    if kind == "sketch":
+        st = sketch_strokes(rgb)
+        m = alpha if alpha is not None else sketch_silhouette(st)
+        return st | (outline(m) if m is not None else False), m, ("alpha" if alpha is not None else "sketch outline") if m is not None else None
+    edges = reference_edges(rgb)
+    m, how = reference_mask(rgb, alpha)
+    if m is not None:
+        # a mask's own border is an edge the reference certainly has
+        edges = edges | outline(m)
+    return edges, m, how
+
+
+def _proportions(mask):
+    ys, xs = np.nonzero(mask)
+    if len(xs) == 0:
+        return None
+    return float((np.ptp(xs) + 1) / (np.ptp(ys) + 1))
+
+
 def _edge_distance(edges):
     from scipy import ndimage
 
@@ -174,7 +280,7 @@ def _sheet(panels, titles, path, caption=None):
 
 
 def score_image(mesh, image, camera, tolerance: float = 1.0, mask=None, out=None, name=None,
-                min_match: float = MATCH_SHARE, min_iou=None) -> dict:
+                min_match: float = MATCH_SHARE, min_iou=None, kind: str = "render") -> dict:
     """A part against one reference image through its camera.
 
     Returns {"match" (share of the part's outline with a reference edge
@@ -190,11 +296,7 @@ def score_image(mesh, image, camera, tolerance: float = 1.0, mask=None, out=None
     if not r["mask"].any():
         return {"ok": False, "error": "the camera does not see the part", "reference": name or os.path.basename(image)}
     px = cam.mm_per_pixel(_depth_mm(r))
-    edges = reference_edges(rgb)
-    ref_mask, how = reference_mask(rgb, alpha)
-    if ref_mask is not None:
-        # a mask's own border is an edge the reference certainly has
-        edges = edges | outline(ref_mask)
+    edges, ref_mask, how = _reference(rgb, alpha, kind)
     dist = _edge_distance(edges)
     line = _part_outline(r)
     d_mm = dist[line] * px
@@ -207,6 +309,7 @@ def score_image(mesh, image, camera, tolerance: float = 1.0, mask=None, out=None
         inter = (ref_mask & r["mask"]).sum()
         union = (ref_mask | r["mask"]).sum()
         res["iou"] = float(inter / max(union, 1))
+        res["proportions"] = {"part": _proportions(r["mask"]), "reference": _proportions(ref_mask)}
         if min_iou is not None:
             ok = ok and res["iou"] >= float(min_iou)
     res["minMatch"] = float(min_match)
@@ -215,9 +318,16 @@ def score_image(mesh, image, camera, tolerance: float = 1.0, mask=None, out=None
         cap = (f"outline on reference edges: {100 * res['match']:.0f}% within {tol:.2f} mm "
                f"(mean {res['outlineMean']:.2f}, 95% {res['outline95']:.2f} mm)"
                + (f"; silhouette overlap {100 * res['iou']:.1f}%" if "iou" in res else ""))
-        res["image"] = _sheet([np.clip(rgb, 0, 255).astype(np.uint8), shade_image(r),
+        shown = np.clip(rgb, 0, 255).astype(np.uint8)
+        if kind == "sketch":                       # what was read off the page: ink, and the silhouette tinted
+            shown = np.full_like(shown, 255)
+            if ref_mask is not None:
+                shown[ref_mask] = (215, 228, 245)
+            shown[edges] = (40, 40, 40)
+        res["image"] = _sheet([shown, shade_image(r),
                                _overlay(rgb, r, dist * px <= tol)],
-                              ["reference", "part, same camera", "part outline on the reference"], out, cap)
+                              ["reference" if kind != "sketch" else "sketch as read (ink, silhouette)", "part, same camera",
+                               "part outline on the reference"], out, cap)
     return res
 
 
@@ -316,21 +426,24 @@ def score_mesh(mesh, reference, cameras=None, sections=None, out=None, name=None
     return res
 
 
-def fit_camera(shape_mesh, image, start, iterations: int = 400) -> dict:
+def fit_camera(shape_mesh, image, start, iterations: int = 400, kind: str = "render", turn: bool = True) -> dict:
     """The camera a reference image was drawn from, found by laying the
     outline of `shape_mesh` (what the reference shows) on the image's
     edges. `start`: a camera spec roughly right (a named `direction`, or a
     position and lookAt). Returns {"camera" (a spec to fix in the study),
-    "outlineMean" (pixels), "match"}."""
+    "outlineMean" (pixels), "match"}.
+
+    `turn=False` keeps the start's direction and fits only the zoom and the
+    pan: right for an orthographic sketch view (front, side, top), where
+    letting the camera turn lets it hide a wrong rake or a wrong taper
+    behind a tilted view. `kind="sketch"` reads the image as a drawing
+    (sketch_strokes)."""
     from scipy.optimize import minimize
 
     cam0 = start if isinstance(start, Camera) else Camera.from_spec(start)
     rgb, alpha = _load_image(image)
     rgb, alpha = _resize(rgb, alpha, cam0.width, cam0.height)
-    edges = reference_edges(rgb)
-    mask, _ = reference_mask(rgb, alpha)
-    if mask is not None:
-        edges = edges | outline(mask)
+    edges, mask, _ = _reference(rgb, alpha, kind)
     dist = np.minimum(_edge_distance(edges), 40.0)
     centre = np.asarray(shape_mesh.bounds, float).mean(axis=0)
     size = float(np.linalg.norm(shape_mesh.extents))
@@ -340,6 +453,8 @@ def fit_camera(shape_mesh, image, start, iterations: int = 400) -> dict:
     persp = cam0.perspective
 
     def camera(x):
+        if not turn:
+            x = np.r_[0.0, 0.0, 0.0, x]
         az, el, roll, zoom, pu, pv = x
         # turn the eye about the shape's centre, then pan and zoom
         f0, r0, u0 = cam0.forward, cam0.right, cam0.up
@@ -363,9 +478,10 @@ def fit_camera(shape_mesh, image, start, iterations: int = 400) -> dict:
             return 40.0
         return float(dist[line].mean())
 
-    best = minimize(cost, np.zeros(6), method="Nelder-Mead",
+    nd = 6 if turn else 3
+    best = minimize(cost, np.zeros(nd), method="Nelder-Mead",
                     options={"maxiter": iterations, "xatol": 1e-4, "fatol": 1e-3,
-                             "initial_simplex": np.vstack([np.zeros(6), 0.06 * np.eye(6)])})
+                             "initial_simplex": np.vstack([np.zeros(nd), 0.06 * np.eye(nd)])})
     cam = camera(best.x)
     r = render(shape_mesh, cam)
     line = outline(r["mask"])
@@ -400,12 +516,16 @@ def score_references(mesh, references, base_dir=None, out_dir=None, exterior=Non
             if cam == "fit" or (isinstance(cam, dict) and cam.get("fit")):
                 if exterior is None:
                     raise ValueError("fitting a camera needs the exterior the reference shows")
-                start = ref.get("start") or {k: v for k, v in cam.items() if k != "fit"}
-                fitted = fit_camera(exterior, full(ref["image"]), start)
+                start = ref.get("start") or (isinstance(cam, dict) and {k: v for k, v in cam.items() if k != "fit"})
+                if not start:
+                    raise ValueError("camera 'fit' needs a start: a camera roughly right, e.g. {direction: front}")
+                fitted = fit_camera(exterior, full(ref["image"]), start, kind=ref.get("kind", "render"),
+                                    turn=ref.get("turn", ref.get("kind") != "sketch"))
                 cam = fitted["camera"]
             row = score_image(mesh, full(ref["image"]), cam, tolerance=ref.get("tolerance", 1.0),
                               mask=full(ref["mask"]) if ref.get("mask") else None, out=out, name=name,
-                              min_match=ref.get("minMatch", MATCH_SHARE), min_iou=ref.get("minIou"))
+                              min_match=ref.get("minMatch", MATCH_SHARE), min_iou=ref.get("minIou"),
+                              kind=ref.get("kind", "render"))
             if fitted is not None:
                 row["fittedCamera"] = fitted["camera"]
                 row["note"] = "camera fitted on this run: copy fittedCamera into the reference's camera to fix it"

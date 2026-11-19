@@ -184,6 +184,27 @@ reference). What holds the form is the exterior itself: freeze it as a
 mesh or STEP at sign-off, and the `exterior` check holds every build to
 it. Renders with known cameras gate as usual.
 
+A pencil sketch on dot-grid or squared paper needs `"kind": "sketch"`.
+The default edge finder reads the dots and the paper's shading as edges,
+so a part's outline "matches" a blank page. A sketch is read as ink
+(`sketch_strokes`: dark against the paper's own local brightness, specks
+the size of a grid dot dropped). The drawn outline is closed into a
+silhouette (`sketch_silhouette`, which bridges the gaps a quick stroke
+leaves), so the sheet gets an overlap score and the two shapes' width
+over height (`proportions`). A sketch's front, side and top views are
+orthographic, so they are fitted with `"turn": false` (the default for a
+sketch): the camera keeps the named direction and only zooms and pans.
+A free fit can tilt the part until a wrong rake or taper lines up.
+
+```json
+{"id": "side", "image": "sketch/side.png", "kind": "sketch",
+ "camera": "fit", "start": {"direction": "right", "width": 230, "height": 290}}
+```
+
+Crop each view from the sheet before scoring it, and paint out any part
+of a neighbouring view that runs into the crop. The silhouette takes the
+largest closed region, or the one holding `seed` (a pixel) when given.
+
 A reference can also be a solid (`"mesh": "concept.stl"`): the two are
 compared in six orthographic views and in three sections.
 
