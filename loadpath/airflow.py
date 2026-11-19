@@ -588,7 +588,9 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
                 t_in = float(side.get("t", amb)) if side.get("t") is not None else amb
                 # leaving: at its own temperature; coming in (or still): the
                 # room's air at the opening, half a pitch out
-                inn = F <= 0.0
+                # (a solid cell on an open side is adiabatic there: the room
+                # is only reached through the air)
+                inn = (F <= 0.0) & fl[cell]
                 g = np.where(inn, A * kcell[cell] / (0.5 * h), 0.0)
                 diagT += np.bincount(cell, g, minlength=diagT.size)
                 bT += np.bincount(cell, (np.maximum(-F, 0.0) + g) * t_in, minlength=bT.size)
@@ -629,7 +631,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
         flow_scale = max(max((rho * A * np.abs(U[c]).max() if U[c].size else 0.0) for c in range(3)), 1e-30)
         mres = mass_res / flow_scale / max(npn, 1) ** 0.5
         q_fix = _fixed_heat(links, fix_mask.ravel(), T, kcell, A, h, bfaces)
-        bal = _balance(bfaces, U, T, rc, A, amb, q_in_total + q_fix, S, kcell, h)
+        bal = _balance(bfaces, U, T, rc, A, amb, q_in_total + q_fix, S, kcell, h, fl)
         hist.append({"it": it, "mass": mres, "du": du, "dT": dTmax, "balance": bal["closure"], "umax": float(
             max(np.abs(U[c]).max() for c in range(3)))})
         if verbose and (it % report_every == 0 or it == 1):
@@ -654,7 +656,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             vel[a] = 0.5 * (ua[tuple(sl1)] + ua[tuple(sl2)])
     walls = _walls(links, fl, T, kcell, A, h, shape)
     q_fix = _fixed_heat(links, fix_mask.ravel(), T, kcell, A, h, bfaces)
-    bal = _balance(bfaces, U, T, air["rho"] * air["cp"], A, amb, q_in_total + q_fix, S, kcell, h)
+    bal = _balance(bfaces, U, T, air["rho"] * air["cp"], A, amb, q_in_total + q_fix, S, kcell, h, fl)
     bal["from fixed cells W"] = q_fix
     if verbose:
         print(f"airflow done: {it} passes, converged {converged}, {time.time() - t0:.0f} s, "
@@ -791,7 +793,7 @@ def _fixed_heat(links, fixm, T, kcell, A, h, bfaces):
     return q
 
 
-def _balance(bfaces, U, T, rc, A, amb, q_in, S, kcell, h):
+def _balance(bfaces, U, T, rc, A, amb, q_in, S, kcell, h, fl):
     """Heat into the box (sources) against what leaves: carried out of
     openings over the ambient, through isothermal walls."""
     carried = 0.0
@@ -801,7 +803,7 @@ def _balance(bfaces, U, T, rc, A, amb, q_in, S, kcell, h):
         if kind in ("open", "inlet"):
             F = rc * A * U[a].ravel()[fidx] * sign
             t_in = float(side["t"]) if side.get("t") is not None else amb
-            g = np.where(F <= 0.0, A * kcell[cell] / (0.5 * h), 0.0)
+            g = np.where((F <= 0.0) & fl[cell], A * kcell[cell] / (0.5 * h), 0.0)
             carried += float(np.sum(np.where(F > 0, F * (T[cell] - amb), F * (t_in - amb)) + g * (T[cell] - t_in)))
         elif kind == "wall" and side.get("t") is not None:
             g = A * kcell[cell] / (0.5 * h)
