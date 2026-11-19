@@ -64,6 +64,19 @@ def test_sweep_section_sizes():
     assert abs(d[0]) < 0.2 and abs(d[1]) < 0.2 and d[2] < -10
 
 
+def test_sweep_sizes_stay_with_unevenly_spaced_points():
+    # a grip closing to a round end: most points along the shaft, a few
+    # bunched in the last 15 mm. The sizes belong to the points, not to
+    # their index (2026-11-19: they followed the index, and the shaft
+    # tapered from halfway down)
+    z = [0.0, -40.0, -80.0, -100.0, -108.0, -113.0, -115.0]
+    w = [25.0, 25.0, 25.0, 25.0, 18.0, 10.0, 2.0]
+    spine = [(0, 0, zi) for zi in z]
+    P = np.array([[25.0, 0, -60.0], [25.0, 0, -95.0]])
+    d = E.sweep(P, spine, w, 15.0, n=2.6)
+    assert np.all(np.abs(d) < 0.3), d
+
+
 def test_hand_targets():
     h = E.hands()
     assert h["hand_length"]["male"]["p50"] > h["hand_length"]["female"]["p50"]
