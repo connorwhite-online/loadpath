@@ -39,10 +39,15 @@ r.balance           # heat in, carried out of the openings, through walls
 - **Heat.** Conduction in every cell at its own conductivity (harmonic
   mean across faces), and advection in the air. Heat sources go per cell,
   cells can be held at a temperature, and walls can be adiabatic or
-  isothermal. The energy matrix is factorized each pass, with PARDISO
-  (`pip install loadpath[fast]`) or SuperLU. Aluminium beside air is a
-  conductance contrast of about 8000, which iterative solvers built on the
-  symmetric part don't carry.
+  isothermal. With upwind advection the energy matrix is an M-matrix
+  (positive diagonal, non-positive neighbours), which is what classical
+  algebraic multigrid (Ruge & Stueben) is built for: it coarsens along the
+  matrix's own strong couplings, so aluminium beside air (a conductance
+  contrast of about 8000) and the direction the air carries heat are both
+  in the hierarchy. The hierarchy preconditions BiCGSTAB and is kept from
+  pass to pass while it still serves. A factorization (PARDISO with
+  `pip install loadpath[fast]`, SuperLU without) is the way out if the
+  iteration fails.
 - **Box sides.** `open` is an opening to the still room: zero total
   pressure where air comes in (at the room's temperature and with no
   velocity along the side), zero static pressure where it leaves. The
@@ -94,7 +99,10 @@ Where the gaps are wide (El 170), the two agree.
 Rating a natural-convection design whose air path is not a textbook case:
 a fin stack behind a grate, a chimney through an enclosure, vents high and
 low, a fan that may or may not be needed. It solves a box of tens to a few
-hundred thousand voxels in minutes to an hour. A design that repeats across
+hundred thousand voxels in minutes: a heated fin stack in open air, 184,000
+voxels with every side open, converges in 255 passes and 3.8 minutes on
+four cloud cores (it took about 32 minutes when the energy matrix was
+factorized each pass). The time grows in step with the voxels. A design that repeats across
 its width (fins, slots) is best run as one periodic period of it.
 
 To use it in a whole-product conduction model (thermal.solve_temperature),

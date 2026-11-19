@@ -61,6 +61,15 @@ from .convection import air_properties
 __all__ = ["solve", "Fan", "AirflowResult", "SIDES"]
 
 G = 9.80665
+# How far each pass's inner solves go. A pass is one step of an outer
+# iteration that itself closes a few percent of what is left, so an inner
+# solve taken past a thousandth of the pass's own change buys nothing: the
+# fin stack in docs/AIRFLOW.md converges in the same 174 passes with these
+# as with 1e-7 and 1e-6, to within 7e-4 K and 2e-5 m/s of that answer (the
+# stop rule itself is 1e-3 K a pass), in two thirds of the time.
+_T_RTOL = 1e-3          # energy: residual against the pass's starting residual
+_P_TOL = 1e-3           # pressure correction: residual against the mass imbalance
+_DIRECT_BELOW = 30000   # cells: under this a direct solve of the energy matrix is quicker than a hierarchy
 SIDES = ("x-", "x+", "y-", "y+", "z-", "z+")
 _KINDS = ("open", "wall", "symmetry", "periodic", "inlet")
 
@@ -524,7 +533,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
         if ml_p is None or it % 25 == 1:
             import pyamg
             ml_p = pyamg.smoothed_aggregation_solver(Mp, symmetry="symmetric", max_coarse=500)
-        pp = ml_p.solve(bp, tol=1e-6, accel="cg", maxiter=60) if npn > 1 else bp / dg
+        pp = ml_p.solve(bp, tol=_P_TOL, accel="cg", maxiter=60) if npn > 1 else bp / dg
         pcorr = np.zeros(N)
         pcorr[fl] = pp
         P = P + ap * pcorr
@@ -654,32 +663,50 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
 
 
 class _TSolve:
-    """The energy solve. Aluminium next to air is a conductance contrast of
-    ~8000 and the air's advection makes it nonsymmetric, which defeats
-    iterative solvers built on the symmetric part (and AIR is slow to set up
-    each pass), so it is factorized: PARDISO when pypardiso is installed
-    (the `fast` extra; the sparsity never changes, so the ordering is done
-    once), SuperLU otherwise. The flow changes little from pass to pass, so
-    a factorization serves as BiCGSTAB's preconditioner for the next ones and
-    is renewed every `every` passes, or when it stops being good enough."""
+    """The energy solve: one nonsymmetric system over solid and air.
 
-    def __init__(self, every: int = 0):
-        self.every = every
-        self.fac = None
-        self.age = 0
+    With upwind advection (the central part is deferred to the right-hand
+    side) every row has a positive diagonal, non-positive neighbours and a
+    row sum of zero or more: an M-matrix. Classical algebraic multigrid
+    (Ruge & Stueben 1987) is built for exactly that. It coarsens along the
+    strong couplings of the matrix itself, so aluminium beside air (a
+    conductance contrast of about 8000) and the direction the air carries
+    heat are both in the hierarchy, where a method built on the symmetric
+    part or on geometry loses them. The hierarchy preconditions BiCGSTAB.
+
+    The flow changes little from pass to pass, so a hierarchy serves the
+    following passes too (184,000 cells, a fin stack in open air: 5
+    iterations with the hierarchy of 60 passes before, as with a fresh one)
+    and is rebuilt when the iterations it takes have grown by half.
+
+    Against factorizing every pass (what this did before), on that box: 0.5 s
+    a pass where PARDISO took 6.3 s on one core, the work grows with the
+    cells and not their square, and it needs no PARDISO (there is none on
+    Apple Silicon). The factorization (PARDISO on all the run's cores when
+    pypardiso is installed, the `fast` extra; SuperLU otherwise) stays as
+    the way out when the iteration does not converge."""
+
+    def __init__(self):
+        self.ml = None
+        self.prec = None
+        self.fresh_its = None
         self.pardiso = None
-        try:
-            import pypardiso
-            self.pardiso = pypardiso.PyPardisoSolver()
-            self.analysed = False
-        except Exception:
-            self.pardiso = None
+        self.analysed = False
+        self.stats = {"amg setups": 0, "iterations": 0, "solves": 0, "factorizations": 0}
 
     def _factor(self, M):
         M = M.tocsr()
         M.sort_indices()
-        if self.pardiso is not None:
+        if self.pardiso is None and self.pardiso is not False:
+            try:
+                import pypardiso
+                self.pardiso = pypardiso.PyPardisoSolver()
+            except Exception:
+                self.pardiso = False
+        if self.pardiso:
+            from .nonlinear import mkl_threads
             s = self.pardiso
+            mkl_threads(s)
             s._check_A(M)
             z = np.zeros((M.shape[0], 1))
             if not self.analysed:
@@ -688,31 +715,57 @@ class _TSolve:
                 self.analysed = True
             s.set_phase(22)
             s._call_pardiso(M, z)
-
-            def solve(r, M=M, s=s):
-                s.set_phase(33)
-                return s._call_pardiso(M, np.asarray(r, float).reshape(-1, 1)).ravel()
-            return solve
+            s.set_phase(33)
+            return lambda r: s._call_pardiso(M, np.asarray(r, float).reshape(-1, 1)).ravel()
         lu = spla.splu(M.tocsc(), permc_spec="MMD_AT_PLUS_A")
         return lu.solve
 
+    def _setup(self, M):
+        import warnings
+
+        import pyamg
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.ml = pyamg.ruge_stuben_solver(M, max_coarse=500)
+        self.prec = self.ml.aspreconditioner(cycle="V")
+        self.fresh_its = None
+        self.stats["amg setups"] += 1
+
+    def _krylov(self, M, b, x0, atol, maxiter):
+        its = [0]
+
+        def count(_):
+            its[0] += 1
+        x, info = spla.bicgstab(M, b, x0=x0, M=self.prec, rtol=0.0, atol=atol, maxiter=maxiter, callback=count)
+        ok = info == 0 and bool(np.isfinite(x).all())
+        return x, ok, its[0]
+
     def __call__(self, M, b, x0):
         n = M.shape[0]
-        if n < 30000:
+        if n < _DIRECT_BELOW:
             return spla.spsolve(M.tocsc(), b)
-        if self.fac is not None and self.age < self.every:
-            self.age += 1
-            r0 = float(np.linalg.norm(b - M @ x0))
-            if r0 == 0.0:
-                return x0.copy()
-            P = spla.LinearOperator(M.shape, self.fac)
-            x, info = spla.bicgstab(M, b, x0=x0, M=P, rtol=0.0, atol=1e-9 * float(np.linalg.norm(b)) + 1e-7 * r0,
-                                    maxiter=15)
-            if info == 0:
+        r0 = float(np.linalg.norm(b - M @ x0))
+        if r0 == 0.0:
+            return x0.copy()
+        atol = _T_RTOL * r0 + 1e-12 * float(np.linalg.norm(b))       # the second term: rounding's floor
+        self.stats["solves"] += 1
+        for attempt in range(2):
+            fresh = self.ml is None
+            if fresh:
+                self._setup(M)
+            cap = 40 if self.fresh_its is None else max(int(1.5 * self.fresh_its) + 2, 8)
+            x, ok, its = self._krylov(M, b, x0, atol, cap)
+            self.stats["iterations"] += its
+            if ok:
+                if self.fresh_its is None:
+                    self.fresh_its = its
                 return x
-        self.fac = self._factor(M)
-        self.age = 0
-        return self.fac(b)
+            if fresh:
+                break
+            self.ml = None                      # an old hierarchy that has stopped serving: once more with a new one
+        self.ml = None
+        self.stats["factorizations"] += 1
+        return self._factor(M)(b)
 
 
 def _wet_t(links, fl, T, kcell):
