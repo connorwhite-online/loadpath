@@ -131,6 +131,29 @@ class TorchField:
         out = self.g._eval(name, Pn, nmemo)
         return out if isinstance(out, float) else self._t(np.asarray(out, float))
 
+    def _input_distance(self, nd, P, memo):
+        """A shell's or an offset's input, divided by its gradient length
+        when the graph says so (fields.FieldGraph.redistances). Single
+        precision cancels the stencil's 0.01 mm difference away, so in
+        float32 that node runs on the numpy graph."""
+        from .fields import _REDIST_TET, REDISTANCE_FLOOR, REDISTANCE_STEP
+
+        ref = nd.refs["input"]
+        if not self.g.redistances(nd.name):
+            return self._val(ref, P, memo)
+        if P.dtype != self.torch.float64:
+            raise _NumpyOnly
+        f = self._val(ref, P, memo)
+        if isinstance(f, float):
+            return f
+        f = self._t(f)
+        g = 0.0
+        for t in _REDIST_TET:
+            tt = self.torch.as_tensor(t, dtype=P.dtype, device=P.device)
+            g = g + tt[None, :] * self._t(self._val(ref, P + tt[None, :], memo)).reshape(-1, 1)
+        g = g / (4.0 * REDISTANCE_STEP ** 2)
+        return f / self.torch.clamp(self.torch.sqrt((g * g).sum(dim=1)), REDISTANCE_FLOOR, 1.0)
+
     def _interp(self, x, xs, ys):
         """np.interp on tensors: piecewise linear, clamped at the ends."""
         torch = self.torch
@@ -230,7 +253,7 @@ class TorchField:
                     out = -self._smin(-out, b, k)
             return out
         if op == "shell":
-            f, t = self._t(v("input")), v("thickness")
+            f, t = self._t(self._input_distance(nd, P, memo)), v("thickness")
             side = s.get("side", "inside")
             if side == "inside":
                 return torch.maximum(f, -(f + t))
@@ -240,7 +263,7 @@ class TorchField:
                 return torch.abs(f) - 0.5 * t
             raise _NumpyOnly
         if op == "offset":
-            return v("input") - v("distance")
+            return self._input_distance(nd, P, memo) - v("distance")
         if op == "lattice":
             return self._lattice(nd, P, memo)
         if op == "transform":
