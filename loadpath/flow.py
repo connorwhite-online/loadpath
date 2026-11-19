@@ -102,11 +102,20 @@ def _kernels():
                         sy = y - C[i, 1]
                         sz = z - C[i, 2]
                         if periodic[0]:
-                            sx %= nx
+                            if sx < 0:
+                                sx += nx
+                            elif sx >= nx:
+                                sx -= nx
                         if periodic[1]:
-                            sy %= ny
+                            if sy < 0:
+                                sy += ny
+                            elif sy >= ny:
+                                sy -= ny
                         if periodic[2]:
-                            sz %= nz
+                            if sz < 0:
+                                sz += nz
+                            elif sz >= nz:
+                                sz -= nz
                         if sx < 0 or sx >= nx or sy < 0 or sy >= ny or sz < 0 or sz >= nz:
                             fin[i] = f[OPP[i], x, y, z]
                         elif ntype[sx, sy, sz] == 1:
@@ -249,11 +258,20 @@ def _kernels():
                         sy = y - Ct[i, 1]
                         sz = z - Ct[i, 2]
                         if periodic[0]:
-                            sx %= nx
+                            if sx < 0:
+                                sx += nx
+                            elif sx >= nx:
+                                sx -= nx
                         if periodic[1]:
-                            sy %= ny
+                            if sy < 0:
+                                sy += ny
+                            elif sy >= ny:
+                                sy -= ny
                         if periodic[2]:
-                            sz %= nz
+                            if sz < 0:
+                                sz += nz
+                            elif sz >= nz:
+                                sz -= nz
                         if sx < 0 or sx >= nx or sy < 0 or sy >= ny or sz < 0 or sz >= nz:
                             gin[i] = g[OPPt[i], x, y, z]
                         else:

@@ -154,6 +154,33 @@ def test_conjugate_balance():
     assert np.all(w["h"][w["q"] > 1e-6] > 0)
 
 
+def test_energy_multigrid_matches_direct(monkeypatch):
+    """Past 30,000 cells the energy equation goes through classical algebraic
+    multigrid, kept from pass to pass, not a direct solve. On the conjugate
+    case (aluminium at 200 W/(m K) in air at 0.026, with advection) the two
+    give the same field."""
+    pitch = 1.0
+    solid = np.zeros((24, 1, 40), bool)
+    solid[10:14, :, 8:20] = True
+    heat = np.zeros(solid.shape)
+    heat[11:13, :, 12:16] = 0.05 / 8
+    kw = dict(k=200.0, heat=heat, ambient=25.0, verbose=False, max_iter=3000, sides={"y": "periodic"})
+    direct = airflow.solve(solid, pitch, **kw)
+    seen = []
+    setup = airflow._TSolve._setup
+    monkeypatch.setattr(airflow, "_DIRECT_BELOW", 0)
+    monkeypatch.setattr(airflow._TSolve, "_setup", lambda self, M: (seen.append(self), setup(self, M))[1])
+    amg = airflow.solve(solid, pitch, **kw)
+    assert amg.converged and abs(amg.balance["closure"]) < 5e-3
+    assert abs(amg.iterations - direct.iterations) <= 3
+    assert np.abs(amg.t - direct.t).max() < 5e-3, np.abs(amg.t - direct.t).max()
+    assert np.abs(amg.velocity - direct.velocity).max() < 1e-3 * direct.max_speed()
+    stats = seen[0].stats
+    assert stats["factorizations"] == 0
+    # the hierarchy is reused: far fewer setups than passes
+    assert stats["amg setups"] < 0.25 * amg.iterations, stats
+
+
 def test_side_checks():
     with pytest.raises(ValueError):
         airflow.solve(np.zeros((4, 4, 4), bool), 1.0, sides={"x-": "periodic"}, verbose=False)
