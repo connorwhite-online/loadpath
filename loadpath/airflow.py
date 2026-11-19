@@ -385,7 +385,10 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
     d_store = [None, None, None]
     q_in_total = float(q_cell.sum())
 
+    mres = np.inf
+    dc_on = False              # deferred correction: on once the flow nearly conserves mass, and stays on
     for it in range(1, max_iter + 1):
+        dc_on = dc_on or mres < 1e-2
         rho, mu = air["rho"], air["mu"]
         padded = [_pad(U[c], per) for c in range(3)]
         flat_pad = [p_.ravel() for p_ in padded]
@@ -424,7 +427,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
                     phi_nb = np.where(still, 0.0, phi_nb)
                 phi_nb = np.where(zg, uf, phi_nb)
                 # deferred correction: central minus upwind face value, explicit
-                if deferred:
+                if deferred and dc_on:
                     face_c = 0.5 * (uf + phi_nb)
                     face_u = np.where(out_f > 0, uf, phi_nb)
                     dc -= deferred * out_f * (face_c - face_u) * (kind != 2)
@@ -467,14 +470,17 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             if fan is not None and a == fan.axis:
                 ff = cp_["num"].ravel()[fan_faces]
                 if fan.dp is not None:
-                    dp = float(fan.dp)
+                    dp = float(fan.dp) * min(1.0, it / 30.0)        # brought up over the first passes
+                    air["fan dp Pa"] = round(dp, 3)
                 else:
                     flow = float(np.sum(U[a].ravel()[fan_faces]) * A * fan.sign) / max(layers - 1, 1)
                     dp0, q0 = fan.curve
-                    target = max(dp0 * (1.0 - flow / (fan.share * q0)), 0.0)
+                    target = min(max(dp0 * (1.0 - flow / (fan.share * q0)), 0.0), dp0)
                     # read off the line explicitly, so moved toward it slowly:
                     # the flow answers a pressure change over many passes
-                    dp = target if fan_dp is None else fan_dp + 0.1 * (target - fan_dp)
+                    # (from zero: the full shut-off head on still air throws the
+                    # first passes far past the answer)
+                    dp = 0.1 * target if fan_dp is None else fan_dp + 0.1 * (target - fan_dp)
                     fan_dp = dp
                     air["fan dp Pa"] = round(dp, 3)
                     air["fan flow m3/s"] = flow
@@ -533,7 +539,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
         if ml_p is None or it % 25 == 1:
             import pyamg
             ml_p = pyamg.smoothed_aggregation_solver(Mp, symmetry="symmetric", max_coarse=500)
-        pp = ml_p.solve(bp, tol=_P_TOL, accel="cg", maxiter=60) if npn > 1 else bp / dg
+        pp = ml_p.solve(bp, tol=_P_TOL, accel="cg", maxiter=150) if npn > 1 else bp / dg
         pcorr = np.zeros(N)
         pcorr[fl] = pp
         P = P + ap * pcorr
@@ -575,7 +581,10 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             f_out += np.bincount(hi, fm, minlength=f_out.size)
             f_in += np.bincount(hi, fp, minlength=f_in.size)
             f_in += np.bincount(lo, fm, minlength=f_in.size)
-            if deferred:
+            if deferred and dc_on:
+                # only once the flow nearly conserves mass: the explicit
+                # correction on a flow still far from it (a fan spinning up)
+                # drives the temperatures unbounded
                 tc = 0.5 * (T[lo] + T[hi])
                 tu = np.where(F > 0, T[lo], T[hi])
                 corr = deferred * F * (tc - tu)              # extra carried lo -> hi
@@ -588,7 +597,9 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
                 t_in = float(side.get("t", amb)) if side.get("t") is not None else amb
                 # leaving: at its own temperature; coming in (or still): the
                 # room's air at the opening, half a pitch out
-                inn = F <= 0.0
+                # (a solid cell on an open side is adiabatic there: the room
+                # is only reached through the air)
+                inn = (F <= 0.0) & fl[cell]
                 g = np.where(inn, A * kcell[cell] / (0.5 * h), 0.0)
                 diagT += np.bincount(cell, g, minlength=diagT.size)
                 bT += np.bincount(cell, (np.maximum(-F, 0.0) + g) * t_in, minlength=bT.size)
@@ -629,15 +640,17 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
         flow_scale = max(max((rho * A * np.abs(U[c]).max() if U[c].size else 0.0) for c in range(3)), 1e-30)
         mres = mass_res / flow_scale / max(npn, 1) ** 0.5
         q_fix = _fixed_heat(links, fix_mask.ravel(), T, kcell, A, h, bfaces)
-        bal = _balance(bfaces, U, T, rc, A, amb, q_in_total + q_fix, S, kcell, h)
+        bal = _balance(bfaces, U, T, rc, A, amb, q_in_total + q_fix, S, kcell, h, fl)
         hist.append({"it": it, "mass": mres, "du": du, "dT": dTmax, "balance": bal["closure"], "umax": float(
             max(np.abs(U[c]).max() for c in range(3)))})
         if verbose and (it % report_every == 0 or it == 1):
             print(f"airflow {it}: mass {mres:.2e} du {du:.1e} dT {dTmax:.2e} K balance {bal['closure']:+.3%} "
-                  f"umax {hist[-1]['umax']:.4f} m/s T {T.min():.2f}..{T.max():.2f} C", flush=True)
+                  + (f"fan {air.get('fan dp Pa', 0.0):.2f} Pa " if fan is not None else "")
+                  + f"umax {hist[-1]['umax']:.4f} m/s T {T.min():.2f}..{T.max():.2f} C", flush=True)
         if it > 20 and mres < tol and du < tol and dTmax < 1e-3 and abs(bal["closure"]) < 5e-3:
             converged = True
             break
+    solve_t.free()
     Tc = T.reshape(shape)
     vel = np.zeros((3,) + shape)
     for a in range(3):
@@ -652,7 +665,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             vel[a] = 0.5 * (ua[tuple(sl1)] + ua[tuple(sl2)])
     walls = _walls(links, fl, T, kcell, A, h, shape)
     q_fix = _fixed_heat(links, fix_mask.ravel(), T, kcell, A, h, bfaces)
-    bal = _balance(bfaces, U, T, air["rho"] * air["cp"], A, amb, q_in_total + q_fix, S, kcell, h)
+    bal = _balance(bfaces, U, T, air["rho"] * air["cp"], A, amb, q_in_total + q_fix, S, kcell, h, fl)
     bal["from fixed cells W"] = q_fix
     if verbose:
         print(f"airflow done: {it} passes, converged {converged}, {time.time() - t0:.0f} s, "
@@ -693,6 +706,16 @@ class _TSolve:
         self.pardiso = None
         self.analysed = False
         self.stats = {"amg setups": 0, "iterations": 0, "solves": 0, "factorizations": 0}
+
+    def free(self):
+        """Give MKL's factorization memory back (it is not freed with the
+        object, and a few solves in one process otherwise pile up)."""
+        self.ml = self.prec = None
+        if self.pardiso:
+            try:
+                self.pardiso.free_memory(everything=True)
+            except Exception:
+                pass
 
     def _factor(self, M):
         M = M.tocsr()
@@ -823,7 +846,7 @@ def _fixed_heat(links, fixm, T, kcell, A, h, bfaces):
     return q
 
 
-def _balance(bfaces, U, T, rc, A, amb, q_in, S, kcell, h):
+def _balance(bfaces, U, T, rc, A, amb, q_in, S, kcell, h, fl):
     """Heat into the box (sources) against what leaves: carried out of
     openings over the ambient, through isothermal walls."""
     carried = 0.0
@@ -833,7 +856,7 @@ def _balance(bfaces, U, T, rc, A, amb, q_in, S, kcell, h):
         if kind in ("open", "inlet"):
             F = rc * A * U[a].ravel()[fidx] * sign
             t_in = float(side["t"]) if side.get("t") is not None else amb
-            g = np.where(F <= 0.0, A * kcell[cell] / (0.5 * h), 0.0)
+            g = np.where((F <= 0.0) & fl[cell], A * kcell[cell] / (0.5 * h), 0.0)
             carried += float(np.sum(np.where(F > 0, F * (T[cell] - amb), F * (t_in - amb)) + g * (T[cell] - t_in)))
         elif kind == "wall" and side.get("t") is not None:
             g = A * kcell[cell] / (0.5 * h)

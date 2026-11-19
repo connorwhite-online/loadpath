@@ -50,12 +50,18 @@ r.balance           # heat in, carried out of the openings, through walls
   iteration fails.
 - **Box sides.** `open` is an opening to the still room: zero total
   pressure where air comes in (at the room's temperature and with no
-  velocity along the side), zero static pressure where it leaves. The
+  velocity along the side), zero static pressure where it leaves. A solid
+  cell on an open side is adiabatic there: cut a box at the outside of a
+  shell and the shell reaches the room only through the air. The
   others are `wall`, `symmetry`, `periodic` and `inlet` (a fixed velocity
   in, for a duct or a fan).
 - **Fans.** `airflow.Fan(cells, axis, sign, dp=...)` adds a fixed pressure
   rise across a zone. `curve=(dp_max, flow_max)` reads a straight fan line
-  at the flow the zone passes instead.
+  at the flow the zone passes instead. The fan's head is brought up from
+  rest (a tenth of the line at first, then relaxed toward it), because the
+  full shut-off pressure on still air throws the first passes far past the
+  answer. For a fan through narrow fins, pass `relax=(0.3, 0.5, 1.0)`, and
+  `deferred=0` if it still won't settle: first-order upwind, bounded.
 - **Not in it.** Turbulence (the flows it is for, a few watts in a
   handheld, run at Rayleigh numbers of 10^3 to 10^5 on the gap or the
   height), radiation (add `convection.radiation_h` by each face's view from
