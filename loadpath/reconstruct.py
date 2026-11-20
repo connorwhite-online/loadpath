@@ -1332,6 +1332,7 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
         if w.any():
             for _ in range(2):
                 w = np.maximum(w, lap @ w)
+            w = _ease_over_shift(w, lap, vv, v0)
             iso.vertices = (1.0 - w[:, None]) * vv + w[:, None] * v0
     if unsmooth is not None and len(unsmooth):
         # Back to the unsmoothed surface round given points (contacts the
@@ -1344,6 +1345,53 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
         w = np.clip((6.0 * domain.pitch - d) / (3.0 * domain.pitch), 0.0, 1.0)[:, None]
         if w.any():
             iso.vertices = (1.0 - w) * np.asarray(iso.vertices, float) + w * v0
+
+
+EASE_SHARE = 0.5     # of an edge's length: the most a blend's weight step may move one end past the other
+
+
+def _ease_over_shift(w, lap, a, b, share=EASE_SHARE):
+    """The least weight field no smaller than `w` that a blend
+    (1 - w) a + w b of two surfaces on the same mesh can take without
+    folding: between two neighbours the weight may differ by no more than
+    moves one of them `share` of their edge's length relative to the other,
+    so the blend eases off over a distance of 1 / share times the shift it
+    undoes.
+
+    Both surfaces are sound and so is any blend of them by one weight; what
+    folds a blend is the weight's step. An edge of the blend is the blend of
+    the two surfaces' edges plus (w_i - w_j) times the shift b - a there,
+    and where the shift is longer than the edge a step of the weight lays
+    that vertex across its neighbours. At the blind end of a tapped hole the
+    smoothing draws the cap of the pocket 1-2 cells along the hole, over
+    edges of a third of a cell: back at their start within a quarter cell of
+    the hole and smoothed two rings on, the faces between crossed (2 to 12
+    of them, 1e-4 to 0.04 mm^2), and the drawer pull lost 8 of its 12
+    designs to the soundness check for it. Where the shift is short against
+    the edges (everywhere else) `w` is returned as it came."""
+    c = lap.tocoo()
+    i, j = c.row, c.col
+    keep = i < j
+    i, j = i[keep], j[keep]
+    d = np.linalg.norm(b - a, axis=1)
+    length = np.minimum(np.linalg.norm(a[i] - a[j], axis=1), np.linalg.norm(b[i] - b[j], axis=1))
+    step = share * length / np.maximum(np.maximum(d[i], d[j]), 1e-12)
+    w = np.asarray(w, float).copy()
+    live = np.ones(len(i), bool)
+    for _ in range(10 * len(w)):
+        ii, jj, st = i[live], j[live], step[live]
+        if not len(ii):
+            break
+        up = w.copy()
+        np.maximum.at(up, ii, w[jj] - st)
+        np.maximum.at(up, jj, w[ii] - st)
+        moved = up > w + 1e-9
+        if not moved.any():
+            break
+        w = up
+        # only edges at a vertex that rose can raise another
+        live = moved[i] | moved[j]
+    return w
 
 
 def _umbrella(mesh):

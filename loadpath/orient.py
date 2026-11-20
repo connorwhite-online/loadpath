@@ -468,8 +468,33 @@ def settle_supports(study, result, rerun, on_progress=None, candidates=None):
         {k: r.get(k) for k in ("direction", "overhangs", "safetyFactor", "mass", "supportVolume", "makeCost")}
         for r in cmp["candidates"] if r.get("designed")]}
     keep = result
-    if best["overhangs"]:
-        other = rerun(cmp["study"])
+    # The second search is run only where the screen says it can win: the
+    # self-supporting design cheaper to make, at equal strength, than the
+    # delivered one on its supports. The ranking also puts a part that tips
+    # on the bed last, which the delivered choice below does not (supports
+    # or a brim hold it, and it is a warning on the part): a shelf bracket
+    # whose self-supporting design read five times the make cost was
+    # searched again from scratch for 390 s of a 1540 s run and then not used.
+    on_sup = [r["makeCost"] for r in cmp["candidates"] if r.get("designed") and not r["overhangs"]]
+    worth = not on_sup or best["makeCost"] < min(on_sup)
+    note["rerun"] = bool(best["overhangs"] and worth)
+    if best["overhangs"] and worth:
+        # ...and it starts from what the screen read, not from 30%: the
+        # self-supporting design at the delivered fraction has a strength,
+        # and the search's own first step from it (material in proportion
+        # to the margin missing, never more than doubled or halved) is
+        # where this search begins. A start the study names is kept.
+        again, goal = cmp["study"], cmp["study"].goal
+        if goal.volume_fraction is None and goal.safety_factor and best.get("safetyFactor"):
+            m = float(best["safetyFactor"]) / float(goal.safety_factor)
+            start = float(min(max(vf * 1.05 / max(m, 1e-9), 0.5 * vf), 2.0 * vf))
+            start = min(max(start, 0.02), 0.7)
+            again = dataclasses.replace(again, goal=dataclasses.replace(goal, volume_fraction=start))
+            note["rerunFrom"] = round(start, 4)
+        other = rerun(again)
+        if again is not cmp["study"]:
+            other.study = dataclasses.replace(other.study, goal=dataclasses.replace(other.study.goal,
+                                                                                    volume_fraction=None))
         if other.best is not None:
             c_free = _delivered_cost(study, o, free_proc)
             c_self = _delivered_cost(study, other.outcomes[other.best], other.study.process)

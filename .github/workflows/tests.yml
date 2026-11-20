@@ -164,9 +164,12 @@ jobs:
 
   # docs/tutorials/: each tutorial's commands, run in quick mode (coarse grid)
   # and held to its expect.json, so the docs can't drift from the code
+  # (45 minutes: agent-mcp took 25.5 to 27 minutes on 2026-11-20 and was
+  # cancelled at the old 30 on main aea752c and on a branch, with no change
+  # to it between; the others take 10 to 19)
   tutorials:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

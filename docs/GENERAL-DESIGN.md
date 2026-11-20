@@ -93,8 +93,13 @@ and was thrown away. The seventh (the VESA plate) is a real modelling gap.
 
 Read with care: this is one run per part, on fixes made after seeing the
 cold results (general causes, but chosen with these failures in view). The
-two parts that now pass take twice as long as their cold runs did: the
-supports decision designs the part twice. On the corner bracket a coarse
+two parts that now pass took about 30 minutes each, twice their cold runs.
+Most of that is the ordinary search going on to lighter parts once one
+passes (the bracket: 12 outcomes from 19.8 g down to 10.3 g, where the cold
+run stopped after 5 that failed); the supports decision added a screening
+pass and two more outcomes. The split was not timed, and these runs shared
+the machine with others and one was resumed after a restart, so the minutes
+are rough. On the corner bracket a coarse
 screening read of the delivered part gave SF 1.5 where the tet check gives
 2.69: the spread between readings (gap 7) is not closed. Four parts (drawer
 pull, tablet stand, caster fork, pipe clamp) had not been re-run when this
@@ -114,7 +119,7 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 4 | The solid block passes but the search stops at 70% and hands back nothing | 6 | 1 of 11 | **Fixed**: the block is delivered when nothing lighter passes, with a note that the envelope sets the mass |
 | 5 | A design space in separate pieces runs for minutes and passes or fails without saying so | 1 | 1 of 11, common with keep-outs through thin envelopes | **Fixed**: flagged by `check` before the run |
 | 6 | A part in pieces: the search adds material, which never joins pieces that do not need each other | 5 | 1 of 11, any plate or frame with paired mounts | **Partly**: the search stops and says which load is missing. Open: the load that makes a part one piece (being carried, assembly) is not modelled |
-| 7 | Glued bores and sharp inside corners set the safety factor: the peak is the model's, not the part's | 2 | 3 of 11, every part with a bore or a throat | **Open**: compliant one-sided supports at bores, bearing and pull-through read at the joint, a fillet the process would leave at an inside corner |
+| 7 | The safety factor is set at an interface, not by the shape: a bore held as if glued, a keep-out's inside corner, a slot | 2 | 3 of 11, every part with a bore or a throat | **Open, and not yet understood**: the solid block's peak sits at an interface in each case. Whether that peak is the part's or the model's is not established here. A sharp corner's stress is already read over a material length (failure.py), so it may be real and the answer is a radius in the study. A bore held rigidly all round is a known simplification (docs/PHYSICS.md, open item 1) |
 | 8 | Small parts take 5 to 17 minutes | 8 | all | **Open**: the envelope bound first (seconds) would stop the impossible ones; coarse-first search for the rest |
 | 9 | Joint capacity is not checked: bolt slip, thread strip, insert pull-out, clamp force on a tube | 2 | most bolted parts | **Open** |
 | 10 | The governing limit is not named up front (stiffness, strength, minimum wall) | 3 | 2 of 11 | **Partly**: the bound note names it after two failed tries; should be in `check` |

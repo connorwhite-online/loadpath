@@ -1311,6 +1311,33 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
 RESTART_STARTS = (1.0, 0.8, 1.25, 0.65, 1.5, 0.55, 1.75, 0.45)
 
 
+def _envelope_first(st: Study, on_progress, should_stop):
+    """Before a small study's searches are started side by side: the whole
+    design space as one solid block, read once. Returns that result when
+    the goal is out of reach inside the envelope (bound_note), else None.
+
+    Each search asks this of itself after two failed parts. Side by side on
+    three grids that is six optimizations and three blocks to say one thing:
+    a packaged shelf bracket given a deflection limit its block cannot meet
+    took 545 s to say so (201 s on one grid), where the block alone is 61 s.
+    A study that can be met pays that minute once; on the held-out parts
+    four in eleven first tries could not be, which is why it is paid where
+    the waste is threefold and not on every run."""
+    g = st.goal
+    if os.environ.get("LOADPATH_BOUND") == "0" or (g.safety_factor is None and g.max_deflection is None) \
+            or g.method == "constrained":
+        return None
+    prefetch = _TetPrefetch()
+    try:
+        r = _search(st, on_progress, should_stop, False, prefetch, bound_only=True)
+    except Exception:  # noqa: BLE001 - a block that cannot be read is no answer: the searches run as before
+        return None
+    finally:
+        prefetch.close()
+    o = r.outcomes[-1] if r.outcomes else None
+    return r if o is not None and (o.report.get("bound") or {}).get("outOfReach") else None
+
+
 def _run_restarts(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     """goal.restarts searches from different starting fractions, pooled: the
     outcomes of all, `best` the lightest of the searches' own (confirmed)
@@ -1320,8 +1347,9 @@ def _run_restarts(study: Study, on_progress=None, should_stop=None) -> StudyResu
 
     def search(st):
         starts = pitch_starts(st)
-        return (_run_single(st, on_progress, should_stop) if starts <= 1 else
-                _run_pitches(st, starts, on_progress, should_stop))
+        if starts <= 1:
+            return _run_single(st, on_progress, should_stop)
+        return _envelope_first(st, on_progress, should_stop) or _run_pitches(st, starts, on_progress, should_stop)
 
     g = study.goal
     n = min(g.restarts, len(RESTART_STARTS))
@@ -2518,7 +2546,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         prefetch.close()
 
 
-def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _TetPrefetch) -> StudyResult:
+def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _TetPrefetch,
+            bound_only: bool = False) -> StudyResult:
     t0 = time.time()
 
     def emit(event, field_=None):
@@ -3449,6 +3478,13 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             solid.update(o=q, out=out)
             emit({"stage": "bound", "outOfReach": out, **q.summary()})
 
+        if bound_only:
+            # _envelope_first: the block alone, before any search is started
+            envelope_bound()
+            q = solid["o"]
+            return StudyResult(study=study, domain=info, outcomes=[q] if q is not None else [], best=None,
+                               seconds=time.time() - t0,
+                               warnings=list(domain.warnings) + ([q.report["bound"]["note"]] if q is not None else []))
         pieces: list[float] = []
         for _ in range(_MAX_SEARCH_RUNS):
             if should_stop is not None and should_stop():
