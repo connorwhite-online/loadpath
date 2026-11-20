@@ -130,3 +130,32 @@ def test_scan_voxelize_back_to_back_faces():
     m = trimesh.util.concatenate([a, b])
     v = scan_voxelize(m, 0.25, np.array([-1.0, -1.0, 0.0]), np.array([8, 8, 8]))
     assert v.all()
+
+
+def test_surface_fit_is_the_same_kept_between_load_cases():
+    """nodal_stress finds the surface nodes' fit (their samples and weights)
+    once and reuses it: a second load case reads what a fresh grid reads, as
+    does the least-squares fit solved case by case, and a restricted grid
+    does not inherit the fit."""
+    from loadpath import cutcell
+
+    rng = np.random.default_rng(3)
+    cg, fresh = _block(), _block()
+    u1, u2 = rng.standard_normal((2, cg.mesh.n_dof)) * 1e-3
+    th = np.full(cg.mesh.n_elem, 1e-4)
+    cg.nodal_stress(u1, E)
+    assert cg._fit[3].size
+    s2 = cg.nodal_stress(u2, E, thermal=th)
+    want = fresh.nodal_stress(u2, E, thermal=th)
+    assert np.array_equal(s2, want)
+    # against the fit solved for this load case's values
+    _, cand, near_el, idx, wts = cg._fit
+    xyz, w, sig = cg._samples(near_el, u2, E, th)
+    p = cg.surface_points(cg.mesh.node_xyz[cand])[0]
+    dist = np.linalg.norm(xyz[idx] - p[:, None, :], axis=2)
+    old = cutcell._fit_linear(p, xyz, sig, w, dist, idx, cg.pitch)
+    assert np.abs(s2[cand] - old).max() < 1e-9 * np.abs(old).max()
+    keep = cg.mesh.elem_ijk[:, 0] < 3
+    part = cg.restrict(keep)
+    assert not hasattr(part, "_fit")
+    part.nodal_stress(u1.reshape(-1, 3)[np.unique(cg.mesh.enode[keep])].ravel(), E)

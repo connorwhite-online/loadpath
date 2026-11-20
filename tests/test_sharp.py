@@ -80,6 +80,36 @@ def test_mesh_distance_matches_trimesh():
     assert np.abs(mesh_distance(m, P) - want).max() < 1e-9
 
 
+def test_long_triangles_are_split_into_few_pieces():
+    """mesh_distance splits long triangles before its search: the pieces
+    cover the same surface the same way round, none is longer than asked,
+    and a sliver gives a row of them, not thousands."""
+    import trimesh
+
+    from loadpath.sharp import _split
+
+    rng = np.random.default_rng(1)
+    tri = rng.uniform(-30, 30, (200, 3, 3))
+    tri[:100, 2] = tri[:100, 1] + rng.uniform(-0.2, 0.2, (100, 3))        # slivers: two corners together
+    out = _split(tri, 0.5)
+    e = np.stack([out[:, (j + 1) % 3] - out[:, j] for j in range(3)], axis=1)
+    assert np.sqrt((e ** 2).sum(axis=2)).max() <= 0.5 * (1 + 1e-9)
+    nrm = lambda t: 0.5 * np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+    assert np.abs(nrm(out).sum(axis=0) - nrm(tri).sum(axis=0)).max() < 1e-8          # area vectors: winding kept
+    area = np.linalg.norm(nrm(tri), axis=1)
+    assert abs(np.linalg.norm(nrm(out), axis=1).sum() - area.sum()) < 1e-7 * area.sum()
+    sliver = _split(tri[:100], 0.5)
+    length = np.sqrt(((tri[:100, 1] - tri[:100, 0]) ** 2).sum(axis=1)).sum()
+    assert len(sliver) < 3 * (2 * length / 0.5 + 100), (len(sliver), length)
+    # and the distance through them is the mesh's: a box is twelve long triangles
+    m = trimesh.creation.box(extents=(60, 20, 8))
+    P = rng.uniform([-35, -15, -8], [35, 15, 8], (3000, 3))
+    want = trimesh.proximity.closest_point(m, P)[1]
+    assert np.abs(mesh_distance(m, P) - want).max() < 1e-9
+    inside = np.all(np.abs(P) < np.array([30, 10, 4]), axis=1)
+    assert np.array_equal(mesh_distance(m, P, signed=True) < 0, inside)
+
+
 def test_step_keeps_the_bore_a_cylinder():
     if not available():
         print("  (OpenCascade not installed: skipped)")

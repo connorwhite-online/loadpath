@@ -591,6 +591,44 @@ def edge_accuracy(mesh, refs, solid=None, boundary=None, spacing=0.25, tol=0.01,
     return out
 
 
+def _split(tri, size):
+    """Triangles (n, 3, 3) cut until no edge is longer than `size`, same
+    surface and winding. A long triangle is first sliced into strips across
+    its two longest edges (parallel to the shortest), so a sliver ends as a
+    row of pieces about `size` long; what is still too wide is cut across
+    its longest edge until it is not. Splitting every triangle in four
+    (trimesh subdivide_to_size), or bisecting from the start, turns a
+    sliver into thousands of needles."""
+    e = np.stack([tri[:, (j + 2) % 3] - tri[:, (j + 1) % 3] for j in range(3)], axis=1)     # edge j: opposite corner j
+    e2 = np.einsum("nij,nij->ni", e, e)
+    j = np.argmin(e2, axis=1)
+    r = np.arange(len(tri))
+    A, B, C = tri[r, j], tri[r, (j + 1) % 3], tri[r, (j + 2) % 3]
+    n = np.maximum(np.ceil(np.sqrt(e2.max(axis=1)) / size).astype(np.int64), 1)
+    own = np.repeat(r, n)
+    i = np.arange(len(own)) - np.repeat(np.cumsum(n) - n, n)
+    t0, t1 = (i / n[own])[:, None], ((i + 1) / n[own])[:, None]
+    A, AB, AC = A[own], (B - A)[own], (C - A)[own]
+    P0, Q0, P1, Q1 = A + t0 * AB, A + t0 * AC, A + t1 * AB, A + t1 * AC
+    quad = i > 0
+    tri = np.concatenate([np.stack([P0, P1, Q1], axis=1), np.stack([P0[quad], Q1[quad], Q0[quad]], axis=1)])
+    done = []
+    while len(tri):
+        e = np.stack([tri[:, (j + 1) % 3] - tri[:, j] for j in range(3)], axis=1)
+        e2 = np.einsum("nij,nij->ni", e, e)
+        j = np.argmax(e2, axis=1)
+        big = e2[np.arange(len(tri)), j] > size * size * (1 + 1e-12)
+        done.append(tri[~big])
+        tri, j = tri[big], j[big]
+        if not len(tri):
+            break
+        r = np.arange(len(tri))
+        a, b, c = tri[r, j], tri[r, (j + 1) % 3], tri[r, (j + 2) % 3]
+        m = 0.5 * (a + b)
+        tri = np.concatenate([np.stack([a, m, c], axis=1), np.stack([m, b, c], axis=1)])
+    return np.concatenate(done)
+
+
 def mesh_distance(mesh, P, edge=0.5, k=16, cap=np.inf, signed=False):
     """Distance from points P to a triangle mesh's surface (signed,
     negative inside, with `signed`: by the normals of the closest
@@ -599,9 +637,10 @@ def mesh_distance(mesh, P, edge=0.5, k=16, cap=np.inf, signed=False):
     trimesh.proximity.closest_point gathers candidates by triangle
     bounding boxes, and an exact boolean's long slivers (a bore wall is a
     ring of triangles the length of the bore) make every point a candidate
-    of all of them; here the mesh is split to `edge` mm and each point
-    tries the k triangles with the nearest centroids. Distances are exact
-    up to `cap`; beyond it they are only known to be at least cap."""
+    of all of them; here triangles longer than `edge` mm are split and each
+    point tries the k triangles with the nearest centroids, more where a
+    further centroid could still hold a closer triangle. Distances are
+    exact up to `cap`; beyond it they are only known to be at least cap."""
     import trimesh
     from scipy.spatial import cKDTree
 
@@ -613,26 +652,30 @@ def mesh_distance(mesh, P, edge=0.5, k=16, cap=np.inf, signed=False):
     if cache is None or cache[0] != key:
         v, f = np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64)
         # only the long triangles need splitting (a marching-cubes surface's
-        # are already short): subdividing those alone gives the same
-        # triangles without trimesh's passes over the whole mesh (21 of the
-        # arm link's 36 s here)
+        # are already short), and into pieces as large as `edge` allows: the
+        # arm link's 2,900 long triangles, split in four until short enough,
+        # were 3.1 of the 4.5 million every query then searched. Triangles
+        # are searched by size, each set with its own reach: how far one of
+        # its triangles gets from its centroid.
         tri = v[f]
         e2 = np.max([np.einsum("ij,ij->i", d, d) for d in (tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 1],
                                                             tri[:, 0] - tri[:, 2])], axis=0)
         long = e2 > edge * edge
         if long.any():
-            vs, fs = trimesh.remesh.subdivide_to_size(v, f[long], max_edge=edge, max_iter=16)
-            tri = np.concatenate([tri[~long], vs[fs]])
+            tri = np.concatenate([tri[~long], _split(tri[long], edge)])
         nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
         nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-300)
-        cache = (key, tri, nrm, cKDTree(tri.mean(axis=1)))
+        cen = tri.mean(axis=1)
+        rad = np.sqrt(np.max(np.sum((tri - cen[:, None, :]) ** 2, axis=2), axis=1))
+        size = np.ceil(np.log2(np.maximum(rad / (edge / 1.5), 1.0))).astype(np.int64)      # by octaves of reach
+        groups = [np.nonzero(size == j)[0] for j in np.unique(size)]
+        trees = [(cKDTree(cen[g]), g, float(rad[g].max())) for g in groups]
+        cache = (key, tri, nrm, trees)
         mesh._loadpath_dist = cache
-    _, tri, nrm, tree = cache
+    _, tri, nrm, trees = cache
     P = np.asarray(P, float).reshape(-1, 3)
     out = np.empty(len(P))
     side = np.ones(len(P))
-    k = min(k, len(tri))
-    reach = edge / math.sqrt(3.0)          # no point of a split triangle is further from its centroid
 
     def best(q, cand):
         n = cand.shape[1]
@@ -662,35 +705,35 @@ def mesh_distance(mesh, P, edge=0.5, k=16, cap=np.inf, signed=False):
         q = P[i:i + 50_000]
         d = np.full(len(q), np.inf)
         sg = np.ones(len(q))
-        todo = np.arange(len(q))
-        kk = k
-
         def take(idx, cand):
             dd, ss = best(q[idx], cand)
             better = dd < d[idx]
             d[idx[better]] = dd[better]
             sg[idx[better]] = ss[better]
 
-        # the k nearest centroids miss the closest triangle only if a
-        # centroid beyond them is within d + reach: widen k for those
-        while len(todo):
-            kk = min(kk, len(tri))
-            dk = np.empty((len(todo), kk))
-            for j in range(0, len(todo), max(1, 2_000_000 // kk)):
-                part = todo[j:j + max(1, 2_000_000 // kk)]
-                dkj, cand = tree.query(q[part], k=kk)
-                dk[j:j + len(part)] = np.asarray(dkj).reshape(len(part), kk)
-                take(part, np.asarray(cand).reshape(len(part), kk))
-            if kk == len(tri):
-                break
-            todo = todo[dk[:, -1] < np.minimum(d[todo], cap) + reach]
-            kk *= 4
-            if kk > 4096 and len(todo):
-                for j in todo:          # a handful of points among thousands of tiny triangles
-                    c = tree.query_ball_point(q[j], d[j] + reach)
-                    if c:
-                        take(np.array([j]), np.asarray(c)[None])
-                break
+        for tree, members, reach in trees:
+            todo = np.arange(len(q))
+            kk = min(k, len(members))
+            # the k nearest centroids miss the closest triangle only if a
+            # centroid beyond them is within d + reach: widen k for those
+            while len(todo):
+                kk = min(kk, len(members))
+                dk = np.empty((len(todo), kk))
+                for j in range(0, len(todo), max(1, 2_000_000 // kk)):
+                    part = todo[j:j + max(1, 2_000_000 // kk)]
+                    dkj, cand = tree.query(q[part], k=kk, workers=-1)
+                    dk[j:j + len(part)] = np.asarray(dkj).reshape(len(part), kk)
+                    take(part, members[np.asarray(cand).reshape(len(part), kk)])
+                if kk == len(members):
+                    break
+                todo = todo[dk[:, -1] < np.minimum(d[todo], cap) + reach]
+                kk *= 4
+                if kk > 4096 and len(todo):
+                    for j in todo:          # a handful of points among thousands of tiny triangles
+                        c = tree.query_ball_point(q[j], d[j] + reach)
+                        if c:
+                            take(np.array([j]), members[np.asarray(c)][None])
+                    break
         out[i:i + 50_000] = d
         side[i:i + 50_000] = sg
     return out * side if signed else out
