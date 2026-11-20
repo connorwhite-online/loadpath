@@ -57,11 +57,12 @@ Run on main a2881fa from a pristine checkout, 2026-11-20, 4 cloud cores,
 `maxElements` 40000. "First try" is a clean `check` and a delivered part
 that passes.
 
-**First try 3 of 11. A passing part delivered 4 of 11. Clean check 7 of 11.**
+**First try 3 of 11 as scored then; 2 of 11 in fact. A passing part delivered 4 of 11 (3 in fact). Clean check 7 of 11.**
+The drawer pull's pass was false: the tetrahedral check that confirmed it ignored that its load may come from any direction (found later, below).
 
 | Part | Cold result | What went wrong |
 |---|---|---|
-| drawer pull (PLA) | passes, 11.2 g, 17 min | |
+| drawer pull (PLA) | passed as scored, 11.2 g, 17 min | a false pass: SF 2.56 confirmed pulled straight, 0.76 in the worst direction, for 2 asked |
 | tablet stand (PLA) | passes, 47.1 g, 16 min | |
 | pipe saddle clamp (PETG) | passes, 6.7 g, 14 min | |
 | caster fork (PETG) | passes, 20.6 g, 44 min | `check` gave 8 warnings, all about loadpath's own fastener rings |
@@ -81,12 +82,12 @@ and was thrown away. The seventh (the VESA plate) is a real modelling gap.
 
 ### After two rounds of fixes (all 11 re-run)
 
-First try 7 of 11 (cold 3), a passing part 6 of 11 (cold 4), clean check
+First try 7 of 11 (cold 2), a passing part 6 of 11 (cold 3), clean check
 10 of 11 (cold 7).
 
 | Part | Cold | With the fixes |
 |---|---|---|
-| drawer pull | passes, 11.2 g, 17 min | passes, 10.5 g, 19 min |
+| drawer pull | false pass, 11.2 g, true SF 0.76 | passes, 12.0 g, SF 2.20 in the worst direction, 15 min |
 | tablet stand | passes, 47.1 g, 16 min | passes, 29.3 g, 16 min |
 | pipe saddle clamp | passes, 6.7 g, 14 min | passes, 5.9 g, 24 min |
 | caster fork | passes, 20.6 g, 8 check warnings | passes, 18.9 g, clean check, 51 min |
@@ -106,16 +107,30 @@ pipe clamp on the second round's (main d4eed7e).
 
 What the re-run itself showed:
 
-- **A regression, found and fixed.** On the first round's code the drawer
-  pull passed at 17.8 g, heavier than cold. Eight of its twelve designs
-  (five of nine in the cold run) were refused as unsound meshes: the surface
-  smoothing put vertices next to a keep-out back where they started, eased
-  over two rings, and where the smoothing had moved the surface further
-  than its edges are long (the pocket at the blind end of a tapped hole)
-  the surface folded through itself. The first round's longer search met
-  more of them. The blend now eases over the shift it undoes
-  (`reconstruct._ease_over_shift`); all twelve mesh sound and the part is
-  10.5 g.
+- **A false pass, found and fixed.** The drawer pull's load is 150 N from
+  any direction. The grid check judges such a load in its worst direction;
+  the tetrahedral check that confirms a part, and whose safety factor
+  replaces the grid's, solved it as written only. The part delivered on
+  the second round's code (10.5 g) was confirmed at SF 2.7 for 2, pulled
+  straight (15 MPa, 0.15 mm), where the grid read 0.64 pulled sideways
+  (45 MPa, 0.9 mm); each reading held as its own mesh was refined, which
+  is what showed they were answering different questions. The cold run's
+  11.2 g part was the same (2.56 against 0.76). The tetrahedral check now
+  judges the worst direction (0.52 on that part), and the drawer pull
+  re-run with it is 12.0 g at SF 2.20. Any study with `"direction": "any"`
+  or a cone and a tet-confirmed part was exposed; no other packaged case
+  uses one.
+
+- **A mesh fold, found and fixed.** On the first round's code the drawer
+  pull came out at 17.8 g. Eight of its twelve designs (five of nine in the
+  cold run) were refused as unsound meshes: the surface smoothing put
+  vertices next to a keep-out back where they started, eased over two
+  rings, and where the smoothing had moved the surface further than its
+  edges are long (the pocket at the blind end of a tapped hole) the surface
+  folded through itself. The blend now eases over the shift it undoes
+  (`reconstruct._ease_over_shift`); all twelve mesh sound. (The 17.8 g
+  part was, as it turned out, a real pass and the lighter ones before it
+  were not: see the false pass above.)
 - **Where the minutes go.** Timed on a shelf bracket, the supports decision
   was a quarter of the run (456 s), most of it a self-supporting search the
   screen already showed could not win; it now runs only where it can
@@ -127,11 +142,11 @@ What the re-run itself showed:
   before the parallel searches start (545 s to 47 s on an impossible shelf
   bracket). The four above were timed before that.
 - **Readings still spread.** The corner bracket's coarse screen read SF 1.5
-  where the tet check gives 2.69, and the drawer pull's designs at 5.9% and
-  6.7% volume read SF 6.3 and 2.35 (gap 7).
+  where the tet check gives 2.69, and the tablet stand's delivered part
+  reads 19 on the grid and 8.0 on tets at the same deflection (gap 7).
 - The four parts that are told what their envelope carries are not passes.
-  Whether those limits are the part's or the model's (a bore held as if
-  glued, a sharp inside corner) is gap 7, still open.
+  Checked by hand since (gap 7), the limits are real for the studies as
+  written.
 
 ## Gaps, ranked by how many users they hit
 
@@ -148,6 +163,7 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 6 | A part in pieces: the search adds material, which never joins pieces that do not need each other | 5 | 1 of 11, any plate or frame with paired mounts | **Partly**: the search stops and says which load is missing. Open: the load that makes a part one piece (being carried, assembly) is not modelled |
 | 7 | The safety factor is set at something the study drew, not by the shape: a keep-out's square inside corner, a thin section, a bore held as if glued | 2 | 4 of 11, every part with a clearance cut or a bore | **Partly**: checked by hand, the four limits are real for the studies as written (hinge: 150 N on a 26 mm arm of a 4 mm PETG leaf is 40 MPa nominal against 47; crank: beam theory gives 1.9 mm of the 2.24 read; C-clamp: 10 MPa nominal, 34 at the throat's square corner, and the block reads 1.37, 1.73 and 2.36 with the corner square, at 4 mm and at 8 mm radius). A peak on a keep-out's square edge is now named as the notch to round; followed on the C-clamp (8 mm radius at the throat, nothing else changed), the second try passes: 45.9 g, SF 2.19 for 2, 19 min. Open: how much radius or section is needed is not said for strength as it is for stiffness; a bore held rigidly all round (docs/PHYSICS.md, open item 1); the 0.86 mm reading length is assumed for PETG and PLA |
 | 8 | Small parts take 5 to 17 minutes | 8 | all | **Partly**: an impossible goal is read on the solid block first (under a minute on small studies); the supports decision searches only where it can win. Open: 16 to 50 minutes for a part that passes, most of it the search for lighter parts and the constrained method's passes |
+| 8a | A part passed by the confirming check on a load other than the one asked: a force from any direction checked as written | 6 | 1 of 11, every study with a direction-uncertain load | **Fixed**: the tetrahedral check judges the worst direction |
 | 8b | A sound design thrown away because its mesh folds next to a keep-out | 5 | 1 of 11 seen (8 of its 12 designs), any part with a blind tapped hole | **Fixed**: the smoothing's blend back from a keep-out eases over the shift it undoes |
 | 9 | Joint capacity is not checked: bolt slip, thread strip, insert pull-out, clamp force on a tube | 2 | most bolted parts | **Open** |
 | 10 | The governing limit is not named up front (stiffness, strength, minimum wall) | 3 | 2 of 11 | **Partly**: the bound note names it after two failed tries; should be in `check` |
