@@ -1,0 +1,199 @@
+{
+ "id": "hinge-leaf-petg",
+ "brief": "One leaf of a small door hinge in PETG (FDM, printed flat, layers along Z). The pin is a 4 mm steel rod along Y through x = 0, z = 0; this leaf's knuckle is 30 mm long (y = 0 to 30), 9 mm outside diameter, and the pin turns in it. The leaf is a 4 mm plate (z = -2 to 2) from the knuckle out to x = 40, screwed to the door frame (the plane z = -2) by two M4 screws from the +Z side at (x 26, y 7) and (x 26, y 23). The door pulls on the pin 200 N straight away from the frame edge (-X), or 150 N off the frame (+Z), and hangs 100 N of its weight on the knuckle along the pin (-Y). Safety factor 3.",
+ "attachments": [],
+ "tags": [
+  "hinge",
+  "fdm",
+  "fasteners",
+  "bore"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "union",
+    "shapes": [
+     {
+      "type": "box",
+      "min": [
+       3,
+       0,
+       -2
+      ],
+      "max": [
+       40,
+       30,
+       2
+      ]
+     },
+     {
+      "type": "cylinder",
+      "center": [
+       0,
+       15,
+       0
+      ],
+      "axis": "y",
+      "length": 30,
+      "r": 5
+     }
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "knuckle",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      15,
+      0
+     ],
+     "axis": "y",
+     "length": 30,
+     "r": 4.5
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "pin",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      15,
+      0
+     ],
+     "axis": "y",
+     "length": 36,
+     "r": 2.0
+    },
+    "fit": "clearance"
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "s1",
+    "size": "M4",
+    "seat": [
+     26,
+     7,
+     2
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face"
+   },
+   {
+    "id": "s2",
+    "size": "M4",
+    "seat": [
+     26,
+     23,
+     2
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "s1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "s2-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      26,
+      7,
+      -2.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 4.5
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      26,
+      23,
+      -2.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 4.5
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "pull",
+    "loads": [
+     {
+      "region": "pin",
+      "force": [
+       -200,
+       0,
+       0
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "lift",
+    "loads": [
+     {
+      "region": "pin",
+      "force": [
+       0,
+       0,
+       150
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "weight",
+    "loads": [
+     {
+      "region": "knuckle",
+      "force": [
+       0,
+       -100,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 3
+  },
+  "name": "hinge-leaf-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 3
+ }
+}

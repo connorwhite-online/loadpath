@@ -1,0 +1,209 @@
+{
+ "id": "tablet-stand-pla",
+ "brief": "A desk stand for a tablet in PLA (FDM, printed on its side, layers along Y), 70 mm wide (y = -35 to 35), inside x = 0 to 100, z = 0 to 120. The tablet (0.6 kg, 180 mm tall, 10 mm thick) leans back about 23 degrees: its bottom edge sits on a ledge near x = 10 to 24, z = 11 to 14.5 behind a front lip (x = 8 to 11, up to z = 22), and its back rests on a 5 mm round bar across the stand near x = 59, z = 94. The stand sits on the desk on a front foot (x = 0 to 12) and a rear foot (x = 88 to 100). It holds the tablet all year at room temperature, and takes taps on the top of the screen of up to 15 N. Safety factor 3.",
+ "attachments": [],
+ "tags": [
+  "stand",
+  "fdm",
+  "light-load",
+  "creep",
+  "turned-keepout"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0,
+     -35,
+     0
+    ],
+    "max": [
+     100,
+     35,
+     120
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "ledge",
+    "shape": {
+     "type": "box",
+     "min": [
+      10,
+      -35,
+      11
+     ],
+     "max": [
+      24,
+      35,
+      14.5
+     ]
+    }
+   },
+   {
+    "id": "lip",
+    "shape": {
+     "type": "box",
+     "min": [
+      8,
+      -35,
+      11
+     ],
+     "max": [
+      11,
+      35,
+      22
+     ]
+    }
+   },
+   {
+    "id": "rest",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      59.3,
+      0,
+      94.4
+     ],
+     "axis": "y",
+     "length": 70,
+     "r": 2.5
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "tablet",
+    "bore": false,
+    "shape": {
+     "type": "box",
+     "center": [
+      53.3,
+      0,
+      99.5
+     ],
+     "size": [
+      180,
+      10,
+      260
+     ],
+     "axes": [
+      [
+       0.399,
+       0.0,
+       0.917
+      ],
+      [
+       -0.917,
+       0.0,
+       0.399
+      ]
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      0,
+      -35,
+      -0.5
+     ],
+     "max": [
+      12,
+      35,
+      0.3
+     ]
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      88,
+      -35,
+      -0.5
+     ],
+     "max": [
+      100,
+      35,
+      0.3
+     ]
+    }
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "held",
+    "hours": 8760,
+    "loads": [
+     {
+      "region": "rest",
+      "force": [
+       2.21,
+       0,
+       -0.96
+      ]
+     },
+     {
+      "region": "ledge",
+      "force": [
+       0,
+       0,
+       -4.93
+      ]
+     },
+     {
+      "region": "lip",
+      "force": [
+       -2.21,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "tap",
+    "loads": [
+     {
+      "region": "rest",
+      "force": [
+       28.9,
+       0,
+       -12.6
+      ]
+     },
+     {
+      "region": "lip",
+      "force": [
+       -15.1,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+y"
+  },
+  "goal": {
+   "safetyFactor": 3
+  },
+  "name": "tablet-stand-pla",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 3
+ }
+}

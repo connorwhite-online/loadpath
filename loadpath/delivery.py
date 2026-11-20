@@ -280,7 +280,9 @@ def delivery(summary: dict, study: dict) -> dict | None:
         if sat:
             d["warnings"].insert(1, sat)
         top = max((x.get("volumeFraction") or 0.0) for x in outs)
-        if top >= _VF_CEILING - 1e-6:
+        if top >= 0.999:
+            pass    # the whole envelope was read as a solid block: the run's own note says what it found
+        elif top >= _VF_CEILING - 1e-6:
             d["warnings"].insert(1, f"the search stopped at the volume-fraction ceiling ({_VF_CEILING:.0%} of the design "
                                     "space): more material is not allowed, so change the material, the design space or the loads")
     ref = o.get("materialize")

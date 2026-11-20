@@ -198,6 +198,7 @@ class CutGrid:
             return self
         new = object.__new__(CutGrid)
         new.__dict__.update(self.__dict__)
+        new.__dict__.pop("_fit", None)          # nodal_stress's surface fit: the kept elements' own
         new.mesh = HexMesh(self.mesh.elem_ijk[keep], self.pitch, self.origin)
         new.fill, new.ind, new.cut = self.fill[keep], self.ind[keep], self.cut[keep]
         pos = np.full(self.mesh.n_elem, -1, np.int64)
@@ -263,18 +264,26 @@ class CutGrid:
         pos[self.cut_index] = np.arange(len(self.cut_index))
         g = np.array([[a, b, cc] for a in (-_GAUSS, _GAUSS) for b in (-_GAUSS, _GAUSS) for cc in (-_GAUSS, _GAUSS)])
         xyz, w, sig = [], [], []
+        # what an element brings to every one of its points, once: its
+        # nodes' displacements, bubble amplitudes and (cut cells) the mean
+        # bubble strain taken off
+        els = np.nonzero(near)[0]
+        row = np.full(m.n_elem, -1, np.int64)
+        row[els] = np.arange(len(els))
+        ue_n = u[m.edof[els]]
+        alpha_n = ue_n @ self.r_full.T
+        off_n = np.zeros((len(els), 6))
+        k = pos[els]
+        isc = k >= 0
+        if isc.any():
+            alpha_n[isc] = np.einsum("pij,pj->pi", self.r_cut[k[isc]], ue_n[isc])
+            off_n[isc] = np.einsum("pij,pj->pi", self.mbar_cut[k[isc]], alpha_n[isc])
 
         def put(el, xi_pt, weight):
-            ue = u[m.edof[el]]
-            alpha = ue @ self.r_full.T
-            k = pos[el]
-            isc = k >= 0
-            if isc.any():
-                alpha[isc] = np.einsum("pij,pj->pi", self.r_cut[k[isc]], ue[isc])
+            j = row[el]
             bu, ba = b_nodes(xi_pt[None])[0], b_bubbles(xi_pt[None])[0]
-            eps = ue @ bu.T + alpha @ ba.T
-            if isc.any():
-                eps[isc] -= np.einsum("pij,pj->pi", self.mbar_cut[k[isc]], alpha[isc])
+            eps = ue_n[j] @ bu.T + alpha_n[j] @ ba.T
+            eps -= off_n[j]
             eps /= self.pitch
             if th is not None:
                 eps[:, :3] -= th[el][:, None]
@@ -306,7 +315,7 @@ class CutGrid:
         if self._tree is None:
             self._tree = cKDTree(self._faces)
         xyz = np.asarray(xyz, float)
-        dist, idx = self._tree.query(xyz, k=k)
+        dist, idx = self._tree.query(xyz, k=k, workers=-1)
         p = self._faces[idx].mean(axis=1)
         ijk = np.floor((xyz - self.origin) / self._fine_h).astype(np.int64)
         ok = np.all((ijk >= 0) & (ijk < np.array(self._fine.shape)), axis=1)
@@ -320,7 +329,6 @@ class CutGrid:
         the true surface read the surface fit at their closest surface
         point; the rest the fill-weighted average of their elements' corner
         stresses (verify.nodal_stress's recovery)."""
-        from scipy.spatial import cKDTree
 
         m = self.mesh
         c = elastic_c(1.0, self.nu)
@@ -348,21 +356,48 @@ class CutGrid:
             for j in range(6):
                 acc[:, j] += np.bincount(m.enode[:, k], weights=sk[:, j], minlength=m.n_nodes)
         out = acc / np.maximum(wsum, 1e-30)[:, None]
+        # the surface nodes' fit is the same for every load case: where they
+        # are, which samples each reads and with what weights are found once
+        key = (id(m), id(self.fill), id(self.cut), None if mask is None else hash(np.asarray(mask).tobytes()))
+        fit, sig = getattr(self, "_fit", None), None
+        if fit is None or fit[0] != key:
+            fit, sig = self._fit_plan(key, mask, u, modulus, thermal)
+            if fit[3].size <= _FIT_KEEP:
+                self._fit = fit
+        _, cand, near_el, idx, wts = fit
+        if not len(cand):
+            return out
+        if sig is None:
+            sig = self._samples(near_el, u, modulus, thermal)[2]
+        for s in range(0, len(cand), 20000):
+            sl = slice(s, s + 20000)
+            out[cand[sl]] = np.einsum("qk,qkc->qc", wts[sl], sig[idx[sl]])
+        return out
+
+    def _fit_plan(self, key, mask, u, modulus, thermal):
+        """(key, surface nodes, the elements whose samples they read, each
+        node's samples, their weights in its fit), and the samples' stress
+        under this load case."""
+        from scipy.spatial import cKDTree
+
+        m = self.mesh
+        none = (key, np.zeros(0, np.int64), None, np.zeros((0, 0), np.int64), np.zeros((0, 0))), None
         # nodes on cut cells, or touching the grid's empty neighbours
         on_cut = np.zeros(m.n_nodes, bool)
         on_cut[m.enode[self.cut].ravel()] = True
         cnt = np.bincount(m.enode.ravel(), minlength=m.n_nodes)
         on_cut |= cnt < 8
         if mask is not None:
-            on_cut &= wsum > 0
+            fill = self.fill * mask
+            on_cut &= np.bincount(m.enode.ravel(), weights=np.repeat(fill, 8), minlength=m.n_nodes) > 0
         cand = np.nonzero(on_cut)[0]
         if not len(cand):
-            return out
+            return none
         p, d = self.surface_points(m.node_xyz[cand])
         sel = d >= -NEAR_SURFACE * self.pitch     # every node outside, and those just inside
         cand, p = cand[sel], p[sel]
         if not len(cand):
-            return out
+            return none
         # samples from elements within two cells of a surface node
         near_node = np.zeros(m.n_nodes, bool)
         near_node[cand] = True
@@ -375,12 +410,34 @@ class CutGrid:
             near_el &= mask
         xyz, w, sig = self._samples(near_el, u, modulus, thermal)
         if not len(xyz):
-            return out
+            return none
         tree = cKDTree(xyz)
         k = min(FIT_POINTS, len(xyz))
-        dist, idx = tree.query(p, k=k)
-        out[cand] = _fit_linear(p, xyz, sig, w, dist, idx, self.pitch)
-        return out
+        dist, idx = tree.query(p, k=k, workers=-1)
+        idx = np.asarray(idx).reshape(len(p), k)
+        dist = np.asarray(dist).reshape(len(p), k)
+        return (key, cand, near_el, idx, _fit_weights(p, xyz, w, dist, idx, self.pitch)), sig
+
+
+_FIT_KEEP = 16_000_000          # weights kept between load cases (128 MB, as many indices)
+
+
+def _fit_weights(p, xyz, w, dist, idx, h):
+    """_fit_linear's value at each point as weights on its neighbours'
+    values, (p, k): the fit is linear in them, and the weights are the
+    geometry's alone."""
+    out = np.empty(idx.shape)
+    e0 = np.array([1.0, 0.0, 0.0, 0.0])
+    for s in range(0, len(p), 20000):
+        sl = slice(s, s + 20000)
+        d = (xyz[idx[sl]] - p[sl, None, :]) / h                 # (q, k, 3)
+        ww = w[idx[sl]] * np.exp(-(dist[sl] / (FIT_TAPER * h)) ** 2)
+        a = np.concatenate([np.ones(d.shape[:2] + (1,)), d], axis=2)  # (q, k, 4)
+        aw = a * ww[..., None]
+        ata = np.einsum("qki,qkj->qij", aw, a) + 1e-9 * np.eye(4)
+        g = np.linalg.solve(ata, np.broadcast_to(e0, (len(ata), 4))[..., None])[..., 0]      # ata is symmetric
+        out[sl] = np.einsum("qi,qki->qk", g, aw)
+    return out
 
 
 def _fit_linear(p, xyz, sig, w, dist, idx, h):

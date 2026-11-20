@@ -1,0 +1,121 @@
+{
+ "id": "crank-lever-pa12",
+ "brief": "A hand crank lever in PA12 (SLS). It is 10 mm thick (z = 0 to 10) and fits on an 8 mm shaft along Z at x = 0, y = 0 (a tight fit, glued, so the shaft holds it completely). At x = 80 a knob screws in with an M5 thread, 10 mm deep, from the top face (z = 10); the hand holds the knob 20 mm above that face. Keep the lever inside x = -12 to 92, y = -12 to 12. Cranking is 70 N on the knob across the lever (Y), a hundred thousand times over its life; leaning on it is 50 N downward (-Z). It should not flex more than 1 mm at the knob. Safety factor 2.5.",
+ "attachments": [],
+ "tags": [
+  "lever",
+  "sls",
+  "thread",
+  "fatigue",
+  "deflection"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -12,
+     -12,
+     0
+    ],
+    "max": [
+     92,
+     12,
+     10
+    ]
+   }
+  ],
+  "preserve": [],
+  "keepOut": [
+   {
+    "id": "shaft",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      5
+     ],
+     "axis": "z",
+     "length": 14,
+     "r": 4.0
+    },
+    "fit": "transition"
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "knob",
+    "size": "M5",
+    "seat": [
+     80,
+     0,
+     10
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 10
+   }
+  ],
+  "supports": [
+   {
+    "region": "shaft"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "crank",
+    "cycles": 100000.0,
+    "loads": [
+     {
+      "region": "knob-thread",
+      "force": [
+       0,
+       70,
+       0
+      ],
+      "at": [
+       80,
+       0,
+       30
+      ]
+     }
+    ]
+   },
+   {
+    "name": "lean",
+    "loads": [
+     {
+      "region": "knob-thread",
+      "force": [
+       0,
+       0,
+       -50
+      ],
+      "at": [
+       80,
+       0,
+       30
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 2.5,
+   "maxDeflection": 1.0
+  },
+  "name": "crank-lever-pa12",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5,
+  "maxDeflection": 1.0
+ }
+}

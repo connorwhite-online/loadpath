@@ -459,6 +459,13 @@ class Process:
     interlayer_shear: float | None = None
     # taken from the material because the study named none (_infer_process)
     inferred: bool = False
+    # the study wrote `overhangs` itself (or the old top-level printDirection):
+    # true is "it must print without supports", false "print it on supports".
+    # Left unsaid, a named build direction says which way the layers lie and
+    # nothing about supports, and whether the part is grown self-supporting or
+    # printed on supports is decided by what each costs to make
+    # (study.run_study, orient.settle_supports), as it is for "auto".
+    overhangs_declared: bool = False
 
 
 def _process(spec) -> Process | None:
@@ -511,7 +518,8 @@ def _process(spec) -> Process | None:
                    escape_hole=float(esc) if esc is not None else None,
                    min_hole=float(spec.get("minHole", base["minHole"])),
                    bridge_span=float(span) if span is not None else None, lattice_stiffness=lat_k,
-                   interlayer_shear=float(ish) if ish is not None else None, **stiff)
+                   interlayer_shear=float(ish) if ish is not None else None,
+                   overhangs_declared="overhangs" in spec, **stiff)
 
 
 def _drains(spec, process):
@@ -1894,7 +1902,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     if process is not None:
         # the process sets what a study left open: overhang control along the
         # build direction, and a minimum member it can actually make
-        if print_direction is None and process.overhangs and process.build not in (None, "auto"):
+        if print_direction is not None:
+            process.overhangs_declared = True      # printDirection has always meant overhang control
+        elif process.overhangs and process.build not in (None, "auto"):
             print_direction = process.build
         floor = 2.0 * process.min_feature
         min_member = max(float(min_member), floor) if min_member is not None else floor

@@ -1,0 +1,283 @@
+{
+ "id": "vesa-adapter-plate-petg",
+ "brief": "A VESA adapter plate in PETG (FDM, printed flat, layers along Z): a 6 mm plate (z = 0 to 6) within x, y = -60 to 60 that lets a monitor with a 75 mm hole pattern hang on an arm with a 100 mm pattern. Four M4 screws at (+-37.5, +-37.5) go through the plate from the arm side (heads at z = 0) into the monitor's threads; the monitor sits against z = 6. Four M4 screws at (+-50, +-50), heads counterbored 3 mm deep from the monitor side, go into the arm plate, which sits against z = 0. The monitor is 5 kg with its centre of mass 40 mm in front of the plate (z = 46); gravity is -Y; allow a factor of 2 for knocks. Safety factor 3.",
+ "attachments": [],
+ "tags": [
+  "mount",
+  "plate",
+  "fdm",
+  "fasteners"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -60,
+     -60,
+     0
+    ],
+    "max": [
+     60,
+     60,
+     6
+    ]
+   }
+  ],
+  "preserve": [],
+  "keepOut": [],
+  "fasteners": [
+   {
+    "id": "m1",
+    "size": "M4",
+    "seat": [
+     -37.5,
+     -37.5,
+     0
+    ],
+    "direction": "+z",
+    "grip": 6,
+    "end": "face"
+   },
+   {
+    "id": "m2",
+    "size": "M4",
+    "seat": [
+     37.5,
+     -37.5,
+     0
+    ],
+    "direction": "+z",
+    "grip": 6,
+    "end": "face"
+   },
+   {
+    "id": "m3",
+    "size": "M4",
+    "seat": [
+     -37.5,
+     37.5,
+     0
+    ],
+    "direction": "+z",
+    "grip": 6,
+    "end": "face"
+   },
+   {
+    "id": "m4",
+    "size": "M4",
+    "seat": [
+     37.5,
+     37.5,
+     0
+    ],
+    "direction": "+z",
+    "grip": 6,
+    "end": "face"
+   },
+   {
+    "id": "a1",
+    "size": "M4",
+    "seat": [
+     -50,
+     -50,
+     3
+    ],
+    "direction": "-z",
+    "grip": 3,
+    "end": "face"
+   },
+   {
+    "id": "a2",
+    "size": "M4",
+    "seat": [
+     50,
+     -50,
+     3
+    ],
+    "direction": "-z",
+    "grip": 3,
+    "end": "face"
+   },
+   {
+    "id": "a3",
+    "size": "M4",
+    "seat": [
+     -50,
+     50,
+     3
+    ],
+    "direction": "-z",
+    "grip": 3,
+    "end": "face"
+   },
+   {
+    "id": "a4",
+    "size": "M4",
+    "seat": [
+     50,
+     50,
+     3
+    ],
+    "direction": "-z",
+    "grip": 3,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "a1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "a2-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "a3-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "a4-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -50,
+      -50,
+      -0.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 4.5
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -50,
+      50,
+      -0.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 4.5
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      50,
+      -50,
+      -0.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 4.5
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      50,
+      50,
+      -0.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 4.5
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "monitor",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "center": [
+          -37.5,
+          -37.5,
+          5
+         ],
+         "axis": "z",
+         "length": 2,
+         "r": 4.5
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          -37.5,
+          37.5,
+          5
+         ],
+         "axis": "z",
+         "length": 2,
+         "r": 4.5
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          37.5,
+          -37.5,
+          5
+         ],
+         "axis": "z",
+         "length": 2,
+         "r": 4.5
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          37.5,
+          37.5,
+          5
+         ],
+         "axis": "z",
+         "length": 2,
+         "r": 4.5
+        }
+       ]
+      },
+      "mass": 5,
+      "dynamic": 2,
+      "gravity": "-y",
+      "at": [
+       0,
+       0,
+       46
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 3
+  },
+  "name": "vesa-adapter-plate-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 3
+ }
+}
