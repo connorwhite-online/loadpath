@@ -920,6 +920,24 @@
                   "minimum": 0,
                   "description": "mm along the cable (default: its nearest point)"
                 },
+                "direction": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[+-]?[xyz]$"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "[x, y, z]"
+                    }
+                  ],
+                  "description": "the way the cable runs through the clip (default: from the point before it to the one after)"
+                },
                 "body": {
                   "type": "string"
                 }
@@ -929,7 +947,7 @@
               ],
               "additionalProperties": false
             },
-            "description": "clips: points the cable is held at"
+            "description": "clips: points the cable is held at. Clips placed by point are threaded in the order given: the way is found from the port through each clip in turn to the other port"
           },
           "routes": {
             "type": "integer",

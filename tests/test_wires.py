@@ -100,6 +100,53 @@ def test_lay_round_a_block():
     print(f"lay round a block ok: {rep['length']:.1f} mm, {d.min():.2f} mm off it, tightest {rep['minBendRadius']:.1f} mm")
 
 
+def test_lay_through_clips():
+    """Clips placed off the straight way: the cable is routed through each
+    in turn, not routed end to end and then snapped onto them (which kinks
+    it at every clip)."""
+    from loadpath.rods import SdfField
+
+    clips = [(14.0, 5.0, 0.0), (30.0, -4.0, 0.0)]
+
+    def rings(p):                                   # two rings round X, hole radius 2.2, 1.2 thick, 3 long
+        d = np.full(len(p), np.inf)
+        for c in clips:
+            q = p - np.asarray(c)
+            r = np.hypot(q[:, 1], q[:, 2])
+            ring = np.maximum(np.abs(r - 2.8) - 0.6, np.abs(q[:, 0]) - 1.5)
+            d = np.minimum(d, ring)
+        return d
+
+    f = SdfField(rings)
+    room = W._Room.of([f], np.array([-10, -30, -30.0]), np.array([50, 30, 30.0]), 0.5)
+    cab = W.cable("awg26-silicone")
+    via = [{"at": list(c), "direction": [1.0, 0.0, 0.0]} for c in clips]
+    lw = W.lay(cab, _port((0, 0, 0), "+x"), _port((44, 0, 0), "-x"), [f], room=room, slack=0.08, via=via)
+    rep = lw.report()
+    assert rep["ok"], rep["problems"]
+    for c in clips:                                  # threaded: it passes each ring's centre
+        assert np.linalg.norm(lw.rod.x - np.asarray(c), axis=1).min() < 0.6
+    assert rings(lw.rod.x).min() > cab.radius - 0.2
+    print(f"lay through clips ok: {rep['length']:.1f} mm, tightest {rep['minBendRadius']:.1f} mm "
+          f"against {rep['allowedBendRadius']:.1f}")
+
+
+def test_mesh_body_distance_off_its_box():
+    """A mesh body's field just outside its own voxel grid is its exact
+    distance, not the distance to its bounding box (a lower bound that shut
+    a grip harness's channel beside a tilted cell)."""
+    import trimesh
+    from loadpath.shapes import MeshShape
+    m = trimesh.creation.cylinder(radius=9.25, height=65.0, sections=64)
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(15), [1, 0, 0]))
+    sh = MeshShape(m)
+    p = np.array([[9.25 + 5.4, 0.0, 28.0]])                # beside the cell, past its box's padded grid in z
+    exact = float(sh.exact_sdf(p)[0])
+    got = float(W.body_field(sh, 0.4, pad=6.0).eval(p)[0][0])
+    assert abs(got - exact) < 0.3, (got, exact, float(sh.sdf(p)[0]))
+    print(f"mesh body off its box ok: {got:.2f} mm against {exact:.2f} exact (box bound {float(sh.sdf(p)[0]):.2f})")
+
+
 def test_flat_cable():
     cab = W.cable("ffc-8x0.5")
     # face to face, a gentle S in its easy direction

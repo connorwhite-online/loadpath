@@ -3455,8 +3455,11 @@ _WIRE_PORT = {"type": "object", "properties": {
 _VIA = {"type": "array", "items": {"type": "object", "properties": {
     "at": _VEC3, "along": {"type": "number", "minimum": 0, "description": "mm along the cable (default: its "
                                                                          "nearest point)"},
+    "direction": {**_SIGNED, "description": "the way the cable runs through the clip (default: from the point "
+                                            "before it to the one after)"},
     "body": {"type": "string"}}, "required": ["at"], "additionalProperties": False},
-    "description": "clips: points the cable is held at"}
+    "description": "clips: points the cable is held at. Clips placed by point are threaded in the order given: the "
+                   "way is found from the port through each clip in turn to the other port"}
 
 
 def _wire_item(port):
@@ -3512,6 +3515,8 @@ WIRES_SCHEMA = {
             "inside": {"type": "boolean", "description": "a cavity the cables must stay in (an exterior)"},
             "skin": {"type": "number", "minimum": 0, "description": "with inside: wall thickness kept off"},
             "moves": {"type": "boolean", "description": "goes with the motion"},
+            "exact": {"type": "number", "minimum": 0, "description": "mm of exact distance near a mesh's surface "
+                                                                   "(overrides the brief's)"},
             "color": {"type": "string"}}, "required": ["shape"], "additionalProperties": False},
             "description": "what the cables must go round (or stay inside)"},
         "wires": {"type": "array", "minItems": 1, "items": _wire_item(_WIRE_PORT)},
@@ -3520,6 +3525,11 @@ WIRES_SCHEMA = {
         "pitch": {**_POS, "description": "mm: the grid each body's distance field is sampled on (default 0.4)"},
         "clearance": {"type": "number", "minimum": 0, "description": "mm kept between a cable and a body"},
         "routes": {"type": "integer", "minimum": 1, "maximum": 4},
+        "exact": {"type": "number", "minimum": 0, "description": "mm from each mesh body's surface within which its "
+                                                               "distances are exact, not voxel (default: the thickest "
+                                                               "cable's diameter + clearance + 1)"},
+        "roomCells": {"type": "number", "minimum": 1e4, "description": "the most grid cells the ways are found on "
+                                                                     "(default 3e6): fewer is faster, coarser"},
         "wiresCollide": {"type": "boolean", "description": "later cables go round earlier ones (default true; "
                                                            "not during a motion)"},
         "channels": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
