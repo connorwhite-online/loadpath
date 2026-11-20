@@ -566,6 +566,7 @@ function libGLSL(tables) {
   const t = (k) => `float[19](${(tables && tables[k] ? tables[k] : Array.from({ length: 19 }, (_, i) => 0.05 + 0.05 * i)).map(fl).join(",")})`;
   return `
 float uAt(int i) { return U[i >> 2][i & 3]; }
+float lp_unitd(float f, vec3 g) { return f / clamp(length(g), 0.5, 1.0); }
 float lp_smin(float a, float b, float k) {
   if (k <= 1e-9) return min(a, b);
   float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
@@ -715,6 +716,35 @@ class Compiler {
     if (i < 0) { i = this.textures.length; this.textures.push(name); }
     return [`lp_${scalar ? "tex" : "texsdf"}(T${i}, `, `, vec3(${b.lo.map(fl).join(", ")}), vec3(${b.hi.map(fl).join(", ")}), vec3(${b.dims.map(fl).join(", ")}))`];
   }
+  /** fields.py FieldGraph.redistances: a shell or offset divides its input by the input's gradient
+   * length when a blended boolean sits under it (unless `redistance` says otherwise). */
+  redistances(name) {
+    const s = this.nodes[name];
+    if (!s || (s.op !== "shell" && s.op !== "offset")) return false;
+    if (s.redistance != null) return !!s.redistance;
+    return this.slowed(s.input, new Set());
+  }
+  slowed(ref, seen) {
+    if (typeof ref !== "string" || seen.has(ref) || !this.nodes[ref]) return false;
+    seen.add(ref);
+    const s = this.nodes[ref];
+    if (["union", "intersect", "subtract"].includes(s.op)) {
+      if (typeof s.blend === "string" || (s.blend != null && typeof s.blend === "object") || (typeof s.blend === "number" && s.blend > 1e-9)) return true;
+      return (s.inputs || []).some((x) => this.slowed(x, seen));
+    }
+    if (s.op === "shell" || s.op === "offset") return !this.redistances(ref) && this.slowed(s.input, seen);
+    if (s.op === "transform") return this.slowed(s.input, seen);
+    return false;
+  }
+  /** a shell's or offset's input at P, as a distance (fields.py FieldGraph._unit: a 0.01 mm tetrahedral stencil). */
+  unit(name, P, ref, fn) {
+    const s = this.nodes[name], f = this.f(name, "input", 1e3, ref);
+    if (typeof s.input !== "string" || this.exact === false || !this.redistances(name)) return f;
+    const F = fn(s.input), h = 0.01;
+    const T = [[1, -1, -1], [-1, -1, 1], [-1, 1, -1], [1, 1, 1]];
+    const g = T.map((t) => `vec3(${t.map(fl).join(", ")}) * ${F}(${P} + vec3(${t.map((x) => fl(x * h)).join(", ")}))`);
+    return `lp_unitd(${f}, (${g.join(" + ")}) / ${fl(4 * h)})`;
+  }
   /** GLSL for node `name` at point P; ref(dep) is the GLSL for a dependency at P; fn(dep) the name of its function. */
   expr(name, P, ref, fn) {
     const s = this.nodes[name], op = s.op, N = (...k) => this.path(name, ...k);
@@ -769,12 +799,12 @@ class Compiler {
         return ins.reduce((a, b) => `(-lp_smin(-(${a}), ${b}, ${k}))`);
       }
       case "shell": {
-        const f = this.f(name, "input", 1e3, ref), t = this.f(name, "thickness", 1, ref), side = s.side || "inside";
+        const f = this.unit(name, P, ref, fn), t = this.f(name, "thickness", 1, ref), side = s.side || "inside";
         if (side === "outside") return `max(-(${f}), (${f}) - (${t}))`;
         if (side === "center") return `(abs(${f}) - 0.5 * (${t}))`;
         return `max(${f}, -((${f}) + (${t})))`;
       }
-      case "offset": return `((${this.f(name, "input", 1e3, ref)}) - (${this.f(name, "distance", 0, ref)}))`;
+      case "offset": return `((${this.unit(name, P, ref, fn)}) - (${this.f(name, "distance", 0, ref)}))`;
       case "lattice": {
         const kind = KIND[s.type || "gyroid"] ?? 0;
         const Q = s.origin ? `(${P} - ${this.v3(N("origin"), s.origin)})` : P;
@@ -854,7 +884,12 @@ class Compiler {
     const walkScene = (n) => {
       if (scene.has(n) || !(n in nodes)) return;
       scene.add(n);
-      for (const r of refsIn(n)) { if (nodes[n].op === "transform" && r.key === "input") walkFn(r.target); else walkScene(r.target); }
+      for (const r of refsIn(n)) {
+        if (nodes[n].op === "transform" && r.key === "input") { walkFn(r.target); continue; }
+        // a redistanced shell or offset also samples its input around the point (Compiler.unit)
+        if (r.key === "input" && this.exact !== false && this.redistances(n)) walkFn(r.target);
+        walkScene(r.target);
+      }
     };
     const walkFn = (n) => { if (fnSet.has(n) || !(n in nodes)) return; fnSet.add(n); for (const r of refsIn(n)) walkFn(r.target); };
     for (const r of roots) if (r) walkScene(r);
@@ -884,9 +919,13 @@ class Compiler {
   }
 }
 
+// exact = false (the raymarched view only) skips shells' and offsets' redistancing (Compiler.unit): it
+// evaluates the input five times and the view steps through it hundreds of times a pixel; the walls
+// drawn are then up to a few tenths of a mm thick at a blend. Probes, mass and overlays stay exact.
 /** Compile the preview (solid + colour) or a probe of one node. */
-function compileGraph(doc, bakes, roots, origin) {
+function compileGraph(doc, bakes, roots, origin, exact = true) {
   const c = new Compiler(doc, bakes, origin);
+  c.exact = exact;
   const { code, sceneFn } = c.build(Object.values(roots));
   let scenes = "";
   for (const [fnName, root] of Object.entries(roots)) scenes += sceneFn(fnName, root);
@@ -1099,7 +1138,7 @@ function recompile() {
   let comp;
   try {
     const roots = previewRoots();
-    comp = compileGraph(X().doc, S.bakes, roots, X().origin);
+    comp = compileGraph(X().doc, S.bakes, roots, X().origin, false);
     const t0 = performance.now();
     const prog = makeProgram(comp.head + PREVIEW_MAIN);
     if (G.prog) gl.deleteProgram(G.prog.p);

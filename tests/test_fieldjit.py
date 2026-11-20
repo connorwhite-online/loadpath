@@ -190,3 +190,21 @@ def test_compiled_shapes_match():
     P = np.random.default_rng(5).uniform(-40, 40, (100_000, 3))
     want = np.min([s * sh.sdf(P) for sh, s in regions], axis=0)
     assert np.array_equal(fieldjit.compile_shapes(regions)(P), want)
+
+
+def test_redistanced_shell_matches_numpy(monkeypatch):
+    """A shell of a blended union redistances its input (fields.
+    FieldGraph.redistances) through four shifted frames, bit for bit with
+    the numpy graph."""
+    doc = {"nodes": {"a": {"op": "shape", "shape": {"type": "sphere", "center": [0, 0, 0], "r": 10}},
+                     "b": {"op": "shape", "shape": {"type": "box", "center": [12, 0, 0], "size": [24, 6, 6]}},
+                     "body": {"op": "union", "inputs": ["a", "b"], "blend": 3},
+                     "wall": {"op": "shell", "input": "body", "thickness": 1.5},
+                     "grow": {"op": "offset", "input": "body", "distance": 0.5},
+                     "out": {"op": "union", "inputs": ["wall", "grow"]}}, "output": "out"}
+    P = np.random.default_rng(2).uniform(-12, 25, (50_000, 3))
+    g = FieldGraph(doc)
+    assert g._compiled("out") is not None
+    got = g.evaluate(P)
+    monkeypatch.setenv("LOADPATH_FIELDJIT", "0")
+    assert np.array_equal(got, FieldGraph(doc).evaluate(P))
