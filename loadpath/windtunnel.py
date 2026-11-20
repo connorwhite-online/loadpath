@@ -363,7 +363,134 @@ def _kernels():
         number a 1% error in the velocity handed across is a 10% error in
         the pressure that balances it (dp = rho c du), and linear
         interpolation in the curved flow near a body is 1% off.
-        M: (n, 11) rho, u, P, tau."""
+        M: (n, 11) rho, u, P, tau.
+
+        The 64 parent cells are summed a line of four along z at a time, the
+        line's four weights applied before the weight of its (x, y), and each
+        of the 11 sums kept in a register until the end. Summed one cell at
+        a time into M (gather_cells, kept to test this against), every one
+        of the 704 terms waited on the last store to M, and that wait, not
+        the arithmetic, was most of the time (2.3x)."""
+        nx, ny, nz = rho.shape
+        p0 = per[0]
+        p1 = per[1]
+        p2 = per[2]
+        for n in nb.prange(gi.shape[0]):
+            xc = off[0] + 0.5 * (gi[n, 0] + 0.5) - 0.5
+            b0 = int(np.floor(xc))
+            t = xc - b0
+            xb = b0 - 1
+            wx0 = -t * (t - 1.0) * (t - 2.0) / 6.0
+            wx1 = (t + 1.0) * (t - 1.0) * (t - 2.0) / 2.0
+            wx2 = -(t + 1.0) * t * (t - 2.0) / 2.0
+            wx3 = (t + 1.0) * t * (t - 1.0) / 6.0
+            xc = off[1] + 0.5 * (gi[n, 1] + 0.5) - 0.5
+            b0 = int(np.floor(xc))
+            t = xc - b0
+            yb = b0 - 1
+            wy0 = -t * (t - 1.0) * (t - 2.0) / 6.0
+            wy1 = (t + 1.0) * (t - 1.0) * (t - 2.0) / 2.0
+            wy2 = -(t + 1.0) * t * (t - 2.0) / 2.0
+            wy3 = (t + 1.0) * t * (t - 1.0) / 6.0
+            xc = off[2] + 0.5 * (gi[n, 2] + 0.5) - 0.5
+            b0 = int(np.floor(xc))
+            t = xc - b0
+            zb = b0 - 1
+            w0 = -t * (t - 1.0) * (t - 2.0) / 6.0
+            w1 = (t + 1.0) * (t - 1.0) * (t - 2.0) / 2.0
+            w2 = -(t + 1.0) * t * (t - 2.0) / 2.0
+            w3 = (t + 1.0) * t * (t - 1.0) / 6.0
+            z0 = zb
+            z1 = zb + 1
+            z2 = zb + 2
+            z3 = zb + 3
+            if p2:
+                if z0 < 0:
+                    z0 += nz
+                elif z0 >= nz:
+                    z0 -= nz
+                if z1 < 0:
+                    z1 += nz
+                elif z1 >= nz:
+                    z1 -= nz
+                if z2 < 0:
+                    z2 += nz
+                elif z2 >= nz:
+                    z2 -= nz
+                if z3 < 0:
+                    z3 += nz
+                elif z3 >= nz:
+                    z3 -= nz
+            s0 = 0.0
+            s1 = 0.0
+            s2 = 0.0
+            s3 = 0.0
+            s4 = 0.0
+            s5 = 0.0
+            s6 = 0.0
+            s7 = 0.0
+            s8 = 0.0
+            s9 = 0.0
+            s10 = 0.0
+            for dx in range(4):
+                xi = xb + dx
+                if p0:
+                    if xi < 0:
+                        xi += nx
+                    elif xi >= nx:
+                        xi -= nx
+                wx = wx0 if dx == 0 else (wx1 if dx == 1 else (wx2 if dx == 2 else wx3))
+                for dy in range(4):
+                    yi = yb + dy
+                    if p1:
+                        if yi < 0:
+                            yi += ny
+                        elif yi >= ny:
+                            yi -= ny
+                    wxy = wx * (wy0 if dy == 0 else (wy1 if dy == 1 else (wy2 if dy == 2 else wy3)))
+                    r = rho[xi, yi]
+                    s0 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = u[0, xi, yi]
+                    s1 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = u[1, xi, yi]
+                    s2 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = u[2, xi, yi]
+                    s3 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = P[0, xi, yi]
+                    s4 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = P[1, xi, yi]
+                    s5 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = P[2, xi, yi]
+                    s6 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = P[3, xi, yi]
+                    s7 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = P[4, xi, yi]
+                    s8 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = P[5, xi, yi]
+                    s9 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+                    r = tau[xi, yi]
+                    s10 += wxy * (w0 * r[z0] + w1 * r[z1] + w2 * r[z2] + w3 * r[z3])
+            M[n, 0] = s0
+            M[n, 1] = s1
+            M[n, 2] = s2
+            M[n, 3] = s3
+            M[n, 4] = s4
+            M[n, 5] = s5
+            M[n, 6] = s6
+            M[n, 7] = s7
+            M[n, 8] = s8
+            M[n, 9] = s9
+            M[n, 10] = s10
+
+    @nb.njit(parallel=True, fastmath=True, cache=True)
+    def gather_cells(rho, u, P, tau, gi, off, per, M):
+        """The parent's state at the child's rim cells gi (child indices),
+        cubic between parent cell centres (four a side). At a tunnel's Mach
+        number a 1% error in the velocity handed across is a 10% error in
+        the pressure that balances it (dp = rho c du), and linear
+        interpolation in the curved flow near a body is 1% off.
+        M: (n, 11) rho, u, P, tau. (The sum one cell at a time; `gather`
+        is the same sum taken a line at a time.)"""
         nx, ny, nz = rho.shape
         for n in nb.prange(gi.shape[0]):
             base = np.empty(3, np.int64)
@@ -647,7 +774,7 @@ def _kernels():
                     if l1 >= 0.0 and l2 >= 0.0 and l1 + l2 <= 1.0:
                         cover[j, k] = True
 
-    _K.update(step=step, gather=gather, scatter=scatter, restrict=restrict, link_cuts=link_cuts, shadow=shadow)
+    _K.update(step=step, gather=gather, gather_cells=gather_cells, scatter=scatter, restrict=restrict, link_cuts=link_cuts, shadow=shadow)
     if os.environ.get("LOADPATH_WINDTUNNEL_STEP", "rows") != "cells":
         from .fieldjit import _kernel
 
@@ -999,7 +1126,47 @@ def _step_source(wale, sponge):
     head = head.replace("#ROWS#\n", rows).replace("#PULL#\n", cell)
     if not wale:
         head = head[:head.index("                if sgs == 2:\n")]
-    return head + mid + _STEP_TAIL
+    return _blocked(head, mid, _STEP_TAIL)
+
+
+_BLOCK = 64
+
+
+def _blocked(head, mid, tail):
+    """The three passes over a row, taken a block of _BLOCK cells at a time
+    with buffers of that fixed size. With buffers as long as the row (a
+    length known only at run time) the compiler cannot show that the
+    collision's rows of numbers do not overlap, and leaves it scalar; with
+    a fixed size it turns the collision into vector instructions. The
+    arithmetic and its order are unchanged."""
+    import re
+
+    buf = re.compile(r"\b(bi|bo|bg|bF)\[([^\]]*), z\]")
+
+    def local(text):                  # the buffers are indexed from the block's start
+        return buf.sub(r"\1[\2, zb]", text).replace("bs[z]", "bs[zb]")
+
+    first = "            for z in range(nz):\n"
+    k = head.index(first)
+    top, pull = head[:k], head[k + len(first):]
+    for name in ("bi", "bo", "bg", "bF"):
+        top = re.sub(rf"{name} = np.zeros\(\((\d+), nz\)\)", rf"{name} = np.zeros((\1, {_BLOCK}))", top)
+    top = top.replace("bs = np.zeros(nz)", f"bs = np.zeros({_BLOCK})")
+    assert ", nz))" not in top and "np.zeros(nz)" not in top
+    k = tail.index("        if do_force:\n")
+    write, end = tail[:k], tail[k:]
+    assert write.startswith(first) and mid.startswith("            for zz in range(nz):\n")
+    body = (f"            for z0 in range(0, nz, {_BLOCK}):\n"
+            f"                z1 = min(z0 + {_BLOCK}, nz)\n"
+            "                for z in range(z0, z1):\n"
+            "                    zb = z - z0\n"
+            + "".join("    " + ln + "\n" for ln in local(pull).splitlines())
+            + "                for zz in range(z1 - z0):\n"
+            + "".join("    " + ln + "\n" for ln in mid.splitlines()[1:])
+            + "                for z in range(z0, z1):\n"
+            "                    zb = z - z0\n"
+            + "".join("    " + ln + "\n" for ln in local(write[len(first):]).splitlines()))
+    return top + body + end
 
 
 def frontal_area(triangles, pitch):

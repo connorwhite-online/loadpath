@@ -32,11 +32,27 @@ two-relaxation-time collisions (Lambda 1/4) and anti-bounce-back isothermal
 walls. Both run as numba kernels in parallel over x (`pip install numba`,
 the `flow` extra); there is no pure-numpy path, it would be ~100x slower.
 
+The kernels are generated source (_step_source, _step_t_source): a row is
+taken a block of _BLOCK cells at a time, in three passes. The first pulls
+each fluid cell's populations into a buffer, fluid cells packed side by
+side and walls skipped; the second collides the packed cells with every
+direction written out and no branches; the third writes them back. The
+buffers have a fixed size, which is what lets the compiler prove the passes
+do not overlap and turn the collision into vector instructions (a buffer as
+long as the row, its length known only at run time, compiles to scalar
+code). Populations are stored cell by cell, f[x, y, z, i]: direction by
+direction, f[i, x, y, z], the 19 arrays sit a power of two apart on 64 or
+128 voxel grids and evict each other from the cache (128 voxels ran 30%
+slower per cell than 130). The arithmetic is the cell-by-cell kernels',
+which stay for reference: LOADPATH_FLOW_STEP=cells runs them, and
+tests/test_flow.py compares the two.
+
 Lattice units throughout the kernels; Re, f and Nu are dimensionless and the
 physical results (Pa, W/m^2K) come from them in `cell_flow`'s callers.
 """
 from __future__ import annotations
 
+import os
 import time
 
 import numpy as np
@@ -117,11 +133,11 @@ def _kernels():
                             elif sz >= nz:
                                 sz -= nz
                         if sx < 0 or sx >= nx or sy < 0 or sy >= ny or sz < 0 or sz >= nz:
-                            fin[i] = f[OPP[i], x, y, z]
+                            fin[i] = f[x, y, z, OPP[i]]
                         elif ntype[sx, sy, sz] == 1:
-                            fin[i] = f[OPP[i], x, y, z]
+                            fin[i] = f[x, y, z, OPP[i]]
                         else:
-                            fin[i] = f[i, sx, sy, sz]
+                            fin[i] = f[sx, sy, sz, i]
                     r = 0.0
                     jx = 0.0
                     jy = 0.0
@@ -175,7 +191,7 @@ def _kernels():
                         usq = vx * vx + vy * vy + vz * vz
                         for i in range(19):
                             cu = C[i, 0] * vx + C[i, 1] * vy + C[i, 2] * vz
-                            fn[i, x, y, z] = W[i] * r * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usq)
+                            fn[x, y, z, i] = W[i] * r * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usq)
                         rho[x, y, z] = r
                         ux[x, y, z] = vx
                         uy[x, y, z] = vy
@@ -222,7 +238,7 @@ def _kernels():
                     pp = 1.0 - 0.5 * op
                     pm = 1.0 - 0.5 * om
                     uF = vx * Fx + vy * Fy + vz * Fz
-                    fn[0, x, y, z] = fin[0] - op * (fin[0] - feq[0]) - pp * W[0] * 3.0 * uF
+                    fn[x, y, z, 0] = fin[0] - op * (fin[0] - feq[0]) - pp * W[0] * 3.0 * uF
                     for i in range(1, 19, 2):
                         j = i + 1
                         cu = C[i, 0] * vx + C[i, 1] * vy + C[i, 2] * vz
@@ -231,8 +247,8 @@ def _kernels():
                         dm = om * (0.5 * (fin[i] - fin[j]) - 0.5 * (feq[i] - feq[j]))
                         sp = pp * W[i] * (9.0 * cu * cF - 3.0 * uF)
                         sm = pm * W[i] * 3.0 * cF
-                        fn[i, x, y, z] = fin[i] - dp - dm + sp + sm
-                        fn[j, x, y, z] = fin[j] - dp + dm + sp - sm
+                        fn[x, y, z, i] = fin[i] - dp - dm + sp + sm
+                        fn[x, y, z, j] = fin[j] - dp + dm + sp - sm
                     rho[x, y, z] = r
                     ux[x, y, z] = vx
                     uy[x, y, z] = vy
@@ -273,15 +289,15 @@ def _kernels():
                             elif sz >= nz:
                                 sz -= nz
                         if sx < 0 or sx >= nx or sy < 0 or sy >= ny or sz < 0 or sz >= nz:
-                            gin[i] = g[OPPt[i], x, y, z]
+                            gin[i] = g[x, y, z, OPPt[i]]
                         else:
                             s = tnode[sx, sy, sz]
                             if s == 1:
-                                gin[i] = g[OPPt[i], x, y, z]
+                                gin[i] = g[x, y, z, OPPt[i]]
                             elif s == 2:
-                                gin[i] = -g[OPPt[i], x, y, z] + 2.0 * Wt[i] * tfix[sx, sy, sz]
+                                gin[i] = -g[x, y, z, OPPt[i]] + 2.0 * Wt[i] * tfix[sx, sy, sz]
                             else:
-                                gin[i] = g[i, sx, sy, sz]
+                                gin[i] = g[sx, sy, sz, i]
                     Tl = 0.0
                     for i in range(7):
                         Tl += gin[i]
@@ -293,7 +309,7 @@ def _kernels():
                     if t == 3 or t == 4:
                         for i in range(7):
                             cu = Ct[i, 0] * vx + Ct[i, 1] * vy + Ct[i, 2] * vz
-                            gn[i, x, y, z] = Wt[i] * Tl * (1.0 + 4.0 * cu)
+                            gn[x, y, z, i] = Wt[i] * Tl * (1.0 + 4.0 * cu)
                         T[x, y, z] = Tl
                         continue
                     # odd moments set the diffusivity: molecular plus the flow's subgrid
@@ -304,7 +320,7 @@ def _kernels():
                     op = 1.0 / tp
                     S = qsrc[x, y, z] + qvel[0] * vx + qvel[1] * vy + qvel[2] * vz
                     e0 = Wt[0] * Tl
-                    gn[0, x, y, z] = gin[0] - op * (gin[0] - e0) + Wt[0] * S
+                    gn[x, y, z, 0] = gin[0] - op * (gin[0] - e0) + Wt[0] * S
                     for i in range(1, 7, 2):
                         j = i + 1
                         cu = Ct[i, 0] * vx + Ct[i, 1] * vy + Ct[i, 2] * vz
@@ -314,33 +330,383 @@ def _kernels():
                         gm = 0.5 * (gin[i] - gin[j])
                         dp = op * (gp - ep)
                         dm = om * (gm - em)
-                        gn[i, x, y, z] = gin[i] - dp - dm + Wt[i] * S
-                        gn[j, x, y, z] = gin[j] - dp + dm + Wt[j] * S
+                        gn[x, y, z, i] = gin[i] - dp - dm + Wt[i] * S
+                        gn[x, y, z, j] = gin[j] - dp + dm + Wt[j] * S
                     T[x, y, z] = Tl
 
-    _K["step"] = step
-    _K["step_t"] = step_t
+    _K["step_cells"] = step
+    _K["step_t_cells"] = step_t
+    if os.environ.get("LOADPATH_FLOW_STEP", "rows") == "cells":
+        _K["step"], _K["step_t"] = step, step_t
+    else:
+        _K["step"], _K["step_t"] = _kernel_rows("step"), _kernel_rows("step_t")
     return _K
 
 
+def _kernel_rows(name):
+    """The generated kernel ("step" or "step_t"), compiled when first called."""
+    def call(*a):
+        if name not in _ROWS:
+            from .fieldjit import _kernel
+
+            _ROWS[name] = _kernel({"step": _step_source, "step_t": _step_t_source}[name]())
+        return _ROWS[name](*a)
+    return call
+
+
+_ROWS = {}
 _K = {}
 LAMBDA = 3.0 / 16.0
 
 
+# ---------------------------------------------------------------- generated kernels
+
+_BLOCK = 32          # cells of a row packed and collided at a time: the buffers stay in the first-level cache
+
+
+def _signed(terms):
+    t = " ".join(("+ " if c > 0 else "- ") + n for c, n in terms if c)
+    return (t[2:] if t.startswith("+ ") else t) if t else "0.0"
+
+
+_ROW_HEAD = """    for xx in nb.prange(nx):
+        x = np.int64(xx)
+#BUFFERS#
+        zi = np.empty(#B#, np.int64)
+        wallrow = np.ones(nz, np.int8)       # stands for the row beyond a closed face
+        xm = x - 1
+        xp = x + 1
+        bxm = False
+        bxp = False
+        if xm < 0:
+            if p0:
+                xm += nx
+            else:
+                xm = x
+                bxm = True
+        if xp >= nx:
+            if p0:
+                xp -= nx
+            else:
+                xp = x
+                bxp = True
+        for y in range(ny):
+            ym = y - 1
+            yp = y + 1
+            bym = False
+            byp = False
+            if ym < 0:
+                if p1:
+                    ym += ny
+                else:
+                    ym = y
+                    bym = True
+            if yp >= ny:
+                if p1:
+                    yp -= ny
+                else:
+                    yp = y
+                    byp = True
+#ROWS#
+            for z0 in range(0, nz, #B#):
+                z1 = min(z0 + #B#, nz)
+                cnt = 0
+                for zz in range(z0, z1):
+                    z = U(zz)
+                    t = Noo[z]
+                    if #SKIP#:
+                        continue
+                    zm = z
+                    zp = z
+                    om = False
+                    op_ = False
+                    if zz == 0:
+                        if p2:
+                            zm = U(nz - 1)
+                        else:
+                            om = True
+                    else:
+                        zm = U(zz - 1)
+                    if zz == nz - 1:
+                        if p2:
+                            zp = U(0)
+                        else:
+                            op_ = True
+                    else:
+                        zp = U(zz + 1)
+                    k = U(cnt)
+                    zi[k] = zz
+                    cnt += 1
+#PULL#
+                for kk in range(cnt):
+                    k = U(kk)
+#COLLIDE#
+                for kk in range(cnt):
+                    k = U(kk)
+                    zz = zi[k]
+                    z = U(zz)
+                    t = Noo[z]
+#WRITE#
+"""
+
+_NAME = {1: "m", 0: "o", -1: "p"}                # a direction's source row is at x - c
+_XI = {1: ("xm", "bxm"), 0: ("x", None), -1: ("xp", "bxp")}
+_YI = {1: ("ym", "bym"), 0: ("y", None), -1: ("yp", "byp")}
+_ZI = {1: ("zm", "om or "), 0: ("z", ""), -1: ("zp", "op_ or ")}
+
+
+def _row_views(C, ntype, extra):
+    """Source of the views taken once a row: the node types and each array in
+    `extra` (name -> array) for every (x, y) a direction pulls from."""
+    P = " " * 12
+    out = []
+    for cx, cy in sorted({(int(c[0]), int(c[1])) for c in C}):
+        v = _NAME[cx] + _NAME[cy]
+        flags = [b for b in (_XI[cx][1], _YI[cy][1]) if b]
+        at = f"[{_XI[cx][0]}, {_YI[cy][0]}]"
+        out.append(f"{P}N{v} = wallrow if {' or '.join(flags)} else {ntype}{at}" if flags else f"{P}N{v} = {ntype}{at}")
+        out += [f"{P}{n}{v} = {arr}{at}" for n, arr in extra.items()]
+    return out
+
+
+def _fill(src, B, **parts):
+    body = _ROW_HEAD
+    for key, lines in parts.items():
+        body = body.replace(f"#{key}#", lines if isinstance(lines, str) else "\n".join(lines))
+    return src.replace("#BODY#", body).replace("#B#", str(B))
+
+
+_STEP_HEAD = '''import numpy as np
+import numba as nb
+
+U = np.uint64
+C = np.array(#C#, np.int64).reshape(19, 3)
+W = np.array(#W#)
+
+
+@nb.njit(fastmath=True, cache=True)
+def port(t, x, y, z, fin, fn, ntype, u_in, rho_out, rho, ux, uy, uz):
+    """An inlet (2: prescribed velocity, density from the neighbour inward)
+    or an outlet (3: fixed density, velocity from the neighbour inward).
+    u_in holds the inlet velocity, or the outlet's inward normal."""
+    nx, ny, nz = ntype.shape
+    r = 0.0
+    jx = 0.0
+    jy = 0.0
+    jz = 0.0
+    for i in range(19):
+        r += fin[i]
+        jx += fin[i] * C[i, 0]
+        jy += fin[i] * C[i, 1]
+        jz += fin[i] * C[i, 2]
+    if t == 2:
+        vx = u_in[0, x, y, z]
+        vy = u_in[1, x, y, z]
+        vz = u_in[2, x, y, z]
+        ax = abs(vx)
+        ay = abs(vy)
+        az = abs(vz)
+        ox = 0
+        oy = 0
+        oz = 0
+        if ax >= ay and ax >= az:
+            ox = 1 if vx > 0 else -1
+        elif ay >= az:
+            oy = 1 if vy > 0 else -1
+        else:
+            oz = 1 if vz > 0 else -1
+    else:
+        ox = int(u_in[0, x, y, z])
+        oy = int(u_in[1, x, y, z])
+        oz = int(u_in[2, x, y, z])
+        vx = jx / r
+        vy = jy / r
+        vz = jz / r
+    qx = x + ox
+    qy = y + oy
+    qz = z + oz
+    if 0 <= qx < nx and 0 <= qy < ny and 0 <= qz < nz and ntype[qx, qy, qz] == 0:
+        if t == 2:
+            r = rho[qx, qy, qz]
+        else:
+            vx = ux[qx, qy, qz]
+            vy = uy[qx, qy, qz]
+            vz = uz[qx, qy, qz]
+    if t == 3:
+        r = rho_out
+    if r <= 0.0:
+        r = 1.0
+    usq = vx * vx + vy * vy + vz * vz
+    for i in range(19):
+        cu = C[i, 0] * vx + C[i, 1] * vy + C[i, 2] * vz
+        fn[x, y, z, i] = W[i] * r * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usq)
+    rho[x, y, z] = r
+    ux[x, y, z] = vx
+    uy[x, y, z] = vy
+    uz[x, y, z] = vz
+
+
+@nb.njit(parallel=True, fastmath=True, cache=True)
+def kernel(f, fn, ntype, tau0, cs2, gx, gy, gz, u_in, rho_out, periodic, rho, ux, uy, uz, lam, nut):
+    nx, ny, nz = ntype.shape
+    p0 = periodic[0] != 0
+    p1 = periodic[1] != 0
+    p2 = periodic[2] != 0
+#BODY#'''
+
+
+def _step_source(B=_BLOCK):
+    """Source of the flow step: the cell-by-cell kernel's arithmetic (see
+    `step` in _kernels) in the three passes the module docstring describes.
+    Inlets and outlets are pulled with the fluid cells and set in the last
+    pass, in z order with the cells written back, so each reads its
+    neighbour inward as the cell-by-cell kernel does."""
+    C, W, OPP = C19, W19, OPP19
+    P = " " * 20
+    rows = _row_views(C, "ntype", {"F": "f"})
+    rows += [" " * 12 + ln for ln in ("Dn = fn[x, y]", "Rr = rho[x, y]", "Rx = ux[x, y]", "Ry = uy[x, y]",
+                                      "Rz = uz[x, y]", "Rn = nut[x, y]")]
+    pull = [f"{P}bi[0, k] = Foo[z, 0]"]
+    for i in range(1, 19):
+        cx, cy, cz = (int(c) for c in C[i])
+        v = _NAME[cx] + _NAME[cy]
+        sz, oob = _ZI[cz]
+        # both read, then one chosen: a wall (or a closed face) sends this cell's own population back
+        pull += [f"{P}a_ = Foo[z, {int(OPP[i])}]", f"{P}b_ = F{v}[{sz}, {i}]",
+                 f"{P}bi[{i}, k] = a_ if {oob}N{v}[{sz}] == 1 else b_"]
+    L = [f"v{i} = bi[{i}, k]" for i in range(19)]
+    L.append("r = " + " + ".join(f"v{i}" for i in range(19)))
+    for k, n in enumerate(("jx", "jy", "jz")):
+        L.append(f"{n} = " + _signed([(int(C[i][k]), f"v{i}") for i in range(19)]))
+    L += ["Fx = gx * r", "Fy = gy * r", "Fz = gz * r",
+          "vx = (jx + 0.5 * Fx) / r", "vy = (jy + 0.5 * Fy) / r", "vz = (jz + 0.5 * Fz) / r",
+          "usq = vx * vx + vy * vy + vz * vz", "base = 1.0 - 1.5 * usq",
+          f"e0 = {float(W[0])!r} * r * base", "d0 = v0 - e0"]
+    for i in range(1, 19):
+        L += [f"c{i} = " + _signed(zip((int(c) for c in C[i]), ("vx", "vy", "vz"))),
+              f"e{i} = {float(W[i])!r} * r * (base + 3.0 * c{i} + 4.5 * c{i} * c{i})",
+              f"d{i} = v{i} - e{i}"]
+    for n, (a, b) in (("pxx", (0, 0)), ("pyy", (1, 1)), ("pzz", (2, 2)), ("pxy", (0, 1)), ("pxz", (0, 2)),
+                      ("pyz", (1, 2))):
+        L.append(f"{n} = " + _signed([(int(C[i][a] * C[i][b]), f"d{i}") for i in range(19)]))
+    L += ["pxx += vx * Fx", "pyy += vy * Fy", "pzz += vz * Fz",          # the forcing's share of the second moment (Guo)
+          "pxy += 0.5 * (vx * Fy + vy * Fx)", "pxz += 0.5 * (vx * Fz + vz * Fx)", "pyz += 0.5 * (vy * Fz + vz * Fy)",
+          "Q = np.sqrt(pxx * pxx + pyy * pyy + pzz * pzz + 2.0 * (pxy * pxy + pxz * pxz + pyz * pyz))",
+          "tau = 0.5 * (tau0 + np.sqrt(tau0 * tau0 + 18.0 * 1.41421356 * cs2 * Q / r))",
+          "bo[23, k] = (tau - tau0) / 3.0",
+          "op = 1.0 / tau", "om_ = 1.0 / (0.5 + lam / (tau - 0.5))", "pp = 1.0 - 0.5 * op", "pm = 1.0 - 0.5 * om_",
+          "uF = vx * Fx + vy * Fy + vz * Fz",
+          f"bo[0, k] = v0 - op * d0 - pp * {float(W[0])!r} * 3.0 * uF"]
+    for i in range(1, 19, 2):
+        j = i + 1
+        w = repr(float(W[i]))
+        L += ["cF = " + _signed(zip((int(c) for c in C[i]), ("Fx", "Fy", "Fz"))),
+              f"dp = op * (0.5 * (v{i} + v{j}) - 0.5 * (e{i} + e{j}))",
+              f"dm = om_ * (0.5 * (v{i} - v{j}) - 0.5 * (e{i} - e{j}))",
+              f"sp = pp * {w} * (9.0 * c{i} * cF - 3.0 * uF)",
+              f"sm = pm * {w} * 3.0 * cF",
+              f"bo[{i}, k] = v{i} - dp - dm + sp + sm",
+              f"bo[{j}, k] = v{j} - dp + dm + sp - sm"]
+    L += ["bo[19, k] = r", "bo[20, k] = vx", "bo[21, k] = vy", "bo[22, k] = vz"]
+    write = ["if t != 0:", "    for i in range(19):", "        fin[i] = bi[i, k]",
+             "    port(t, x, y, zz, fin, fn, ntype, u_in, rho_out, rho, ux, uy, uz)", "    continue",
+             "for i in range(19):", "    Dn[z, i] = bo[i, k]",
+             "Rr[z] = bo[19, k]", "Rx[z] = bo[20, k]", "Ry[z] = bo[21, k]", "Rz[z] = bo[22, k]", "Rn[z] = bo[23, k]"]
+    head = _STEP_HEAD.replace("#C#", repr([int(c) for c in C.ravel()])).replace("#W#", repr([float(w) for w in W]))
+    return _fill(head, B, BUFFERS=[" " * 8 + ln for ln in ("fin = np.empty(19)", "bi = np.empty((19, #B#))",
+                                                           "bo = np.empty((24, #B#))")],
+                 ROWS=rows, SKIP="t == 1", PULL=pull, COLLIDE=[P + ln for ln in L], WRITE=[P + ln for ln in write])
+
+
+_STEP_T_HEAD = '''import numpy as np
+import numba as nb
+
+U = np.uint64
+
+
+@nb.njit(parallel=True, fastmath=True, cache=True)
+def kernel(g, gn, tnode, ux, uy, uz, alpha, tfix, qsrc, qvel, periodic, T, nut, prt_inv):
+    nx, ny, nz = tnode.shape
+    p0 = periodic[0] != 0
+    p1 = periodic[1] != 0
+    p2 = periodic[2] != 0
+    q0 = qvel[0]
+    q1 = qvel[1]
+    q2 = qvel[2]
+#BODY#'''
+
+
+def _step_t_source(B=_BLOCK):
+    """Source of the heat step: `step_t` of _kernels in the same three
+    passes. The buffer carries each packed cell's velocity, diffusivities
+    and source beside its 7 populations, so the collision reads nothing
+    else."""
+    C, W, OPP = C7, W7, OPP7
+    P = " " * 20
+    rows = _row_views(C, "tnode", {"G": "g", "X": "tfix"})
+    rows += [" " * 12 + ln for ln in ("Dn = gn[x, y]", "Rx = ux[x, y]", "Ry = uy[x, y]", "Rz = uz[x, y]",
+                                      "Ra = alpha[x, y]", "Rn = nut[x, y]", "Rq = qsrc[x, y]", "Rt = T[x, y]")]
+    pull = [f"{P}bi[0, k] = Goo[z, 0]"]
+    for i in range(1, 7):
+        cx, cy, cz = (int(c) for c in C[i])
+        v = _NAME[cx] + _NAME[cy]
+        sz, oob = _ZI[cz]
+        w2 = repr(2.0 * float(W[i]))
+        # an adiabatic wall (1, or a closed face) sends the population back; an isothermal one (2)
+        # sends it back reversed about the wall temperature
+        pull += [f"{P}s = N{v}[{sz}]", f"{P}a_ = Goo[z, {int(OPP[i])}]",
+                 f"{P}if {oob}s == 1:", f"{P}    bi[{i}, k] = a_",
+                 f"{P}elif s == 2:", f"{P}    bi[{i}, k] = -a_ + {w2} * X{v}[{sz}]",
+                 f"{P}else:", f"{P}    bi[{i}, k] = G{v}[{sz}, {i}]"]
+    pull += [f"{P}bi[7, k] = Rx[z]", f"{P}bi[8, k] = Ry[z]", f"{P}bi[9, k] = Rz[z]", f"{P}bi[10, k] = Ra[z]",
+             f"{P}bi[11, k] = Rn[z]", f"{P}bi[12, k] = Rq[z]"]
+    L = [f"g{i} = bi[{i}, k]" for i in range(7)]
+    L += ["vx = bi[7, k]", "vy = bi[8, k]", "vz = bi[9, k]",
+          "Tl = " + " + ".join(f"g{i}" for i in range(7)),
+          # odd moments set the diffusivity: molecular plus the flow's subgrid viscosity over a
+          # turbulent Prandtl number
+          "tm = 0.5 + 4.0 * (bi[10, k] + bi[11, k] * prt_inv)",
+          "tp = 0.5 + 0.25 / (tm - 0.5)",             # Lambda = 1/4
+          "om_ = 1.0 / tm", "op = 1.0 / tp",
+          "S = bi[12, k] + q0 * vx + q1 * vy + q2 * vz",
+          f"e0 = {float(W[0])!r} * Tl",
+          f"bo[0, k] = g0 - op * (g0 - e0) + {float(W[0])!r} * S"]
+    for i in range(1, 7, 2):
+        j = i + 1
+        w = repr(float(W[i]))
+        L += ["cu = " + _signed(zip((int(c) for c in C[i]), ("vx", "vy", "vz"))),
+              f"ep = {w} * Tl", f"em = {w} * Tl * 4.0 * cu",
+              f"gp = 0.5 * (g{i} + g{j})", f"gm = 0.5 * (g{i} - g{j})",
+              "dp = op * (gp - ep)", "dm = om_ * (gm - em)",
+              f"bo[{i}, k] = g{i} - dp - dm + {w} * S",
+              f"bo[{j}, k] = g{j} - dp + dm + {w} * S"]
+    L.append("bo[7, k] = Tl")
+    write = ["Tl = bo[7, k]", "if t == 3 or t == 4:",
+             "    # a fixed-temperature node (3) or a zero-gradient outlet (4): equilibrium at the local velocity",
+             "    if t == 3:", "        Tl = Xoo[z]", "    vx = bi[7, k]", "    vy = bi[8, k]", "    vz = bi[9, k]"]
+    for i in range(7):
+        cu = _signed(zip((int(c) for c in C[i]), ("vx", "vy", "vz")))
+        write.append(f"    Dn[z, {i}] = {float(W[i])!r} * Tl * (1.0 + 4.0 * ({cu}))")
+    write += ["else:", "    for i in range(7):", "        Dn[z, i] = bo[i, k]", "Rt[z] = Tl"]
+    return _fill(_STEP_T_HEAD, B, BUFFERS=[" " * 8 + ln for ln in ("bi = np.empty((13, #B#))", "bo = np.empty((8, #B#))")],
+                 ROWS=rows, SKIP="t == 1 or t == 2", PULL=pull, COLLIDE=[P + ln for ln in L],
+                 WRITE=[P + ln for ln in write])
+
+
 def _equilibrium(rho, ux, uy, uz):
-    f = np.empty((19,) + rho.shape, np.float32)
+    f = np.empty(rho.shape + (19,), np.float32)
     usq = ux * ux + uy * uy + uz * uz
     for i in range(19):
         cu = C19[i, 0] * ux + C19[i, 1] * uy + C19[i, 2] * uz
-        f[i] = W19[i] * rho * (1 + 3 * cu + 4.5 * cu * cu - 1.5 * usq)
+        f[..., i] = W19[i] * rho * (1 + 3 * cu + 4.5 * cu * cu - 1.5 * usq)
     return f
 
 
 def _equilibrium_t(T, ux, uy, uz):
-    g = np.empty((7,) + T.shape, np.float32)
+    g = np.empty(T.shape + (7,), np.float32)
     for i in range(7):
         cu = C7[i, 0] * ux + C7[i, 1] * uy + C7[i, 2] * uz
-        g[i] = W7[i] * T * (1 + 4 * cu)
+        g[..., i] = W7[i] * T * (1 + 4 * cu)
     return g
 
 

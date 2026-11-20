@@ -171,6 +171,32 @@ def test_row_step_kernel_matches_the_cell_by_cell_one():
     assert cases == 4 * n and any(L.has_sig for L in t.levels) and (q[q >= 0] != 0.5).any()
 
 
+@pytest.mark.parametrize("periodic", [(False, False, False), (False, True, True)])
+def test_gather_matches_the_cell_by_cell_sum(periodic):
+    """The rim interpolation summed a line at a time is the sum one cell at
+    a time (the same 64 cells and weights), to rounding."""
+    from loadpath.windtunnel import _kernels
+
+    K = _kernels()
+    rng = np.random.default_rng(0)
+    shape = (14, 9, 11)
+    rho = rng.standard_normal(shape).astype(np.float32)
+    u = rng.standard_normal((3,) + shape).astype(np.float32)
+    P = rng.standard_normal((6,) + shape).astype(np.float32)
+    tau = (0.5 + rng.random(shape)).astype(np.float32)
+    off = np.array([3.0, 0.0, 0.0]) if periodic[1] else np.array([3.0, 2.0, 3.0])
+    # child cells whose 4-cell stencils stay inside the parent along closed axes and wrap along periodic ones
+    n = [np.arange(16), np.arange(18) if periodic[1] else np.arange(8), np.arange(22) if periodic[2] else np.arange(10)]
+    gi = np.stack(np.meshgrid(*n, indexing="ij"), -1).reshape(-1, 3).astype(np.int64)
+    per = np.array(periodic)
+    a = np.zeros((len(gi), 11))
+    b = np.zeros((len(gi), 11))
+    K["gather"](rho, u, P, tau, gi, off, per, a)
+    K["gather_cells"](rho, u, P, tau, gi, off, per, b)
+    assert np.abs(b).max() > 1.0
+    assert np.abs(a - b).max() < 1e-12
+
+
 def test_rotor_disk_in_still_air_matches_momentum_theory():
     # an actuator disk in hover passes v_i = sqrt(T / (2 rho A))
     hub = trimesh.creation.icosphere(subdivisions=3, radius=6.0)
