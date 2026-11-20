@@ -26,7 +26,10 @@ c = S.fit_curve(points, closed=True)              # C2, periodic; pencil wobble 
 s = S.fit_surface(grid, poles=(20, 10), uperiodic=True)
 p = S.fair_patch((x0, x1), (z0, z1), pins, soft=soft)   # the fairest height field through pins
 L = S.loft(sections, rails=[silhouette])          # sections warped onto rails, Gordon surface
-cap, err = S.fill([(edge, neighbour_face, "G1")]) # N-sided patch, tangent to its neighbours
+cap, err = S.cap([(edge, neighbour_face, "G2")])  # N-sided patch carrying its neighbours' curvature
+b = S.blend((face_a, edge_a), (face_b, edge_b))   # G2 across a gap; lead=0.7 turns sooner
+holed = S.cut(face, loop)                         # an opening, its edge on the surface
+s2 = S.edit(s, [(0.5, 0.5, (0, 3, 0))], freeze=3) # pull a handle; the surface stays fair
 solid = S.sew_solid([L.face(), cap, ...])
 S.write_step(solid, "skin.step")                  # opens in Fusion, Rhino, SolidWorks
 f = S.sdf(solid, pitch=0.4)                       # exact signed distance, for field pipelines
@@ -46,9 +49,30 @@ f = S.sdf(solid, pitch=0.4)                       # exact signed distance, for f
   its loop until it meets every rail, then surfaces the network of sections
   and rails as a Gordon surface (S = Lu + Lv - T), which interpolates every
   curve.
-- **Fills.** OpenCascade's `BRepFill_Filling` holds a boundary G0 or G1.
-  It cannot hold a bounded edge G2, and `fill` says so rather than quietly
-  building G1.
+- **Fills, to G2.** `cap` (and `fill` with "G2") closes an N-sided
+  boundary with one trimmed B-spline surface that shares each neighbour's
+  position, tangent plane and curvature across the edge. It is the fairest
+  such surface, free in all three coordinates, so a tube's end closes as a
+  dome. G0 and G1 fills still go to OpenCascade's `BRepFill_Filling`, which
+  cannot hold a bounded edge G2.
+- **Blends, to G2.** `blend((face_a, edge_a), (face_b, edge_b))` is one
+  surface across a gap. Every section leaves face a as that face's own
+  curve would and arrives on face b the same way. How far each face's shape
+  reaches into the blend (the lead) is the length that changes the
+  section's curvature least. `lead` scales it, per side.
+- **Openings.** `cut(face, loop)` cuts an opening along a curve projected
+  onto the face, so the new edge lies on the surface exactly, ready for
+  `blend` or `cap`. `hole_edges` lists them.
+- **Edits.** `edit(surface, moves, hold, freeze)` moves a surface by
+  handles with the fairest displacement that does it: a pulled point takes
+  a smooth swell with it and no ripple. `freeze=3` leaves the three pole
+  rows along each side alone, so joins keep their G2.
+- **Two meanings of fair.** `energy="bending"` is the thin plate.
+  `energy="jerk"` is the least change of curvature: a sweep leaves a flat
+  plateau with its curvature growing from zero (peak curvature a third
+  lower, its rate of change a fifth, in the test), and it is what a G2
+  constraint needs. A thin plate's curvature is free to jump where a
+  constraint ends, so it cannot hold one.
 - **Into fields.** `sdf` turns a closed B-rep into a signed distance that
   is exact within a band of the skin. A field model (cuts, shells, halves,
   ducts) then runs unchanged on a surfaced skin, and blends between exact
@@ -120,3 +144,21 @@ fields. Same pitch, same checks, designed grooves left out:
 | Wobble area (lumps, dips, ridges) | 16,100 mm² | 5,600 mm² |
 | Curvature off its smoothed self, RMS | 43 /m | 18 /m |
 | Spots tighter than R 2.5 | 529 mm² | 45 mm² |
+
+## Example: a pod where every join carries curvature
+
+`examples/freeform/pod.py` lofts a body from six sections, closes both
+ends with caps, blends a mount boss into an opening cut in the top, and
+blends a recessed flat seat down from a second opening. Eight faces, a
+closed solid, 17 s. Built tangent-only and then curvature-continuous:
+
+| Largest over every shared edge | G1 | G2 |
+|---|---|---|
+| Gap | 0.0002 mm | 0.0002 mm |
+| Angle between tangent planes | 0.02° | 0.03° |
+| Jump in curvature across the edge | 0.069 /mm | 0.0002 /mm |
+
+Known limits: a cap's boundary has to project onto its best plane as a
+simple loop; `cut` does not cross a periodic surface's seam; the blend's
+lead is found section by section, and between unlike loops (a round post
+on an oval opening) the blend's own curvature still varies round the loop.

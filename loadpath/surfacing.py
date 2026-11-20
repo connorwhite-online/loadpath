@@ -98,36 +98,168 @@ def _curve(poles, degree=3, periodic=False):
     return Geom_BSplineCurve(a, _arr1(k), _arr1(m, "int"), degree, periodic)
 
 
+def _flat_knots(n, degree, periodic):
+    """The flat knot vector of n poles on 0..1: clamped, or (periodic) the
+    uniform knots carried `degree` spans past both ends, whose n + degree
+    functions wrap onto the n poles."""
+    if periodic:
+        return (np.arange(n + 2 * degree + 1) - degree) / n
+    k, m = _knots(n, degree, False)
+    return np.repeat(k, m)
+
+
+def _coxdeboor(T, p, t, deriv=0):
+    """Every degree-p B-spline on the flat knots T at t (len(t), len(T)-p-1),
+    or its derivative of order `deriv` (Cox-de Boor and its derivative
+    recurrence). The last non-empty span is closed on the right."""
+    if deriv > p:
+        return np.zeros((len(t), len(T) - p - 1))
+    if deriv:
+        N = _coxdeboor(T, p - 1, t, deriv - 1)
+        a = T[p:-1] - T[:-p - 1]
+        b = T[p + 1:] - T[1:-p]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ia = np.where(a > 0, p / a, 0.0)
+            ib = np.where(b > 0, p / b, 0.0)
+        return N[:, :-1] * ia - N[:, 1:] * ib
+    nT = len(T)
+    N = np.zeros((len(t), nT - 1))
+    span = np.nonzero(T[1:] > T[:-1])[0]
+    j = span[np.clip(np.searchsorted(T[span], t, side="right") - 1, 0, len(span) - 1)]
+    N[np.arange(len(t)), j] = 1.0
+    for d in range(1, p + 1):
+        a = T[d:-1] - T[:-d - 1]
+        b = T[d + 1:] - T[1:-d]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ia = np.where(a > 0, 1.0 / a, 0.0)
+            ib = np.where(b > 0, 1.0 / b, 0.0)
+        N = (t[:, None] - T[None, :-d - 1]) * ia * N[:, :-1] + (T[None, d + 1:] - t[:, None]) * ib * N[:, 1:]
+    return N
+
+
 def basis(n, degree, periodic, t, deriv=0):
     """(len(t), n) matrix: row a holds every pole's weight at parameter t[a]
-    (deriv 1, 2: the weights of the derivatives). Read from OpenCascade by
-    evaluating a curve with one unit pole at a time, so a fitted net and the
-    surface OpenCascade builds from it agree to the last digit."""
+    (deriv k: the weights of the k-th derivative). The same numbers
+    OpenCascade evaluates for the curve it builds from the poles (checked in
+    the tests against `_basis_occ`), computed here in one vectorized pass."""
     t = np.asarray(t, float)
     key = (n, degree, bool(periodic), deriv, t.tobytes())
     if key in _BASIS_CACHE:
         return _BASIS_CACHE[key]
+    T = _flat_knots(n, degree, periodic)
+    if periodic:
+        N = _coxdeboor(T, degree, np.mod(t, 1.0), deriv)
+        B = np.zeros((len(t), n))
+        for i in range(n + degree):
+            B[:, i % n] += N[:, i]
+    else:
+        B = _coxdeboor(T, degree, np.clip(t, 0.0, 1.0), deriv)[:, :n]
+    if len(_BASIS_CACHE) > 256:
+        _BASIS_CACHE.clear()
+    _BASIS_CACHE[key] = B
+    return B
+
+
+def _basis_occ(n, degree, periodic, t, deriv=0):
+    """`basis` read from OpenCascade itself, one unit pole at a time (slow;
+    the tests hold `basis` to it)."""
     _occ()
     from OCP.gp import gp_Pnt, gp_Vec
+    t = np.asarray(t, float)
     B = np.zeros((len(t), n))
     for j in range(n):
         poles = np.zeros((n, 3))
         poles[j, 0] = 1.0
         c = _curve(poles, degree, periodic)
-        p, v1, v2 = gp_Pnt(), gp_Vec(), gp_Vec()
+        p, v1, v2, v3 = gp_Pnt(), gp_Vec(), gp_Vec(), gp_Vec()
         for a, ta in enumerate(t):
             if deriv == 0:
                 B[a, j] = c.Value(float(ta)).X()
             elif deriv == 1:
                 c.D1(float(ta), p, v1)
                 B[a, j] = v1.X()
-            else:
+            elif deriv == 2:
                 c.D2(float(ta), p, v1, v2)
                 B[a, j] = v2.X()
-    if len(_BASIS_CACHE) > 256:
-        _BASIS_CACHE.clear()
-    _BASIS_CACHE[key] = B
+            else:
+                c.D3(float(ta), p, v1, v2, v3)
+                B[a, j] = v3.X()
     return B
+
+
+def _gram(n, degree, periodic, a, b):
+    """The (n, n) matrix of integrals over 0..1 of (a-th derivative of pole
+    i's weight) x (b-th derivative of pole j's), exact (Gauss points on
+    every knot span). Sparse, banded."""
+    from scipy import sparse
+    key = ("gram", n, degree, bool(periodic), a, b)
+    if key in _BASIS_CACHE:
+        return _BASIS_CACHE[key]
+    T = _flat_knots(n, degree, periodic)
+    br = np.unique(np.clip(T, 0.0, 1.0))
+    x, w = np.polynomial.legendre.leggauss(degree + 1)
+    h = np.diff(br)
+    t = (br[:-1, None] + 0.5 * h[:, None] * (x[None, :] + 1.0)).ravel()
+    wt = (0.5 * h[:, None] * w[None, :]).ravel()
+    Ba = sparse.csr_matrix(basis(n, degree, periodic, t, a))
+    Bb = Ba if a == b else sparse.csr_matrix(basis(n, degree, periodic, t, b))
+    G = (Ba.T @ sparse.diags(wt) @ Bb).tocsr()
+    _BASIS_CACHE[key] = G
+    return G
+
+
+_ENERGY = {"bending": (1.0, 0.0), "jerk": (0.0, 1.0)}
+
+
+def _energy(nu, nv, udeg, vdeg, up, vp, energy="bending", su=1.0, sv=1.0):
+    """The surface map's fairness energy as a sparse quadratic form in the
+    poles (nu*nv square), integrated over the patch in real lengths (the u
+    side `su` mm long, the v side `sv`):
+
+    - "bending": the thin plate, Suu^2 + 2 Suv^2 + Svv^2. Its minimum is the
+      shape a thin elastic sheet takes through the constraints. Curvature
+      itself is free to jump in slope where a constraint ends.
+    - "jerk": the variation of curvature, Suuu^2 + 3 Suuv^2 + 3 Suvv^2 +
+      Svvv^2. Its minimum changes curvature as slowly as the constraints
+      allow, so a sweep leaves a flat plateau with curvature growing from
+      zero and reflections flow through without a bend.
+    - (wb, wj): both, weighted (jerk in mm^2 against bending).
+    """
+    from scipy import sparse
+    wb, wj = _ENERGY[energy] if isinstance(energy, str) else map(float, energy)
+    g = lambda d, a, b: _gram(*((nu, udeg, up) if d == 0 else (nv, vdeg, vp)), a, b)   # noqa: E731
+    E = sparse.csr_matrix((nu * nv, nu * nv))
+    area = su * sv
+    if wb:
+        for (a, b, c) in ((2, 0, 1.0), (1, 1, 2.0), (0, 2, 1.0)):
+            E = E + (wb * c * area / (su ** (2 * a) * sv ** (2 * b))) * sparse.kron(g(0, a, a), g(1, b, b))
+    if wj:
+        for (a, b, c) in ((3, 0, 1.0), (2, 1, 3.0), (1, 2, 3.0), (0, 3, 1.0)):
+            E = E + (wj * c * area / (su ** (2 * a) * sv ** (2 * b))) * sparse.kron(g(0, a, a), g(1, b, b))
+    return E.tocsr()
+
+
+def _solve_sparse(R, rhs, E, hard=None, eps=1e-12):
+    """min |R x - rhs|^2 + x'Ex, with hard rows (H x = h) kept by Lagrange
+    multipliers (a hair of give, so rows that say the same thing twice do
+    not make the system singular; `eps` as an array is each row's own give,
+    1 / its weight: a weighted least-squares row without squaring the
+    system's condition). Sparse throughout."""
+    from scipy import sparse
+    from scipy.sparse.linalg import splu
+    n = E.shape[0]
+    A = (R.T @ R + E).tocsc() if R is not None and R.shape[0] else E.tocsc()
+    b = R.T @ rhs if R is not None and R.shape[0] else np.zeros((n, rhs.shape[1] if rhs is not None else 1))
+    tr = A.diagonal().mean()
+    A = A + (1e-10 * tr) * sparse.identity(n, format="csc")
+    if hard is None or hard[0].shape[0] == 0:
+        return splu(A).solve(np.asarray(b))
+    H, h = sparse.csr_matrix(hard[0]), np.asarray(hard[1], float)
+    m = H.shape[0]
+    hs = abs(H).max() or 1.0
+    give = (eps * hs * hs / tr) * np.ones(m) if np.isscalar(eps) else np.asarray(eps, float)
+    K = sparse.bmat([[A, H.T], [H, -sparse.diags(give)]], format="csc")
+    return splu(K).solve(np.vstack([np.asarray(b), h]))[:n]
 
 
 def _second_difference(n, periodic):
@@ -290,61 +422,34 @@ class Surface:
         return face(self, tol)
 
 
-def _fair_matrices(nu, nv, udeg, vdeg, up, vp, q=None):
-    """The thin-plate bending energy of the surface's map (u, v) -> x, as a
-    quadratic form in the poles: Suu^2 + 2 Suv^2 + Svv^2 integrated over a
-    quadrature grid. Returned as three (m, nu*nv) operators."""
-    q = q or (max(2 * nu, 24), max(2 * nv, 24))
-    tu = (np.arange(q[0]) + 0.5) / q[0]
-    tv = (np.arange(q[1]) + 0.5) / q[1]
-    B0u, B1u, B2u = (basis(nu, udeg, up, tu, d) for d in (0, 1, 2))
-    B0v, B1v, B2v = (basis(nv, vdeg, vp, tv, d) for d in (0, 1, 2))
-    return [np.kron(B2u, B0v), np.sqrt(2.0) * np.kron(B1u, B1v), np.kron(B0u, B2v)], q
-
-
-def _solve(rows, rhs, fair_ops, lam, n, hard=None):
-    """min |rows x - rhs|^2 + lam sum |F x|^2, with hard rows (H x = h) kept
-    exactly by a Lagrange multiplier."""
-    A = rows.T @ rows
-    for F in fair_ops:
-        A = A + lam * (F.T @ F)
-    b = rows.T @ rhs
-    A = A + 1e-10 * np.trace(A) / n * np.eye(n)
-    if hard is None or len(hard[0]) == 0:
-        return np.linalg.solve(A, b)
-    H, h = hard
-    K = np.block([[A, H.T], [H, np.zeros((len(H), len(H)))]])
-    rhs2 = np.vstack([b, h])
-    return np.linalg.lstsq(K, rhs2, rcond=None)[0][:n]
-
-
 def fit_surface(points, poles=(16, 16), uperiodic=False, vperiodic=False, degree=3, fair=1e-5,
-                u=None, v=None):
+                u=None, v=None, energy="bending"):
     """One C2 B-spline surface near a grid of points `points` (mu, mv, 3)
     (rows along u, columns along v; a periodic direction does not repeat
-    its first row). `fair` (relative to the data) weighs the bending energy
+    its first row). `fair` (relative to the data) weighs the fairness
+    energy (`energy`: "bending", "jerk" or weights of both, see `_energy`)
     against the points: 0 follows them as closely as the poles allow, more
     smooths. The fit's deviation is in `.fit`."""
-    _occ()
+    from scipy import sparse
     X = np.asarray(points, float)
     mu, mv, _ = X.shape
     nu, nv = int(poles[0]), int(poles[1])
     u = np.linspace(0, 1, mu, endpoint=not uperiodic) if u is None else np.asarray(u, float)
     v = np.linspace(0, 1, mv, endpoint=not vperiodic) if v is None else np.asarray(v, float)
     Bu, Bv = basis(nu, degree, uperiodic, u), basis(nv, degree, vperiodic, v)
-    R = np.kron(Bu, Bv)
-    F, q = _fair_matrices(nu, nv, degree, degree, uperiodic, vperiodic)
-    lam = fair * (mu * mv) / (q[0] * q[1])
-    P = _solve(R, X.reshape(-1, 3), F, lam, nu * nv).reshape(nu, nv, 3)
+    R = sparse.kron(sparse.csr_matrix(Bu), sparse.csr_matrix(Bv), format="csr")
+    E = _energy(nu, nv, degree, degree, uperiodic, vperiodic, energy)
+    P = _solve_sparse(R, X.reshape(-1, 3), (fair * mu * mv) * E).reshape(nu, nv, 3)
     s = Surface(P, degree, degree, uperiodic, vperiodic)
     d = np.linalg.norm(np.einsum("ai,ijk,bj->abk", Bu, P, Bv) - X, axis=-1)
     s.fit = {"maxDeviation": float(d.max()), "meanDeviation": float(d.mean()), "poles": [nu, nv]}
     return s
 
 
-def fair_patch(x_range, z_range, pins, poles=(24, 24), fair=1e-3, soft=None, degree=3, slopes=None, pin_weight=1e4):
+def fair_patch(x_range, z_range, pins, poles=(24, 24), fair=1e-3, soft=None, degree=3, slopes=None, pin_weight=1e4,
+               energy="bending"):
     """A height field y(x, z) over a rectangle, as one B-spline surface: the
-    fairest surface (least bending) that passes through `pins`, (k, 3)
+    fairest surface that passes through `pins`, (k, 3)
     points (x, y, z) held exactly (or, when there are more of them than a
     quarter of the poles, by `pin_weight`), and near `soft`, (k, 4) points (x, y, z,
     weight). `slopes`, (k, 5) (x, z, dy/dx, dy/dz, weight), holds the
@@ -353,22 +458,27 @@ def fair_patch(x_range, z_range, pins, poles=(24, 24), fair=1e-3, soft=None, deg
     a body's face up to a flat plateau, with no ridge or dip between them
     that the pins do not ask for.
 
+    `energy` says what fairest means (`_energy`): "bending" (least bending:
+    a thin elastic sheet), "jerk" (least change of curvature: the sweep
+    leaves a plateau with its curvature growing from zero, so reflections
+    run through the plateau's edge without a bend; use degree 5 for it), or
+    (wb, wj) for both.
+
     Returns a Surface whose u runs along x, v along z, and whose points are
     (x, y(x, z), z); its `height(x, z)` evaluates y directly (vectorized)."""
-    _occ()
+    from scipy import sparse
     nu, nv = poles
     x0, x1 = map(float, x_range)
     z0, z1 = map(float, z_range)
     U = lambda x: (np.asarray(x, float) - x0) / (x1 - x0)   # noqa: E731
     V = lambda z: (np.asarray(z, float) - z0) / (z1 - z0)   # noqa: E731
-    F, q = _fair_matrices(nu, nv, degree, degree, False, False)
     rows, rhs = [], []
-    hard_H, hard_h = [], []
+    hard = None
     if pins is not None and len(pins):
         pins = np.asarray(pins, float)
         Hb = _rowbasis(nu, nv, degree, U(pins[:, 0]), V(pins[:, 2]))
         if len(pins) <= nu * nv // 4:
-            hard_H, hard_h = Hb, pins[:, 1:2]          # few: held exactly
+            hard = (Hb, pins[:, 1:2])                  # few: held exactly
         else:                                          # many (a plateau's area): more rows than poles, so held by weight
             rows.append(Hb * np.sqrt(pin_weight))
             rhs.append(pins[:, 1:2] * np.sqrt(pin_weight))
@@ -376,26 +486,21 @@ def fair_patch(x_range, z_range, pins, poles=(24, 24), fair=1e-3, soft=None, deg
         soft = np.asarray(soft, float)
         Sb = _rowbasis(nu, nv, degree, U(soft[:, 0]), V(soft[:, 2]))
         sw = np.sqrt(soft[:, 3:4])
-        rows.append(Sb * sw)
+        rows.append(sparse.diags(sw[:, 0]) @ Sb)
         rhs.append(soft[:, 1:2] * sw)
     if slopes is not None and len(slopes):
         sl = np.asarray(slopes, float)
         uu, vv = U(sl[:, 0]), V(sl[:, 1])
-        sw = np.sqrt(sl[:, 4:5])
+        sw = sparse.diags(np.sqrt(sl[:, 4]))
         # d/dx = d/du / (x1 - x0)
         Du = _rowbasis(nu, nv, degree, uu, vv, du=1) / (x1 - x0)
         Dv = _rowbasis(nu, nv, degree, uu, vv, dv=1) / (z1 - z0)
-        rows += [Du * sw, Dv * sw]
-        rhs += [sl[:, 2:3] * sw, sl[:, 3:4] * sw]
-    n = nu * nv
-    R = np.vstack(rows) if rows else np.zeros((0, n))
+        rows += [sw @ Du, sw @ Dv]
+        rhs += [sw @ sl[:, 2:3], sw @ sl[:, 3:4]]
+    R = sparse.vstack(rows).tocsr() if rows else None
     b = np.vstack(rhs) if rhs else np.zeros((0, 1))
-    # scale the fairing in physical units: the energy over the rectangle
-    sx, sz = (x1 - x0), (z1 - z0)
-    Fs = [F[0] / sx ** 2, F[1] / (sx * sz), F[2] / sz ** 2]
-    area_w = sx * sz / (q[0] * q[1])
-    H = (np.asarray(hard_H), np.asarray(hard_h)) if len(hard_H) else None
-    Y = _solve(R, b, Fs, fair * area_w, n, H).reshape(nu, nv)
+    E = _energy(nu, nv, degree, degree, False, False, energy, x1 - x0, z1 - z0)
+    Y = _solve_sparse(R, b, fair * E, hard).reshape(nu, nv)
     # poles: the x and z of a uniform clamped net are not exactly the
     # Greville abscissae, so place them there so x(u) and z(v) are linear
     gu = _greville(nu, degree)
@@ -414,64 +519,42 @@ def fair_patch(x_range, z_range, pins, poles=(24, 24), fair=1e-3, soft=None, deg
 
 
 def _greville(n, degree):
-    k, m = _knots(n, degree, False)
-    flat = np.repeat(k, m)
+    flat = _flat_knots(n, degree, False)
     return np.array([flat[i + 1:i + 1 + degree].mean() for i in range(n)])
 
 
-def _rowbasis(nu, nv, degree, u, v, du=0, dv=0):
-    Bu = basis(nu, degree, False, np.clip(u, 0, 1), du) if du else _basis_fast(nu, degree, np.clip(u, 0, 1))
-    Bv = basis(nv, degree, False, np.clip(v, 0, 1), dv) if dv else _basis_fast(nv, degree, np.clip(v, 0, 1))
-    return (Bu[:, :, None] * Bv[:, None, :]).reshape(len(u), -1)
+def _rowbasis(nu, nv, degree, u, v, du=0, dv=0, up=False, vp=False, vdegree=None):
+    """Sparse (len(u), nu*nv): row a holds every pole's weight at (u[a],
+    v[a]) (du, dv: of that partial derivative)."""
+    from scipy import sparse
+    u, v = np.asarray(u, float), np.asarray(v, float)
+    Bu = sparse.csr_matrix(basis(nu, degree, up, u if up else np.clip(u, 0, 1), du))
+    Bv = sparse.csr_matrix(basis(nv, vdegree or degree, vp, v if vp else np.clip(v, 0, 1), dv))
+    return _rowkron(Bu, Bv)
+
+
+def _rowkron(A, B):
+    """The row-wise Kronecker product of two sparse matrices with the same
+    number of rows."""
+    from scipy import sparse
+    A, B = A.tocsr(), B.tocsr()
+    A.sort_indices()
+    B.sort_indices()
+    m, na, nb = A.shape[0], A.shape[1], B.shape[1]
+    ca, cb = np.diff(A.indptr), np.diff(B.indptr)
+    cnt = ca * cb
+    row = np.repeat(np.arange(m), cnt)
+    start = np.r_[0, np.cumsum(cnt)]
+    k = np.arange(start[-1]) - np.repeat(start[:-1], cnt)
+    cbr = np.maximum(np.repeat(cb, cnt), 1)
+    ia = np.repeat(A.indptr[:-1], cnt) + k // cbr
+    ib = np.repeat(B.indptr[:-1], cnt) + k % cbr
+    return sparse.csr_matrix((A.data[ia] * B.data[ib], (row, A.indices[ia] * nb + B.indices[ib])), shape=(m, na * nb))
 
 
 def _basis_fast(n, degree, t, deriv=0):
-    """Cox-de Boor for a clamped uniform knot vector, vectorized: the same
-    basis `basis` reads from OpenCascade (checked in the tests), fast enough
-    for millions of points."""
-    k, m = _knots(n, degree, False)
-    T = np.repeat(k, m)
-    t = np.clip(np.asarray(t, float), 0.0, 1.0)
-    if deriv:
-        # derivative of degree-p basis from degree p-1 basis
-        Nm = _basis_fast_deg(T, n + 1, degree - 1, t)       # n+1 functions of degree p-1 on the same knots
-        out = np.zeros((len(t), n))
-        for i in range(n):
-            a = T[i + degree] - T[i]
-            b = T[i + degree + 1] - T[i + 1]
-            if a > 0:
-                out[:, i] += degree / a * Nm[:, i]
-            if b > 0:
-                out[:, i] -= degree / b * Nm[:, i + 1]
-        if deriv == 1:
-            return out
-        raise NotImplementedError
-    return _basis_fast_deg(T, n, degree, t)
-
-
-def _basis_fast_deg(T, n, p, t):
-    """n basis functions of degree p on the flat knot vector T (len n + p + 1,
-    or longer: extra trailing functions are ignored)."""
-    nT = len(T)
-    N = np.zeros((len(t), nT - 1))
-    for i in range(nT - 1):
-        if T[i + 1] > T[i]:
-            N[:, i] = (t >= T[i]) & (t < T[i + 1])
-    # t == 1 belongs to the last non-empty span
-    last = max(i for i in range(nT - 1) if T[i + 1] > T[i])
-    N[t >= 1.0, :] = 0.0
-    N[t >= 1.0, last] = 1.0
-    for d in range(1, p + 1):
-        M = np.zeros((len(t), nT - 1 - d))
-        for i in range(nT - 1 - d):
-            a = T[i + d] - T[i]
-            b = T[i + d + 1] - T[i + 1]
-            if a > 0:
-                M[:, i] += (t - T[i]) / a * N[:, i]
-            if b > 0:
-                M[:, i] += (T[i + d + 1] - t) / b * N[:, i + 1]
-        N = M
-    return N[:, :n]
+    """The clamped basis (kept by name for callers): `basis`."""
+    return basis(n, degree, False, np.asarray(t, float), deriv)
 
 
 def _height(s, x, z):
@@ -683,12 +766,21 @@ def fill(boundary, continuity="G1", points=(), degree=3, n_on_curve=15, iteratio
     `boundary`: a list of (edge, support face or None, continuity) or of
     edges (then `continuity` for all, held to the face each edge already
     bounds when one is given as (edge, face)). An edge with a support face
-    is held to it G0 (position) or G1 (tangent plane); one without is a
-    free boundary curve. (OpenCascade's filling cannot hold a boundary G2:
-    surface a region that needs curvature continuity as one surface.) `points`: (k, 3) points the patch
-    passes through. Returns (face, {"G0", "G1", "G2"}: the largest
-    deviation from each constraint, mm / radians)."""
+    is held to it G0 (position), G1 (tangent plane) or G2 (curvature); one
+    without is a free boundary curve. G0 and G1 go to OpenCascade's
+    BRepFill_Filling; that cannot hold a bounded edge G2, so a boundary
+    with any G2 edge is built by `cap` (the variational patch, which also
+    takes G0 and G1 edges and is the fairer of the two). `points`: (k, 3)
+    points the patch passes through (G0/G1 only). Returns (face, {"G0",
+    "G1", "G2"}: the largest deviation from each constraint, mm / radians /
+    1/mm)."""
     _occ()
+    conts = [(it[2] if isinstance(it, tuple) and len(it) > 2 else continuity) for it in boundary]
+    if any(c in ("G2", 2) for c in conts):
+        if len(points):
+            raise ValueError("fill: a G2 fill (cap) takes no interior points")
+        face_, err = cap([(it if isinstance(it, tuple) else (it, None)) for it in boundary], continuity)
+        return face_, {k: err[k] for k in ("G0", "G1", "G2")} | {"G1": float(np.radians(err["G1"]))}
     from OCP import GeomAbs
     from OCP.BRepFill import BRepFill_Filling
     from OCP.gp import gp_Pnt
@@ -702,8 +794,7 @@ def fill(boundary, continuity="G1", points=(), degree=3, n_on_curve=15, iteratio
         else:
             e, sup, c = item, None, continuity
         if c not in _CONT:
-            raise ValueError(f"fill: continuity is G0 or G1 on a boundary, got {c!r} (for G2, surface the region as one "
-                             "surface: fit_surface, network, fair_patch)")
+            raise ValueError(f"fill: continuity is G0, G1 or G2, got {c!r}")
         order = getattr(GeomAbs, _CONT[c])
         if sup is None:
             f.Add(e, GeomAbs.GeomAbs_C0, True)
@@ -771,6 +862,18 @@ def sew_solid(faces, tol=1e-3):
     fx = ShapeFix_Solid(solid)
     fx.Perform()
     return fx.Solid()
+
+
+def sew(faces, tol=1e-3):
+    """Faces (or Surfaces) sewn along their shared edges into one shape (a
+    shell, open or closed), for `surfacequality.edge_continuity`, meshing
+    or STEP. `sew_solid` when they close."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
+    sw = BRepBuilderAPI_Sewing(tol)
+    for f in faces:
+        sw.Add(f.face() if isinstance(f, Surface) else f)
+    sw.Perform()
+    return sw.SewedShape()
 
 
 def mesh(shape, tolerance=0.02, angle=0.1):
@@ -886,3 +989,609 @@ def _sdf_grid(m, lo, hi, p, band):
         out[s:s + 2_000_000] = np.sqrt(np.maximum(d2, 0))
     F[idx] = np.where(inside[idx], -out, out)
     return F.astype(np.float32), lo, p
+
+
+# ---- curvature-continuous blends, caps, cuts and edits -----------------------
+#
+# What follows joins surfaces the way a surfacing artist does: a blend or a
+# cap that carries the neighbours' curvature across the edge (G2), so a
+# reflection runs over the join without a bend, and edits that move a
+# surface and leave it as fair as before.
+
+def _edge_frames(face, edge, s):
+    """Along an edge of a face, at arc-length fractions `s` (0..1): the
+    points P, the face's unit normal N, the unit direction d in the tangent
+    plane square to the edge and pointing out of the face, the second
+    derivative c2 of the face's own curve leaving in that direction (so a
+    curve that starts with d and c2 continues the face G2), and what the
+    face's second fundamental form needs (J: 3D tangent -> uv step, II: its
+    2x2 matrix about N)."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.BRepClass import BRepClass_FaceClassifier
+    from OCP.gp import gp_Pnt, gp_Pnt2d, gp_Vec
+    from OCP.TopAbs import TopAbs_IN
+    ce = BRepAdaptor_Curve(edge)
+    t0, t1 = ce.FirstParameter(), ce.LastParameter()
+    tt = np.linspace(t0, t1, 4001)
+    pts = np.array([[q.X(), q.Y(), q.Z()] for q in (ce.Value(float(a)) for a in tt)])
+    arc = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))]
+    length = float(arc[-1])
+    t = np.interp(np.asarray(s, float), arc / max(length, 1e-30), tt)
+    n = len(t)
+    closed = bool(np.linalg.norm(pts[0] - pts[-1]) < 1e-7 * max(length, 1.0))
+    if face is None:                       # a free curve: position and tangent only
+        Pf, Tf = np.zeros((n, 3)), np.zeros((n, 3))
+        p, tv = gp_Pnt(), gp_Vec()
+        for i, ti in enumerate(t):
+            ce.D1(float(ti), p, tv)
+            Pf[i] = (p.X(), p.Y(), p.Z())
+            Tf[i] = np.array([tv.X(), tv.Y(), tv.Z()]) / max(tv.Magnitude(), 1e-30)
+        zz = np.zeros((n, 3))
+        return {"P": Pf, "T": Tf, "N": zz, "d": zz, "c2": zz, "J": np.zeros((n, 2, 3)), "II": np.zeros((n, 2, 2)),
+                "uv": np.zeros((n, 2)), "length": length, "closed": closed, "polyline": pts}
+    surf = BRep_Tool.Surface_s(face)
+    c2d = BRep_Tool.CurveOnSurface_s(edge, face, 0.0, 0.0)
+    if c2d is None:
+        raise ValueError("the edge does not lie on the face (no curve in the face's parameters)")
+    P, T, N, D, C2 = (np.zeros((n, 3)) for _ in range(5))
+    J, II, UV = np.zeros((n, 2, 3)), np.zeros((n, 2, 2)), np.zeros((n, 2))
+    p, tv = gp_Pnt(), gp_Vec()
+    q, su, sv, suu, svv, suv = gp_Pnt(), gp_Vec(), gp_Vec(), gp_Vec(), gp_Vec(), gp_Vec()
+    v3 = lambda g: np.array([g.X(), g.Y(), g.Z()])   # noqa: E731
+    for i, ti in enumerate(t):
+        ce.D1(float(ti), p, tv)
+        uv = c2d.Value(float(ti))
+        surf.D2(uv.X(), uv.Y(), q, su, sv, suu, svv, suv)
+        Su, Sv, Suu, Svv, Suv = v3(su), v3(sv), v3(suu), v3(svv), v3(suv)
+        nn = np.cross(Su, Sv)
+        nn /= max(np.linalg.norm(nn), 1e-30)
+        tg = v3(tv)
+        tg /= max(np.linalg.norm(tg), 1e-30)
+        d = np.cross(nn, tg)
+        d /= max(np.linalg.norm(d), 1e-30)
+        Ji = np.linalg.pinv(np.column_stack([Su, Sv]))
+        P[i], T[i], N[i], D[i], J[i], UV[i] = v3(q), tg, nn, d, Ji, (uv.X(), uv.Y())
+        II[i] = [[nn @ Suu, nn @ Suv], [nn @ Suv, nn @ Svv]]
+    # which way is out of the face: step in uv from the middle sample
+    k = n // 2
+    w = J[k] @ D[k]
+    ub = [surf.Bounds()[i] for i in range(4)]
+    span = max(min(abs(ub[1] - ub[0]), abs(ub[3] - ub[2])), 1e-9)
+    span = span if np.isfinite(span) and span < 1e50 else 1.0
+    eps = 1e-3 * span / max(np.linalg.norm(w), 1e-30)
+    inside = BRepClass_FaceClassifier(face, gp_Pnt2d(*(UV[k] + eps * w)), 1e-9).State() == TopAbs_IN
+    outside = BRepClass_FaceClassifier(face, gp_Pnt2d(*(UV[k] - eps * w)), 1e-9).State() == TopAbs_IN
+    if inside and not outside:
+        D = -D
+    W = np.einsum("nij,nj->ni", J, D)
+    surf_c2 = np.zeros((n, 3))
+    for i, ti in enumerate(t):
+        surf.D2(UV[i, 0], UV[i, 1], q, su, sv, suu, svv, suv)
+        surf_c2[i] = W[i, 0] ** 2 * v3(suu) + 2 * W[i, 0] * W[i, 1] * v3(suv) + W[i, 1] ** 2 * v3(svv)
+    return {"P": P, "T": T, "N": N, "d": D, "c2": surf_c2, "J": J, "II": II, "uv": UV, "length": length,
+            "closed": closed, "polyline": pts}
+
+
+def _polyline_distance(Q, P):
+    """Distance from each point of Q to the polyline P."""
+    A, B = P[:-1], P[1:]
+    AB = B - A
+    L2 = np.maximum((AB * AB).sum(1), 1e-30)
+    out = np.empty(len(Q))
+    for i in range(0, len(Q), 256):
+        q = Q[i:i + 256]
+        tt = np.clip(np.einsum("qsk,sk->qs", q[:, None, :] - A[None], AB) / L2, 0, 1)
+        d = np.linalg.norm(q[:, None, :] - (A[None] + tt[..., None] * AB[None]), axis=-1)
+        out[i:i + 256] = d.min(1)
+    return out
+
+
+_BEZ3 = np.array([[1 / 5, 1 / 10, 1 / 30], [1 / 10, 2 / 15, 1 / 10], [1 / 30, 1 / 10, 1 / 5]])   # quadratic Bernstein Gram
+
+
+def _section_poles(fa, fb, la, lb, ca, cb):
+    """The six poles of every quintic section from side a to side b, for
+    lead lengths la, lb (mm): position, direction and (for G2) the face's
+    own second derivative at each end."""
+    ka = 1.0 if ca == "G2" else 0.0
+    kb = 1.0 if cb == "G2" else 0.0
+    la, lb = la[..., None], lb[..., None]
+    Q0 = fa["P"] + 0 * la
+    Q1 = Q0 + la * fa["d"] / 5
+    Q2 = Q0 + 2 * la * fa["d"] / 5 + ka * la ** 2 * fa["c2"] / 20
+    Q5 = fb["P"] + 0 * lb
+    Q4 = Q5 + lb * fb["d"] / 5
+    Q3 = Q5 + 2 * lb * fb["d"] / 5 + kb * lb ** 2 * fb["c2"] / 20
+    return np.stack([Q0, Q1, Q2, Q3, Q4, Q5], axis=-2)
+
+
+def _smooth1d(x, closed, passes):
+    x = np.array(x, float)
+    for _ in range(passes):
+        if closed:
+            x = 0.25 * np.roll(x, 1) + 0.5 * x + 0.25 * np.roll(x, -1)
+        else:
+            y = x.copy()
+            y[1:-1] = 0.25 * x[:-2] + 0.5 * x[1:-1] + 0.25 * x[2:]
+            x = y
+    return x
+
+
+def blend(a, b, continuity="G2", lead=1.0, n=24, tol=5e-4, max_n=400):
+    """One surface across the gap between two edges, continuing both faces.
+
+    `a`, `b`: (face, edge), the edge on that face's boundary (or cut into
+    it, `cut`). `continuity`: "G2" (default: position, tangent plane and
+    curvature carried over from each face, so a reflection crosses both
+    joins without a bend), "G1" or "G0", or a pair, one for each side.
+
+    Every section across the blend is a quintic curve that leaves face a
+    as that face's own curve would (same direction, same curvature) and
+    arrives on face b the same way. How far each face's shape reaches into
+    the blend (the lead) is not drawn: it is the length that makes the
+    section change its curvature least (the least integral of its third
+    derivative squared), found for every section and smoothed along the
+    edge. `lead` scales it (a number or a pair): above 1 the faces carry
+    further and the middle tightens, below 1 the blend turns sooner and
+    sits flatter against the gap.
+
+    The edges are walked by arc length, b turned (and, for closed loops,
+    rotated) to line up with a. Returns a Surface (u along the edges, cubic;
+    v across, quintic) with `.fit` = {"G0": the largest gap to either edge,
+    mm, "lead": mean leads, "sections": how many}; sew it between the
+    faces. Sections are added until the gap is under `tol`."""
+    _occ()
+    ca, cb = (continuity, continuity) if isinstance(continuity, str) else continuity
+    for c in (ca, cb):
+        if c not in ("G0", "G1", "G2"):
+            raise ValueError(f"blend: continuity is G0, G1 or G2, got {c!r}")
+    la_s, lb_s = (float(lead), float(lead)) if np.isscalar(lead) else map(float, lead)
+    probe_a = _edge_frames(a[0], a[1], np.linspace(0, 1, 65))
+    probe_b = _edge_frames(b[0], b[1], np.linspace(0, 1, 65))
+    closed = probe_a["closed"] and probe_b["closed"]
+    # how b's walk maps onto a's: direction, and for loops the start
+    Pa, Pb = probe_a["P"][:-1], probe_b["P"][:-1]
+    best = (np.inf, 1, 0.0)
+    for sgn in (1, -1):
+        Q = Pb if sgn == 1 else probe_b["P"][::-1][:-1]
+        for sh in (range(64) if closed else [0]):
+            c = float(np.linalg.norm(Pa - np.roll(Q, -sh, axis=0), axis=1).sum())
+            if not closed:
+                c = float(np.linalg.norm(probe_a["P"] - (probe_b["P"] if sgn == 1 else probe_b["P"][::-1]), axis=1).sum())
+            if c < best[0]:
+                best = (c, sgn, sh / 64.0)
+    _, sgn, shift = best
+    leads = None
+    while True:
+        s = np.linspace(0, 1, n, endpoint=False) if closed else _greville(n, 3)
+        sb = np.mod(s + shift, 1.0) if sgn == 1 else np.mod(1.0 - s - shift, 1.0)
+        if not closed:
+            sb = s if sgn == 1 else 1.0 - s
+        fa, fb = _edge_frames(a[0], a[1], s), _edge_frames(b[0], b[1], sb)
+        if ca == "G0" or cb == "G0":
+            gap = fb["P"] - fa["P"]
+            gdir = gap / np.maximum(np.linalg.norm(gap, axis=1, keepdims=True), 1e-30)
+            if ca == "G0":
+                fa = {**fa, "d": gdir}
+            if cb == "G0":
+                fb = {**fb, "d": -gdir}
+        L = np.linalg.norm(fb["P"] - fa["P"], axis=1)
+        # the lead that changes curvature least, per section
+        g = np.linspace(0.25, 1.75, 13)
+        ka, kb = np.meshgrid(g, g, indexing="ij")
+        la = ka[None] * L[:, None, None]
+        lb = kb[None] * L[:, None, None]
+        Q = _section_poles({k: v[:, None, None, :] for k, v in fa.items() if k in ("P", "d", "c2")},
+                           {k: v[:, None, None, :] for k, v in fb.items() if k in ("P", "d", "c2")}, la, lb, ca, cb)
+        D3 = Q[..., 3:, :] - 3 * Q[..., 2:5, :] + 3 * Q[..., 1:4, :] - Q[..., 0:3, :]
+        en = np.einsum("...ik,ij,...jk->...", D3, _BEZ3, D3).reshape(n, -1)
+        j = en.argmin(1)
+        if leads is None:
+            # found once, on the first (coarse) walk, and smoothed along the
+            # edge; finer walks read it off, so the lead does not ripple
+            leads = (s.copy(), _smooth1d(ka.ravel()[j] * L, closed, 8), _smooth1d(kb.ravel()[j] * L, closed, 8))
+        per = 1.0 if closed else None
+        la = np.interp(s, leads[0], leads[1], period=per) * la_s
+        lb = np.interp(s, leads[0], leads[2], period=per) * lb_s
+        Q = _section_poles(fa, fb, la, lb, ca, cb)                    # (n, 6, 3)
+        B = basis(n, 3, closed, s)
+        poles = np.linalg.solve(B, Q.reshape(n, -1)).reshape(n, 6, 3)
+        sf = Surface(poles, 3, 5, uperiodic=closed)
+        um = np.linspace(0, 1, 4 * n + 1)[:-1] + 0.5 / (4 * n)
+        ga = _polyline_distance(sf(um, np.array([0.0]))[:, 0], probe_a["polyline"]).max()
+        gb = _polyline_distance(sf(um, np.array([1.0]))[:, 0], probe_b["polyline"]).max()
+        if max(ga, gb) <= tol or n >= max_n:
+            break
+        n = min(max_n, int(np.ceil(n * 1.6)))
+    sf.fit = {"G0": float(max(ga, gb)), "lead": [float(la.mean()), float(lb.mean())], "sections": int(n),
+              "continuity": [ca, cb]}
+    return sf
+
+
+def _chain(ends, tol):
+    """Order open edges (by their end points) head to tail round a loop:
+    [(index, reversed)]."""
+    left = list(range(len(ends)))
+    order = [(left.pop(0), False)]
+    tip = ends[order[0][0]][1]
+    while left:
+        dist = [(min(np.linalg.norm(ends[i][0] - tip), np.linalg.norm(ends[i][1] - tip)), i) for i in left]
+        dmin, i = min(dist)
+        if dmin > tol:
+            raise ValueError(f"the boundary edges do not close into one loop (a gap of {dmin:.3g} mm)")
+        rev = np.linalg.norm(ends[i][1] - tip) < np.linalg.norm(ends[i][0] - tip)
+        order.append((i, rev))
+        tip = ends[i][0] if rev else ends[i][1]
+        left.remove(i)
+    return order
+
+
+def _curve2d(points, closed):
+    """A cubic B-spline through 2D points (a curve in a surface's
+    parameters), periodic when closed."""
+    from OCP.Geom2d import Geom2d_BSplineCurve
+    from OCP.gp import gp_Pnt2d
+    from OCP.OCP.collections import Array1_gp_Pnt2d
+    P = np.asarray(points, float)
+    n = len(P)
+    t = np.linspace(0, 1, n, endpoint=False) if closed else _greville(n, 3)
+    C = np.linalg.solve(basis(n, 3, closed, t), P)
+    arr = Array1_gp_Pnt2d(1, n)
+    for i, c in enumerate(C):
+        arr.SetValue(i + 1, gp_Pnt2d(float(c[0]), float(c[1])))
+    k, m = _knots(n, 3, closed)
+    return Geom2d_BSplineCurve(arr, _arr1(k), _arr1(m, "int"), 3, closed), t
+
+
+def _edge_on(surface, points_uv, closed):
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
+    from OCP.BRepLib import BRepLib
+    c2, _ = _curve2d(points_uv, closed)
+    e = BRepBuilderAPI_MakeEdge(c2, surface).Edge()
+    BRepLib.BuildCurves3d_s(e)
+    return e
+
+
+def _area(shape):
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    g = GProp_GProps()
+    BRepGProp.SurfaceProperties_s(shape, g)
+    return float(g.Mass())
+
+
+def cap(boundary, continuity="G2", poles=(20, 20), energy=None, tol=2e-4, max_poles=56, margin=0.2, degree=3,
+        weights=(1e4, 1e3, 1e2),
+        samples=None, lead=1.0, steep=2.0):
+    """An N-sided patch over a closed boundary that carries its neighbours'
+    curvature across: one B-spline surface, trimmed to the boundary.
+
+    `boundary`: [(edge, face)] or [(edge, face, "G0" | "G1" | "G2")], the
+    edges closing one loop, each on the face it bounds. The patch is the
+    fairest surface (`energy`, see `_energy`) that meets every edge in
+    position, shares the neighbour's tangent plane there (G1) and its
+    curvature square to the edge (G2). With position and tangent plane held
+    all along an edge, the curvature along the edge is already shared, so
+    the one direction across it completes curvature continuity.
+
+    The patch is laid over the boundary's best plane (it must project onto
+    that plane as a simple loop) and is free in all three coordinates, so a
+    tube's end closes as a dome that leaves the tube's wall tangent. Poles
+    are added until every edge is met within `tol` mm.
+
+    Returns (face, {"G0" mm, "G1" degrees, "G2" 1/mm: the largest departure
+    from each, measured between the constraint points, "poles"})."""
+    _occ()
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakeWire
+    from scipy import sparse
+    items = []
+    for it in boundary:
+        if not isinstance(it, tuple):
+            it = (it, None)
+        e, f = it[0], it[1] if len(it) > 1 else None
+        c = (it[2] if len(it) > 2 else continuity) if f is not None else "G0"
+        if c not in ("G0", "G1", "G2"):
+            raise ValueError(f"cap: continuity is G0, G1 or G2, got {c!r}")
+        items.append((e, f, c))
+    if energy is None:
+        energy = "jerk" if any(c == "G2" for _, _, c in items) else "bending"
+    lengths = []
+    for e, f, c in items:
+        ce = BRepAdaptor_Curve(e)
+        tt = np.linspace(ce.FirstParameter(), ce.LastParameter(), 200)
+        pts = np.array([[q.X(), q.Y(), q.Z()] for q in (ce.Value(float(a)) for a in tt)])
+        lengths.append(float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum()))
+    total = sum(lengths)
+
+    def frames(per_len):
+        out = []
+        for (e, f, c), ln in zip(items, lengths):
+            m = max(9, int(np.ceil(per_len * ln / total)))
+            fr = _edge_frames(f, e, np.linspace(0, 1, m))
+            if fr["closed"]:
+                fr = {k: (v[:-1] if isinstance(v, np.ndarray) and len(v) == m else v) for k, v in fr.items()}
+            fr["cont"] = c
+            out.append(fr)
+        return out
+
+    probe = frames(120)
+    allP = np.vstack([fr["P"] for fr in probe])
+    c0 = allP.mean(0)
+    _, _, Vt = np.linalg.svd(allP - c0, full_matrices=False)
+    e1, e2 = Vt[0], Vt[1]
+    plane = lambda P: np.column_stack([(P - c0) @ e1, (P - c0) @ e2])     # noqa: E731
+    uvp = plane(allP)
+    lo, hi = uvp.min(0), uvp.max(0)
+    pad = margin * (hi - lo).max()
+    lo, hi = lo - pad, hi + pad
+    su, sv = hi - lo
+    Lc = float(np.sqrt(su * sv))
+    nu, nv = map(int, poles)
+    while True:
+        m_total = int(samples or 5 * (nu + nv))
+        frs = frames(m_total)
+        P = np.vstack([fr["P"] for fr in frs])
+        Nn = np.vstack([fr["N"] for fr in frs])
+        m = len(P)
+        uv = (plane(P) - lo) / (su, sv)
+        # a direction across the boundary in the plane: the edge's tangent, turned
+        evs = []
+        ctr = (plane(P).mean(0) - lo) / (su, sv)
+        off = 0
+        for fr in frs:
+            tp = np.column_stack([fr["T"] @ e1, fr["T"] @ e2])
+            tp /= np.maximum(np.linalg.norm(tp, axis=1, keepdims=True), 1e-9)
+            en_ = np.column_stack([-tp[:, 1], tp[:, 0]])
+            # pointing into the loop (the way the neighbour's face continues)
+            inward = (ctr - uv[off:off + len(en_)]) * (su, sv)
+            en_ *= np.sign((en_ * inward).sum(1) + 1e-12)[:, None]
+            evs.append(en_)
+            off += len(en_)
+        ev = np.vstack(evs)
+        g1 = np.concatenate([np.full(len(fr["P"]), fr["cont"] != "G0") for fr in frs])
+        g2 = np.concatenate([np.full(len(fr["P"]), fr["cont"] == "G2") for fr in frs])
+        rb = lambda du=0, dv=0: _rowbasis(nu, nv, degree, uv[:, 0], uv[:, 1], du, dv) / (su ** du * sv ** dv)   # noqa: E731
+        B0, Bu, Bv, Buu, Buv, Bvv = rb(), rb(1, 0), rb(0, 1), rb(2, 0), rb(1, 1), rb(0, 2)
+        N = nu * nv
+        E1 = _energy(nu, nv, degree, degree, False, False, energy, su, sv)
+        E = sparse.block_diag([E1, E1, E1], format="csr")
+        dot = lambda M, rowsel: sparse.hstack([sparse.diags(Nn[rowsel, k]) @ M[rowsel] for k in range(3)])   # noqa: E731
+        # weights: each kind of row scaled to the energy's own size, then
+        # position far above tangency above curvature
+        es = float(E1.diagonal().mean())
+        nrm = lambda M: max(float(M.multiply(M).sum()) / N, 1e-300)     # noqa: E731
+        w0 = weights[0] * es / nrm(B0)
+        w1 = weights[1] * es / nrm(Bu + Bv)
+        w2 = weights[2] * es / nrm(Buu + Bvv)
+        # rows, each with a right side c0 + lam c1 + lam^2 c2 in the lead lam
+        z = lambda k: np.zeros(k)                                         # noqa: E731
+        rows = [sparse.block_diag([B0, B0, B0])]
+        rhs = [(P.T.reshape(-1), z(3 * m), z(3 * m))]
+        give = [np.full(3 * m, 1.0 / w0)]
+        i1 = np.nonzero(g1)[0]
+        i2 = np.nonzero(g2)[0]
+        Be = sparse.diags(ev[:, 0]) @ Bu + sparse.diags(ev[:, 1]) @ Bv
+        Bee = sparse.diags(ev[:, 0] ** 2) @ Buu + sparse.diags(2 * ev[:, 0] * ev[:, 1]) @ Buv + sparse.diags(ev[:, 1] ** 2) @ Bvv
+        if len(i1):
+            # the patch leaves the edge as the neighbour arrives: across the
+            # boundary its first derivative is the neighbour's own direction
+            # out of its face, lam long
+            # (the direction across the boundary in the plane, lifted into
+            # the neighbour's tangent plane: what the patch's derivative is
+            # when it continues the neighbour as laid out over the plane.
+            # Where the neighbour stands steep to the plane, a tube's wall,
+            # the lift runs away: there it is held to `steep` long, along
+            # the neighbour's own way out.)
+            pn = np.cross(e1, e2)
+            e3 = np.outer(ev[:, 0], e1) + np.outer(ev[:, 1], e2)
+            npn = Nn @ pn
+            safe = np.where(np.abs(npn) > 1e-9, npn, 1e-9)
+            lift = e3 - ((Nn * e3).sum(1) / safe)[:, None] * pn[None]
+            dall = np.vstack([fr["d"] for fr in frs])
+            lift *= np.sign((lift * dall).sum(1) + 1e-300)[:, None]
+            ln = np.linalg.norm(lift, axis=1)
+            dn = np.where((ln > steep)[:, None], steep * dall, lift)
+            rows += [dot(Bu, i1), dot(Bv, i1), sparse.block_diag([Be[i1]] * 3)]
+            rhs += [(z(len(i1)), z(len(i1)), z(len(i1))), (z(len(i1)), z(len(i1)), z(len(i1))),
+                    (z(3 * len(i1)), dn[i1].T.reshape(-1), z(3 * len(i1)))]
+            give += [np.full(2 * len(i1), 1.0 / w1), np.full(3 * len(i1), 1.0 / w1)]
+        if len(i2):
+            wn = np.einsum("nij,nj->ni", np.vstack([fr["J"] for fr in frs]), dn)
+            kn = np.einsum("ni,nij,nj->n", wn, np.vstack([fr["II"] for fr in frs]), wn)
+            rows.append(dot(Bee, i2))
+            rhs.append((z(len(i2)), z(len(i2)), kn[i2]))
+            give.append(np.full(len(i2), 1.0 / w2))
+        C = sparse.vstack(rows).tocsr()
+        c = np.column_stack([np.concatenate([r[k] for r in rhs]) for k in range(3)])
+        X3 = _solve_sparse(None, np.zeros((0, 3)), E, (C, c), np.concatenate(give))      # X = X3 @ (1, lam, lam^2)
+        lam = float(lead)
+        X = X3 @ np.array([1.0, lam, lam * lam])
+        sf = Surface(np.stack([X[k * N:(k + 1) * N].reshape(nu, nv) for k in range(3)], -1), degree, degree)
+        err = _cap_errors(sf, items, lengths, plane, lo, (su, sv))
+        if err["G0"] <= tol or max(nu, nv) >= max_poles:
+            break
+        nu, nv = min(max_poles, int(np.ceil(nu * 1.4))), min(max_poles, int(np.ceil(nv * 1.4)))
+    # the trimmed face: every boundary edge as a curve in the patch's parameters
+    ends, pcs = [], []
+    for (e, f, c), ln in zip(items, lengths):
+        k = max(12, int(np.ceil(160 * ln / total)))
+        fr = _edge_frames(f, e, np.linspace(0, 1, k, endpoint=False) if _is_closed_edge(e) else _greville(k, 3))
+        pcs.append(((plane(fr["P"]) - lo) / (su, sv), fr["closed"] and _is_closed_edge(e)))
+        ends.append((fr["polyline"][0], fr["polyline"][-1]))
+    mw = BRepBuilderAPI_MakeWire()
+    if len(items) == 1 and pcs[0][1]:
+        loop = pcs[0][0]
+        if _signed_area(loop) < 0:
+            loop = loop[::-1]
+        mw.Add(_edge_on(sf.geom, loop, True))
+    else:
+        order = _chain(ends, 1e-3 * Lc)
+        loop = np.vstack([pcs[i][0][::-1] if rev else pcs[i][0] for i, rev in order])
+        flip = _signed_area(loop) < 0
+        for i, rev in (order[::-1] if flip else order):
+            uvs = pcs[i][0][::-1] if (rev != flip) else pcs[i][0]
+            # the ends exactly at the corner the next edge starts from
+            a_end, b_end = ends[i][1] if (rev != flip) else ends[i][0], ends[i][0] if (rev != flip) else ends[i][1]
+            full = np.vstack([(plane(a_end[None]) - lo) / (su, sv), uvs, (plane(b_end[None]) - lo) / (su, sv)])
+            mw.Add(_edge_on(sf.geom, _resample2d(full, len(uvs)), False))
+    face_ = BRepBuilderAPI_MakeFace(sf.geom, mw.Wire(), True).Face()
+    err["poles"] = [nu, nv]
+    err["surface"] = sf
+    return face_, err
+
+
+def _is_closed_edge(e):
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    ce = BRepAdaptor_Curve(e)
+    a, b = ce.Value(ce.FirstParameter()), ce.Value(ce.LastParameter())
+    return a.Distance(b) < 1e-7
+
+
+def _signed_area(loop):
+    x, y = loop[:, 0], loop[:, 1]
+    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _resample2d(P, n):
+    """n points along a 2D polyline at the Greville parameters of an n-pole
+    cubic (so `_curve2d` interpolates them), ends kept."""
+    t = chord_params(P)
+    g = _greville(n, 3)
+    return np.column_stack([np.interp(g, t, P[:, k]) for k in range(2)])
+
+
+def _cap_errors(sf, items, lengths, plane, lo, size):
+    """How well a cap meets its boundary, measured between its constraint
+    points: gap (mm), angle between tangent planes (degrees), jump in the
+    curvature square to the edge (1/mm)."""
+    g0 = g1 = g2 = 0.0
+    nu, nv, _ = sf.poles.shape
+    for (e, f, c) in items:
+        fr = _edge_frames(f, e, (np.arange(97) + 0.5) / 97)
+        uv = (plane(fr["P"]) - lo) / size
+        D = {k: (_rowbasis(nu, nv, sf.udeg, uv[:, 0], uv[:, 1], *k) @ sf.poles.reshape(-1, 3)) / (size[0] ** k[0] * size[1] ** k[1])
+             for k in ((0, 0), (1, 0), (0, 1), (2, 0), (1, 1), (0, 2))}
+        g0 = max(g0, float(np.linalg.norm(D[0, 0] - fr["P"], axis=1).max()))
+        if c == "G0":
+            continue
+        n = np.cross(D[1, 0], D[0, 1])
+        n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-30)
+        g1 = max(g1, float(np.degrees(np.arccos(np.clip(np.abs((n * fr["N"]).sum(1)), -1, 1))).max()))
+        if c != "G2":
+            continue
+        # the cap's curvature in the neighbour's direction d, against the neighbour's
+        Jc = np.stack([np.linalg.pinv(np.column_stack([a, b])) for a, b in zip(D[1, 0], D[0, 1])])
+        w = np.einsum("nij,nj->ni", Jc, fr["d"])
+        sgn = np.sign((n * fr["N"]).sum(1))
+        kc = (w[:, 0] ** 2 * (n * D[2, 0]).sum(1) + 2 * w[:, 0] * w[:, 1] * (n * D[1, 1]).sum(1)
+              + w[:, 1] ** 2 * (n * D[0, 2]).sum(1)) * sgn
+        wn = np.einsum("nij,nj->ni", fr["J"], fr["d"])
+        kn = np.einsum("ni,nij,nj->n", wn, fr["II"], wn)
+        g2 = max(g2, float(np.abs(kc - kn).max()))
+    return {"G0": g0, "G1": g1, "G2": g2}
+
+
+def cut(face_, loop, keep="outside", n=None):
+    """An opening cut into a face along a closed curve lying on (or near)
+    it: `loop`, (k, 3) points round the opening, is projected onto the
+    face's surface and interpolated there, so the new edge lies on the
+    surface exactly. keep="outside" returns the face with the hole,
+    "inside" the piece cut out, "both" the pair. The hole's edge is the
+    new face's last edge (`boundary_edges(...)[-1]`, or `hole_edge`), ready
+    for `blend` or `cap`."""
+    _occ()
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakeWire
+    from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
+    from OCP.gp import gp_Pnt
+    from OCP.TopoDS import TopoDS
+    f = face_.face() if isinstance(face_, Surface) else face_
+    surf = BRep_Tool.Surface_s(f)
+    L = np.asarray(loop, float)
+    if np.linalg.norm(L[0] - L[-1]) < 1e-9:
+        L = L[:-1]
+    L = resample(L, int(n or max(24, min(len(L), 96))), closed=True)
+    uv = np.zeros((len(L), 2))
+    pr = GeomAPI_ProjectPointOnSurf()
+    for i, p in enumerate(L):
+        pr.Init(gp_Pnt(*map(float, p)), surf)
+        if pr.NbPoints() == 0:
+            raise ValueError("cut: a loop point does not project onto the face")
+        uv[i] = pr.LowerDistanceParameters()
+    if _signed_area(uv) < 0:
+        uv = uv[::-1]
+    e = _edge_on(surf, uv, True)
+    inner = BRepBuilderAPI_MakeFace(surf, BRepBuilderAPI_MakeWire(e).Wire(), True).Face()
+    mf = BRepBuilderAPI_MakeFace(f)
+    mf.Add(TopoDS.Wire(BRepBuilderAPI_MakeWire(e).Wire().Reversed()))
+    outer = mf.Face()
+    if keep == "inside":
+        return inner
+    if keep == "both":
+        return outer, inner
+    return outer
+
+
+def hole_edges(face_):
+    """The edges of a face's inner wires (its openings), one list per hole."""
+    from OCP.BRepTools import BRepTools, BRepTools_WireExplorer
+    from OCP.TopAbs import TopAbs_WIRE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+    outer = BRepTools.OuterWire_s(face_)
+    out = []
+    ex = TopExp_Explorer(face_, TopAbs_WIRE)
+    while ex.More():
+        w = TopoDS.Wire(ex.Current())
+        if not w.IsSame(outer):
+            we, es = BRepTools_WireExplorer(w, face_), []
+            while we.More():
+                es.append(we.Current())
+                we.Next()
+            out.append(es)
+        ex.Next()
+    return out
+
+
+def edit(s, moves, hold=(), freeze=2, energy="bending"):
+    """Move a surface by handles and leave it as fair as it was.
+
+    `moves`: [(u, v, (dx, dy, dz))], points of the surface (by parameter)
+    and where each should go. `hold`: [(u, v)], points that must stay. The
+    change is the fairest one that does it: the displacement field with the
+    least `energy` (`_energy`) through the handles, so a pulled point takes
+    a smooth swell of surface with it and no ripple, and what was fair
+    stays fair. `freeze`: how many pole rows along each open side stay
+    exactly as they are (2 keeps the surface's position and tangent there,
+    3 its curvature too, so joins made with `blend`/`cap` keep their
+    continuity; 0 lets the sides move). Returns a new Surface; `.fit`
+    reports the largest handle miss."""
+    from scipy import sparse
+    nu, nv, _ = s.poles.shape
+    N = nu * nv
+    E = _energy(nu, nv, s.udeg, s.vdeg, s.uperiodic, s.vperiodic, energy)
+    free = np.ones((nu, nv), bool)
+    if freeze:
+        if not s.uperiodic:
+            free[:freeze], free[-freeze:] = False, False
+        if not s.vperiodic:
+            free[:, :freeze], free[:, -freeze:] = False, False
+    idx = np.nonzero(free.ravel())[0]
+    pts = [(m[0], m[1], np.asarray(m[2], float)) for m in moves] + [(h[0], h[1], np.zeros(3)) for h in hold]
+    u = np.array([p[0] for p in pts], float)
+    v = np.array([p[1] for p in pts], float)
+    d = np.array([p[2] for p in pts], float)
+    Bu = sparse.csr_matrix(basis(nu, s.udeg, s.uperiodic, np.mod(u, 1.0) if s.uperiodic else u))
+    Bv = sparse.csr_matrix(basis(nv, s.vdeg, s.vperiodic, np.mod(v, 1.0) if s.vperiodic else v))
+    H = _rowkron(Bu, Bv)[:, idx]
+    Ef = E[idx][:, idx]
+    dP = np.zeros((N, 3))
+    dP[idx] = _solve_sparse(None, np.zeros((0, 3)), Ef, (H, d))
+    out = Surface(s.poles + dP.reshape(nu, nv, 3), s.udeg, s.vdeg, s.uperiodic, s.vperiodic)
+    out.fit = {"handleError": float(np.linalg.norm(H @ dP[idx] - d, axis=1).max()) if len(pts) else 0.0}
+    for k in ("x_range", "z_range"):
+        if hasattr(s, k):
+            setattr(out, k, getattr(s, k))
+    return out
