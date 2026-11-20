@@ -79,10 +79,17 @@ envelope cannot meet, a space in pieces) answered with a long run and
 wrong advice; one is a rule applied as a veto; one is a part that existed
 and was thrown away. The seventh (the VESA plate) is a real modelling gap.
 
-### After the first fixes (re-run in progress: 7 of 11 so far)
+### After two rounds of fixes (all 11 re-run)
+
+First try 7 of 11 (cold 3), a passing part 6 of 11 (cold 4), clean check
+10 of 11 (cold 7).
 
 | Part | Cold | With the fixes |
 |---|---|---|
+| drawer pull | passes, 11.2 g, 17 min | passes, 10.5 g, 19 min |
+| tablet stand | passes, 47.1 g, 16 min | passes, 29.3 g, 16 min |
+| pipe saddle clamp | passes, 6.7 g, 14 min | passes, 5.9 g, 24 min |
+| caster fork | passes, 20.6 g, 8 check warnings | passes, 18.9 g, clean check, 51 min |
 | corner bracket | no part | passes, 10.3 g, tet-confirmed margin 1.08, 31 min |
 | VESA plate | two straps | passes, one piece, 13.5 g, 30 min |
 | hinge leaf | two pieces, SF 0 | one piece; told in 3 min the solid block reads SF 0.83 for 3 |
@@ -91,20 +98,40 @@ and was thrown away. The seventh (the VESA plate) is a real modelling gap.
 | action-camera mount | wrong advice | told in 3 min: the envelope carries 32% of the load, peak at the slots |
 | pipe clamp, short envelope | not diagnosed | `check` says the space is in two pieces before the run |
 
-Read with care: this is one run per part, on fixes made after seeing the
-cold results (general causes, but chosen with these failures in view). The
-two parts that now pass took about 30 minutes each, twice their cold runs.
-Most of that is the ordinary search going on to lighter parts once one
-passes (the bracket: 12 outcomes from 19.8 g down to 10.3 g, where the cold
-run stopped after 5 that failed); the supports decision added a screening
-pass and two more outcomes. The split was not timed, and these runs shared
-the machine with others and one was resumed after a restart, so the minutes
-are rough. On the corner bracket a coarse
-screening read of the delivered part gave SF 1.5 where the tet check gives
-2.69: the spread between readings (gap 7) is not closed. Four parts (drawer
-pull, tablet stand, caster fork, pipe clamp) had not been re-run when this
-was written; the run history in `loadpath/evals/heldout/README.md` is kept
-current.
+Read with care. This is one run per part, on fixes made after seeing the
+cold results (general causes, but chosen with these failures in view), on a
+machine shared with other runs, so the minutes are rough. Eight parts ran
+on the first round's code (main ceaa9f7); the drawer pull, tablet stand and
+pipe clamp on the second round's (main d4eed7e).
+
+What the re-run itself showed:
+
+- **A regression, found and fixed.** On the first round's code the drawer
+  pull passed at 17.8 g, heavier than cold. Eight of its twelve designs
+  (five of nine in the cold run) were refused as unsound meshes: the surface
+  smoothing put vertices next to a keep-out back where they started, eased
+  over two rings, and where the smoothing had moved the surface further
+  than its edges are long (the pocket at the blind end of a tapped hole)
+  the surface folded through itself. The first round's longer search met
+  more of them. The blend now eases over the shift it undoes
+  (`reconstruct._ease_over_shift`); all twelve mesh sound and the part is
+  10.5 g.
+- **Where the minutes go.** Timed on a shelf bracket, the supports decision
+  was a quarter of the run (456 s), most of it a self-supporting search the
+  screen already showed could not win; it now runs only where it can
+  (78 s, same part). The rest of a 20 to 30 minute run is the ordinary
+  search going on to lighter parts once one passes, and on the pipe clamp
+  the constrained method at a fine grid (about 460 s a pass, repeated while
+  the tet margin is above 1.12).
+- **Impossible goals on small studies** are now read on the solid block
+  before the parallel searches start (545 s to 47 s on an impossible shelf
+  bracket). The four above were timed before that.
+- **Readings still spread.** The corner bracket's coarse screen read SF 1.5
+  where the tet check gives 2.69, and the drawer pull's designs at 5.9% and
+  6.7% volume read SF 6.3 and 2.35 (gap 7).
+- The four parts that are told what their envelope carries are not passes.
+  Whether those limits are the part's or the model's (a bore held as if
+  glued, a sharp inside corner) is gap 7, still open.
 
 ## Gaps, ranked by how many users they hit
 
@@ -120,7 +147,8 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 5 | A design space in separate pieces runs for minutes and passes or fails without saying so | 1 | 1 of 11, common with keep-outs through thin envelopes | **Fixed**: flagged by `check` before the run |
 | 6 | A part in pieces: the search adds material, which never joins pieces that do not need each other | 5 | 1 of 11, any plate or frame with paired mounts | **Partly**: the search stops and says which load is missing. Open: the load that makes a part one piece (being carried, assembly) is not modelled |
 | 7 | The safety factor is set at an interface, not by the shape: a bore held as if glued, a keep-out's inside corner, a slot | 2 | 3 of 11, every part with a bore or a throat | **Open, and not yet understood**: the solid block's peak sits at an interface in each case. Whether that peak is the part's or the model's is not established here. A sharp corner's stress is already read over a material length (failure.py), so it may be real and the answer is a radius in the study. A bore held rigidly all round is a known simplification (docs/PHYSICS.md, open item 1) |
-| 8 | Small parts take 5 to 17 minutes | 8 | all | **Open**: the envelope bound first (seconds) would stop the impossible ones; coarse-first search for the rest |
+| 8 | Small parts take 5 to 17 minutes | 8 | all | **Partly**: an impossible goal is read on the solid block first (under a minute on small studies); the supports decision searches only where it can win. Open: 16 to 50 minutes for a part that passes, most of it the search for lighter parts and the constrained method's passes |
+| 8b | A sound design thrown away because its mesh folds next to a keep-out | 5 | 1 of 11 seen (8 of its 12 designs), any part with a blind tapped hole | **Fixed**: the smoothing's blend back from a keep-out eases over the shift it undoes |
 | 9 | Joint capacity is not checked: bolt slip, thread strip, insert pull-out, clamp force on a tube | 2 | most bolted parts | **Open** |
 | 10 | The governing limit is not named up front (stiffness, strength, minimum wall) | 3 | 2 of 11 | **Partly**: the bound note names it after two failed tries; should be in `check` |
 | 11 | Enclosure for a common board from a sentence: placement fails with an error naming the wrong component, and is slow | 1, 7 | every enclosure user | **Open** |
