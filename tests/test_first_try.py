@@ -150,6 +150,32 @@ def test_a_part_in_pieces_gets_more_material_once():
     assert not _pieces_again([0.30], 0.39, True), "a search that has a passing part was stopped"
 
 
+def test_the_self_supporting_search_runs_only_where_the_screen_says_it_can_win():
+    """Deciding supports by cost must not cost a second search that the
+    screen already shows cannot win."""
+    import copy
+    from types import SimpleNamespace as NS
+
+    from loadpath import orient
+
+    st = study_from_dict(_clamp(29))
+    res = NS(study=st, best=0, outcomes=[NS(volume_fraction=0.2, mesh=None)])
+    real = orient.choose_build_direction
+    try:
+        for ss_cost, runs in ((60.0, 0), (9.0, 1)):
+            rows = [{"direction": "+y", "overhangs": True, "designed": True, "makeCost": ss_cost, "safetyFactor": 1.25},
+                    {"direction": "+y", "overhangs": False, "designed": True, "makeCost": 12.0}]
+            orient.choose_build_direction = lambda *a, **k: {"candidates": rows, "study": st}
+            calls = []
+            out = orient.settle_supports(st, copy.copy(res), lambda s2: calls.append(s2) or NS(best=None, study=s2))
+            assert len(calls) == runs, (ss_cost, len(calls))
+            if runs:   # ...and it starts from the screen's reading: SF 1.25 for 2.5 at 20% doubles to 40%
+                assert abs(calls[0].goal.volume_fraction - 0.4) < 1e-9, calls[0].goal
+            assert out.study.raw["supportDecision"]["rerun"] is bool(runs)
+    finally:
+        orient.choose_build_direction = real
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 
