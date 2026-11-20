@@ -2008,7 +2008,7 @@ STUDY_SCHEMA = {
                                                          "searches up to 30k cells with no pitch given, else 1."}},
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
-        "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},
+        "gravity": {**_VEC3, "description": "[x, y, z] in m/s² (down at 1 g is [0, 0, -9.81]): the part's own weight in every load case"},
         "vibration": _VIBRATION,
         "inertiaRelief": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
                               "masses": {"type": "array", "items": {

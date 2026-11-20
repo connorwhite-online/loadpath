@@ -117,9 +117,11 @@ def _fraction(shapes: list[Shape], centers: np.ndarray, pitch: float) -> np.ndar
 
 def cell_cap(study: Study) -> int:
     """The most cells a study's grid may have: maxElements, or up to 4x it
-    for the constrained method, whose members need 2.5 cells across (see
-    choose_pitch)."""
+    for the constrained method, whose members need 2.5 cells across, and
+    for a study with a pinned wall, which needs two (see choose_pitch)."""
     if study.goal.method == "constrained" and study.min_member:
+        return 4 * int(study.max_elements)
+    if study.shells:
         return 4 * int(study.max_elements)
     return int(study.max_elements)
 
@@ -160,6 +162,15 @@ def choose_pitch(study: Study) -> float:
             # SF 1.7) and the four land at 29.2-30.1 g, in about 4x the time.
             # Up to 4x maxElements cells for it, no more.
             pitch = min(pitch, max(float(study.min_member) / 2.5, budget / 4.0 ** (1.0 / 3.0)))
+    if study.shells:
+        # A wall the study pins (a skin, a duct's or plenum's wall) carries
+        # by bending, and under two cells across it bends too stiffly on the
+        # grid (see the check warning): the wall the study drew sets the
+        # cell, as the member does for the constrained method, up to the
+        # same 4x maxElements cells. Every packaged study with such a wall
+        # set its pitch by hand to get this.
+        thin = min(float(t) for _, t in study.shells)
+        pitch = min(pitch, max(thin / 2.0, budget / 4.0 ** (1.0 / 3.0)))
     return pitch
 
 

@@ -219,6 +219,30 @@ def test_a_peak_on_a_keep_outs_square_edge_is_named_as_the_notch_to_round():
     assert "square edge" not in note, "no grid given: nothing to hold the peak against"
 
 
+def test_a_pinned_wall_sets_the_cell_when_the_study_did_not():
+    """A lid with a 1.5 mm skin at a 20k budget: the grid comes out two
+    cells across the skin and check has nothing to say about it; an
+    explicit pitch is left alone, and a wall too thin for four times the
+    budget still warns."""
+    from loadpath.domain import build_domain
+
+    def lid(skin, **res):
+        return {"designSpace": [_box([-30, -20, 0], [30, 20, 9])], "skin": {"thickness": skin, "open": ["-z"]},
+                "supports": [{"shape": _box([-30, -20, -0.5], [-24, 20, 0.3])},
+                             {"shape": _box([24, -20, -0.5], [30, 20, 0.3])}],
+                "loads": [{"shape": _cyl([0, 0, 8.8], "z", 0.8, 6), "force": [0, 0, -60]}],
+                "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2},
+                "resolution": res or {"maxElements": 20000}}
+
+    thin = lambda r: [w for w in r["warnings"] if "cells thick" in w or "two cells" in w]  # noqa: E731
+    d = build_domain(study_from_dict(lid(1.5)))
+    assert d.pitch <= 0.75 + 1e-9 and d.n_elem <= 80000, (d.pitch, d.n_elem)
+    assert not thin(check_study(lid(1.5)))
+    assert abs(build_domain(study_from_dict(lid(1.5, pitch=1.2))).pitch - 1.2) < 1e-9
+    assert thin(check_study(lid(1.5, pitch=1.2)))
+    assert thin(check_study(lid(0.6)))
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 

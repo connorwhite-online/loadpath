@@ -1,0 +1,237 @@
+{
+ "id": "wall-box-base-pla",
+ "batch": 2,
+ "brief": "The base of a small electronics box in PLA (FDM, open side up, layers along Z), screwed to a wall. The wall is the plane z = 0; the box is 100 x 70 mm and 28 mm deep (x = -50 to 50, y = -35 to 35, z = 0 to 28), open at z = 28 where a lid goes on. Two M4 screws go through the floor into the wall at x = -30 and 30, y = 0. A 180 g board (85 x 56 mm) sits on four posts 6 mm across at x = +-38, y = +-23, post tops at z = 8, and the space above it (x = -44 to 44, y = -30 to 30, z = 8 to 28) stays empty for the board and its parts. The outside is a closed 2 mm skin. The box can be knocked: the board's weight at 5 g in any direction, and a cable coming out of the middle of the -y side wall can be tugged with 50 N in any direction. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "enclosure",
+  "box",
+  "skin",
+  "fdm",
+  "fasteners",
+  "any-direction"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -50,
+     -35,
+     0
+    ],
+    "max": [
+     50,
+     35,
+     28
+    ]
+   }
+  ],
+  "skin": {
+   "thickness": 2,
+   "open": [
+    "+z"
+   ]
+  },
+  "preserve": [
+   {
+    "id": "posts",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        -38,
+        -23,
+        5
+       ],
+       "axis": "z",
+       "length": 6,
+       "r": 3
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -38,
+        23,
+        5
+       ],
+       "axis": "z",
+       "length": 6,
+       "r": 3
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        38,
+        -23,
+        5
+       ],
+       "axis": "z",
+       "length": 6,
+       "r": 3
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        38,
+        23,
+        5
+       ],
+       "axis": "z",
+       "length": 6,
+       "r": 3
+      }
+     ]
+    }
+   },
+   {
+    "id": "gland",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      -33,
+      16
+     ],
+     "axis": "y",
+     "length": 4,
+     "r": 6
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "board-room",
+    "shape": {
+     "type": "box",
+     "min": [
+      -44,
+      -30,
+      8
+     ],
+     "max": [
+      44,
+      30,
+      29
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "cable",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      -32,
+      16
+     ],
+     "axis": "y",
+     "length": 10,
+     "r": 3
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "w1",
+    "size": "M4",
+    "seat": [
+     -30,
+     0,
+     3
+    ],
+    "direction": "-z",
+    "grip": 3,
+    "end": "face",
+    "driver": 30
+   },
+   {
+    "id": "w2",
+    "size": "M4",
+    "seat": [
+     30,
+     0,
+     3
+    ],
+    "direction": "-z",
+    "grip": 3,
+    "end": "face",
+    "driver": 30
+   }
+  ],
+  "supports": [
+   {
+    "region": "w1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "w2-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -50,
+      -35,
+      -0.5
+     ],
+     "max": [
+      50,
+      35,
+      0.3
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "knock",
+    "loads": [
+     {
+      "region": "posts",
+      "force": [
+       0,
+       0,
+       -8.8
+      ],
+      "direction": "any"
+     }
+    ]
+   },
+   {
+    "name": "cable-tug",
+    "loads": [
+     {
+      "region": "gland",
+      "force": [
+       0,
+       -50,
+       0
+      ],
+      "direction": "any"
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "wall-box-base-pla",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

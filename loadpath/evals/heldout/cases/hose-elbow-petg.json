@@ -1,0 +1,243 @@
+{
+ "id": "hose-elbow-petg",
+ "batch": 2,
+ "brief": "A 90 degree hose elbow in PETG (FDM, layers along Z) for shop air at 2 bar gauge. The bore is 12 mm: it comes in along X from x = -30 to the corner at the origin, then goes up along Z to z = 34. The inlet end has a flange on the plane x = -30 (y = -16 to 16, z = -16 to 16, 5 mm thick) bolted to a manifold with four M4 screws at y, z = +-11. The outlet is a 16 mm hose barb, the top 14 mm of the vertical leg. Keep the part inside x = -30 to 12, y = -16 to 16, z = -16 to 34. The hose can tug the barb sideways with 40 N in any direction. Safety factor 3 on the pressure, 2 on the tug.",
+ "attachments": [],
+ "tags": [
+  "duct",
+  "pressure",
+  "fdm",
+  "fasteners",
+  "any-direction"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -30,
+     -16,
+     -16
+    ],
+    "max": [
+     12,
+     16,
+     34
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "flange",
+    "shape": {
+     "type": "box",
+     "min": [
+      -30,
+      -16,
+      -16
+     ],
+     "max": [
+      -25,
+      16,
+      16
+     ]
+    }
+   },
+   {
+    "id": "barb",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      27
+     ],
+     "axis": "z",
+     "length": 14,
+     "r": 8
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "air",
+    "wall": 2,
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -31,
+        0,
+        0
+       ],
+       "p1": [
+        0,
+        0,
+        0
+       ],
+       "r": 6
+      },
+      {
+       "type": "sphere",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "r": 6
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0,
+        0,
+        0
+       ],
+       "p1": [
+        0,
+        0,
+        35
+       ],
+       "r": 6
+      }
+     ]
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "f0",
+    "size": "M4",
+    "seat": [
+     -25,
+     -11,
+     -11
+    ],
+    "direction": "-x",
+    "grip": 5,
+    "end": "face",
+    "driver": 20
+   },
+   {
+    "id": "f1",
+    "size": "M4",
+    "seat": [
+     -25,
+     11,
+     -11
+    ],
+    "direction": "-x",
+    "grip": 5,
+    "end": "face",
+    "driver": 20
+   },
+   {
+    "id": "f2",
+    "size": "M4",
+    "seat": [
+     -25,
+     -11,
+     11
+    ],
+    "direction": "-x",
+    "grip": 5,
+    "end": "face",
+    "driver": 20
+   },
+   {
+    "id": "f3",
+    "size": "M4",
+    "seat": [
+     -25,
+     11,
+     11
+    ],
+    "direction": "-x",
+    "grip": 5,
+    "end": "face",
+    "driver": 20
+   }
+  ],
+  "supports": [
+   {
+    "region": "f0-bore",
+    "fix": "yz"
+   },
+   {
+    "region": "f1-bore",
+    "fix": "yz"
+   },
+   {
+    "region": "f2-bore",
+    "fix": "yz"
+   },
+   {
+    "region": "f3-bore",
+    "fix": "yz"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -30.5,
+      -16,
+      -16
+     ],
+     "max": [
+      -29.7,
+      16,
+      16
+     ]
+    },
+    "fix": "x"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "pressure",
+    "loads": [
+     {
+      "region": "air",
+      "pressure": 0.3
+     }
+    ]
+   },
+   {
+    "name": "pressure-and-tug",
+    "loads": [
+     {
+      "region": "air",
+      "pressure": 0.2
+     },
+     {
+      "region": "barb",
+      "force": [
+       40,
+       0,
+       0
+      ],
+      "direction": "any"
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "hose-elbow-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ },
+ "note": "Safety factor 3 on pressure is written as 1.5 x the pressure in its own case at the study's factor of 2."
+}
