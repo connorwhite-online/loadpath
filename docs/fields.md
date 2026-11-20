@@ -204,8 +204,8 @@ back at once with suggestions.
 | `remap` | `from` [a, b] to `to` [c, d], linear / smoothstep / smootherstep / sqrt / square or a drawn curve (`[[u, v], ...]` over the unit square; the editor has a curve editor), clamped | `input` |
 | `expr` | arithmetic over node names and x, y, z: `"0.8 + 1.2 * smoothstep(5, 30, stress)"` | `vars` |
 | `union`, `intersect`, `subtract` | booleans; `blend` is the fillet radius | `inputs`, `blend` |
-| `shell` | a wall inside, outside or centred on a surface | `input`, `thickness` |
-| `offset` | grow or shrink | `input`, `distance` |
+| `shell` | a wall inside, outside or centred on a surface, measured in true mm (see True distances) | `input`, `thickness`, `redistance` |
+| `offset` | grow or shrink, by true mm (see True distances) | `input`, `distance`, `redistance` |
 | `lattice` | TPMS sheets (gyroid, diamond, Schwarz P, lidinoid, split P, Neovius; sheet or network), strut cells (cubic, BCC, BCCz, FCC, FCCz, octet, Kelvin, diamond-strut, or your own from `cellGraph`), a Voronoi foam or a Delaunay (tet) lattice, which with a conformal frame follows a body with its nodes on the skin; cartesian, cylindrical, spherical or conformal frame; `aspect` stretches the cell | `cell`, `thickness` or `density`, `blend` (node fillets), `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
 | `pattern` | copies of a body as one solid: linear (a line or grid), circular, mirror, or along a curve (see Patterns) | `input`, `blend` |
@@ -216,6 +216,24 @@ back at once with suggestions.
 `expr` knows `abs sqrt exp log sin cos tan floor ceil sign min max clamp
 lerp smoothstep step where noise cellular`, comparisons and `a if c else b`;
 nothing else (no attributes, no imports).
+
+
+### True distances
+
+A shell's thickness and an offset's distance are read off the input field,
+so they are only right where the input is a distance (|grad f| = 1). A
+blended `union`, `intersect` or `subtract` is not: through the fillet the
+smooth minimum's gradient falls to about 0.7. A 1.5 mm shell of a disc and
+a bar joined with a 3-6 mm blend (2D) used to come out up to 1.86 mm thick
+at the fillet, and in 3D (sphere and bar, 4 mm blend) the shell was 2.5%
+heavier than a true 1.5 mm wall. So a shell or an
+offset whose input has a blended boolean under it divides the input by its
+gradient length first (a 0.01 mm stencil, the length clipped to 0.5..1):
+the 2D wall is 1.52-1.56 mm and the 3D shell within 1% of the true volume.
+Plain shapes, meshes and hard booleans are left as they are and cost
+nothing extra; set `"redistance": true` or `false` on the node to force
+either. The compiled and torch paths do the same (in float32 torch runs
+that node on numpy, which keeps the stencil's precision).
 
 ## Noise and surface textures
 

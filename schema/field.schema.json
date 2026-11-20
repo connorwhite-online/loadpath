@@ -3294,6 +3294,10 @@
           ],
           "description": "default inside"
         },
+        "redistance": {
+          "type": "boolean",
+          "description": "divide the input by its gradient's length first, so the wall or offset is measured in true mm where a blended boolean has slowed the field (default: only when the input has a blended union, intersect or subtract under it)"
+        },
         "description": {
           "type": "string",
           "description": "What the node is for (ignored)."
@@ -3373,6 +3377,10 @@
               "$ref": "#/$defs/node"
             }
           ]
+        },
+        "redistance": {
+          "type": "boolean",
+          "description": "divide the input by its gradient's length first, so the wall or offset is measured in true mm where a blended boolean has slowed the field (default: only when the input has a blended union, intersect or subtract under it)"
         },
         "description": {
           "type": "string",

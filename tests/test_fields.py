@@ -471,6 +471,64 @@ def test_image_is_a_field_on_a_plane():
     assert not lint({"nodes": {"im": node}}, "field")
 
 
+
+def _blended_tee(k, wall=None):
+    nodes = {"a": SPHERE,
+             "b": {"op": "shape", "shape": {"type": "box", "center": [12, 0, 0], "size": [24, 6, 6]}},
+             "body": {"op": "union", "inputs": ["a", "b"], "blend": k}}
+    if wall is not None:
+        nodes["wall"] = wall
+    return FieldGraph({"nodes": nodes, "output": "wall" if wall is not None else "body"})
+
+
+def test_shell_of_a_blended_union_is_as_thick_as_asked():
+    """Through a blend the smooth minimum's gradient drops below 1, so a
+    shell of the raw field is thicker than asked at the fillet (walls to
+    +24% in 2D). Redistanced (f / |grad f|, the default under a blend), the
+    1.5 mm shell's volume is within about 1% of the true 1.5 mm shell of
+    the same body (an exact distance transform on a 0.15 mm grid); raw it
+    was 2.5% over."""
+    from scipy import ndimage
+
+    h = 0.15
+    xs, ys = np.arange(-12, 25, h), np.arange(-12, 12, h)
+    X, Y, Z = np.meshgrid(xs, ys, ys, indexing="ij")
+    P = np.stack([X.ravel(), Y.ravel(), Z.ravel()], 1)
+    body = _blended_tee(4).evaluate(P).reshape(X.shape) < 0
+    d = ndimage.distance_transform_edt(body) * h
+    want = ((d > 0) & (d <= 1.5)).sum()
+    err = {}
+    for rd in (None, False):
+        wall = {"op": "shell", "input": "body", "thickness": 1.5}
+        if rd is not None:
+            wall["redistance"] = rd
+        err[rd] = (_blended_tee(4, wall).evaluate(P) < 0).sum() / want - 1
+    assert abs(err[None]) < 0.012, err
+    assert err[False] > 0.02, err
+
+
+def test_redistance_only_under_a_blend():
+    """The default: a shell or offset redistances only when a blended
+    boolean sits under its input and nothing has already redistanced it;
+    `redistance` overrides either way."""
+    sh = {"op": "shell", "input": "body", "thickness": 1.0}
+    assert _blended_tee(3, sh).redistances("wall")
+    assert not _blended_tee(0, sh).redistances("wall")
+    assert not _blended_tee(3, dict(sh, redistance=False)).redistances("wall")
+    assert _blended_tee(0, dict(sh, redistance=True)).redistances("wall")
+    g = FieldGraph({"nodes": {"s": SPHERE, "o": {"op": "offset", "input": "s", "distance": 1.0}}, "output": "o"})
+    assert not g.redistances("o")
+    P = np.random.default_rng(1).uniform(-15, 15, (2000, 3))
+    assert np.allclose(g.evaluate(P), np.linalg.norm(P, axis=1) - 11)
+    # an offset of the redistanced shell is a distance already
+    doc = {"nodes": {"a": SPHERE, "b": {"op": "shape", "shape": {"type": "box", "center": [12, 0, 0],
+                                                                    "size": [24, 6, 6]}},
+                     "body": {"op": "union", "inputs": ["a", "b"], "blend": 3},
+                     "wall": sh, "grow": {"op": "offset", "input": "wall", "distance": 0.2}}, "output": "grow"}
+    g = FieldGraph(doc)
+    assert g.redistances("wall") and not g.redistances("grow")
+    assert lint(doc, "field") == []
+
 TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field,
          test_variable_blend_is_a_bigger_fillet_where_asked, test_graded_lattice_stays_one_body, test_cell_warp_period_follows_the_field,
          test_mesh_field_is_exact_near_the_surface, test_mesh_field_far_from_its_grid, test_groups_are_copied_with_their_own_knobs, test_image_is_a_field_on_a_plane,
@@ -479,7 +537,8 @@ TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field
          test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job,
          test_drains_open_every_sealed_void, test_drains_go_where_it_is_calm,
          test_drains_fill_small_pockets_and_know_when_to_stop, test_drains_fill_stays_inside_the_part,
-         test_drains_keep_clear]
+         test_drains_keep_clear, test_shell_of_a_blended_union_is_as_thick_as_asked,
+         test_redistance_only_under_a_blend]
 
 
 def main():

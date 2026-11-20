@@ -824,11 +824,13 @@ def cell_flow(fluid: np.ndarray, h: float = 1.0, axis: int = 0, re=(100.0,), *, 
 
     Converged when, after `develop` flow-throughs of the cell, the mean over
     the last `passes` flow-throughs (and Tb's, with heat) is within `tol` of
-    the window before. Flows past Re ~200 in a gyroid do not settle: on a
-    10 mm air cell at Re ~250 the flow swings a few percent about one state
-    for ~13 flow-throughs, then may break down into a more chaotic one with
-    ~25% more friction (and back: one cell has more than one long-lived
-    state, so f scatters ~20% between runs from Re ~200 to ~1,500), and a
+    the window before. Flows past Re ~110 in a gyroid do not settle. Run
+    with exactly symmetric rounding and no disturbance, a 10 mm air cell at
+    Re ~250 swung a few percent about one state for ~13 flow-throughs (f
+    2.8), then might break down into the more chaotic one (f 3.6-3.7): the
+    first is the flow held near the cell's symmetry, and the 20% scatter
+    between runs from Re ~200 to ~1,500 was which of the two a run was
+    caught on. Disturbed (below), the runs land on the second, and a
     short stop window catches either. "unsteadiness" is the rms of the flow over the last
     window, over its mean. Successive drives start from the previous one's
     flow.

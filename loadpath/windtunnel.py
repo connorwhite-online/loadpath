@@ -1114,6 +1114,46 @@ _STEP_TAIL = '''            for z in range(nz):
 '''
 
 
+# the rows the velocity gradient reads, taken once a row. The neighbour below
+# the first cell is the last one (round a periodic axis; the cell-by-cell
+# kernel's index of -1 reads the same cell on a closed one, where no fluid
+# cell sits on the face)
+_GRADIENT_VIEWS = """            gxm = x - 1
+            if gxm < 0:
+                gxm += nx
+            gxp = x + 1
+            if gxp >= nx:
+                gxp -= nx if p0 else 1
+            gym = y - 1
+            if gym < 0:
+                gym += ny
+            gyp = y + 1
+            if gyp >= ny:
+                gyp -= ny if p1 else 1
+            GNxm = ntype[gxm, y]
+            GNxp = ntype[gxp, y]
+            GNym = ntype[x, gym]
+            GNyp = ntype[x, gyp]
+            GNoo = ntype[x, y]
+""" + "".join(f"            GU{c}{n} = u[{c}, {i}]\n" for c in range(3)
+              for n, i in (("xm", "gxm, y"), ("xp", "gxp, y"), ("ym", "x, gym"), ("yp", "x, gyp"), ("oo", "x, y")))
+
+
+def _gradient_rows():
+    """The velocity gradient of one cell for the WALE closure, as source:
+    central differences of the last step's velocity, a solid neighbour at
+    rest, each of the six neighbours read through its row's view (the
+    cell-by-cell kernel builds and wraps three indices for every one)."""
+    P = " " * 16
+    L = ["gzm = z - 1", "if gzm < 0:", "    gzm += nz", "gzp = z + 1", "if gzp >= nz:", "    gzp -= nz if p2 else 1"]
+    for a, (m, p_, zm, zp) in enumerate((("xm", "xp", "z", "z"), ("ym", "yp", "z", "z"), ("oo", "oo", "gzm", "gzp"))):
+        L += [f"sp_ = GN{p_}[{zp}] == 1", f"sm_ = GN{m}[{zm}] == 1"]
+        for c in range(3):
+            L += [f"up = 0.0 if sp_ else GU{c}{p_}[{zp}]", f"um = 0.0 if sm_ else GU{c}{m}[{zm}]",
+                  f"bg[{3 * c + a}, z] = 0.5 * (up - um)"]
+    return "".join(P + ln + "\n" for ln in L)
+
+
 def _step_source(wale, sponge):
     """Source of the step kernel for one closure (WALE or not) and one kind
     of level (with a sponge or without): the row passes of _STEP_HEAD and
@@ -1123,9 +1163,12 @@ def _step_source(wale, sponge):
     mid = "            for zz in range(nz):\n" + "\n".join(" " * 16 + ln for ln in _collide_rows(wale, sponge)) + "\n"
     head = _STEP_HEAD.replace("U = np.uint64\n", "U = np.uint64\nW = np.array(" + repr([float(w) for w in W19]) + ")\n")
     rows, cell = _pull_rows()
+    if wale:
+        rows += _GRADIENT_VIEWS
     head = head.replace("#ROWS#\n", rows).replace("#PULL#\n", cell)
-    if not wale:
-        head = head[:head.index("                if sgs == 2:\n")]
+    head = head[:head.index("                if sgs == 2:\n")]
+    if wale:
+        head += _gradient_rows()
     return _blocked(head, mid, _STEP_TAIL)
 
 
