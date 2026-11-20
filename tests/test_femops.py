@@ -66,3 +66,18 @@ def test_layout_matches_numpy(monkeypatch):
         assert x.dtype == y.dtype, k
         np.testing.assert_array_equal(x, y, err_msg=k)
     assert a.nnz == b.nnz
+
+
+def test_add_elements_matches_numpy(monkeypatch):
+    # fem.Stiffness.add_elements through femops.add_elements: numpy's
+    # fancy-index additions, bit for bit
+    mesh, st, rng = _stiff()
+    elems = np.sort(rng.choice(mesh.n_elem, size=min(400, mesh.n_elem), replace=False))
+    kes = rng.standard_normal((len(elems), 24, 24))
+    base = rng.standard_normal(st.nnz)
+    a = base.copy()
+    st.add_elements(a, kes, elems)
+    monkeypatch.setenv("LOADPATH_FEMOPS", "numpy")
+    b = base.copy()
+    st.add_elements(b, kes, elems)
+    np.testing.assert_array_equal(a, b)
