@@ -93,8 +93,13 @@ and was thrown away. The seventh (the VESA plate) is a real modelling gap.
 
 Read with care: this is one run per part, on fixes made after seeing the
 cold results (general causes, but chosen with these failures in view). The
-two parts that now pass take twice as long as their cold runs did: the
-supports decision designs the part twice. On the corner bracket a coarse
+two parts that now pass took about 30 minutes each, twice their cold runs.
+Most of that is the ordinary search going on to lighter parts once one
+passes (the bracket: 12 outcomes from 19.8 g down to 10.3 g, where the cold
+run stopped after 5 that failed); the supports decision added a screening
+pass and two more outcomes. The split was not timed, and these runs shared
+the machine with others and one was resumed after a restart, so the minutes
+are rough. On the corner bracket a coarse
 screening read of the delivered part gave SF 1.5 where the tet check gives
 2.69: the spread between readings (gap 7) is not closed. Four parts (drawer
 pull, tablet stand, caster fork, pipe clamp) had not been re-run when this
