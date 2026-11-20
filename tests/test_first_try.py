@@ -131,6 +131,8 @@ def test_bound_note_says_what_the_envelope_can_do():
     case = {"name": "pull-off", "safetyFactor": 0.8, "deflection": 0.2, "peakAt": [-24.0, 0.0, 4.0]}
     note, out = bound_note(s, {"mass": 20.0, "cases": [case], "margin": 0.32})
     assert out and "32%" in note and "'l-" in note, note        # the peak is named by the ring it sits at
+    # how much room: 2.5 / 0.8 = 3.1x the area pulled, its root in depth where it bends
+    assert "1.8x the depth" in note and "3.1x the area" in note, note
     case = {"name": "pull-off", "safetyFactor": 2.4, "deflection": 0.2, "peakAt": [-24.0, 0.0, 4.0]}
     note, out = bound_note(s, {"mass": 20.0, "cases": [case], "margin": 0.96})
     assert not out, "4% under the goal on the solid block is inside the readings' spread, not out of reach"
