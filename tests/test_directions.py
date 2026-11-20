@@ -186,9 +186,34 @@ def test_verify_reports_the_most_stressful_direction():
     assert "worstDirection" not in rep_n["cases"][0]
 
 
+def test_the_tet_check_judges_the_worst_direction_too():
+    # The tetrahedral check's safety factor replaces the grid's when a part
+    # is confirmed on it. It solved a force of unknown direction as written
+    # only: a drawer pull whose 150 N may come from any side was confirmed
+    # at 2.7 for 2, pulled straight, where sideways it reads 0.5 to 0.64.
+    from loadpath.crosscheck import crosscheck
+
+    part = trimesh.creation.box(extents=[16, 16, 40])
+    part.apply_translation([8, 8, 20])
+    cc_n = crosscheck(study_from_dict(_with({})), part, size=4.0)
+    cc_a = crosscheck(study_from_dict(POST), part, size=4.0)
+    ca = cc_a["cases"][0]
+    d = np.array(ca["worstDirection"])
+    assert abs(np.linalg.norm(d) - 1) < 1e-9 and abs(d[2]) < 0.3, d
+    assert ca["peakStress"] > 3 * cc_n["cases"][0]["peakStress"], (ca["peakStress"], cc_n["cases"][0]["peakStress"])
+    assert cc_a["safetyFactor"] < cc_n["safetyFactor"] / 3
+    assert "worstDirection" not in cc_n["cases"][0]
+    # and it is the grid's reading of the same post, not a third answer
+    rep_a = verify_part(study_from_dict(POST), part, max_cells=6000, refine=0)
+    assert 0.6 < ca["peakStress"] / rep_a["cases"][0]["peakStress"] < 1.6, (ca["peakStress"], rep_a["cases"][0]["peakStress"])
+    # a cone 30 degrees round the push from above: between the two
+    cc_c = crosscheck(study_from_dict(_with({"cone": 30})), part, size=4.0)
+    assert cc_n["cases"][0]["peakStress"] < cc_c["cases"][0]["peakStress"] < ca["peakStress"]
+
+
 TESTS = [test_worst_direction_matches_brute_force, test_spec_and_schema, test_worst_case_compliance_is_exact,
          test_optimizer_designs_for_the_worst_direction, test_cone_is_between_nominal_and_any,
-         test_verify_reports_the_most_stressful_direction]
+         test_verify_reports_the_most_stressful_direction, test_the_tet_check_judges_the_worst_direction_too]
 
 
 def main():

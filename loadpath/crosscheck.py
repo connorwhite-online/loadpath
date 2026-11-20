@@ -591,14 +591,22 @@ def _clearance_rows(study, name, pts, u, nodes_per):
     return rows
 
 
-def _load_vectors(study, pts, surf, tol, faces=None):
+def _load_vectors(study, pts, surf, tol, faces=None, spreads=None):
     """Per load case: nodal force array (n, 3), and the load node indices.
     `faces`: the boundary triangles, for each vertex's share of a loaded
-    surface (equal shares without)."""
+    surface (equal shares without).
+
+    `spreads` (a list, filled here, one entry per case): None, or for a
+    force whose direction is not known (load.direction "any" or "cone") its
+    three nodal force arrays along x, y and z, its direction as written and
+    the cosine of the cone's half-angle (-1: any direction), as domain.py
+    builds them for the grid. The case's own array carries that force as
+    written; _worst_directions solves the three and takes the worst."""
     cases = []
     for case in study.load_cases:
         f = np.zeros((len(pts), 3))
         nodes_all = []
+        spread = None
         for ld in case.loads:
             if ld.pressure:
                 raise ValueError("the tetrahedral cross-check does not apply pressure loads yet")
@@ -609,6 +617,18 @@ def _load_vectors(study, pts, surf, tol, faces=None):
             nodes_all.append(nodes)
             share = _area_shares(pts, faces, nodes)
             force = np.asarray(ld.force, float)
+            if getattr(ld, "direction", None) is not None and np.any(force):
+                # as domain.py: the uncertain force spread evenly, one array per axis
+                mag = float(np.linalg.norm(force))
+                basis = []
+                for a in range(3):
+                    b = np.zeros((len(pts), 3))
+                    b[nodes, a] = mag * share
+                    basis.append(b)
+                spread = (basis, force / mag,
+                          -1.0 if ld.direction == "any" else float(np.cos(np.radians(ld.cone))))
+                f[nodes] += force[None] * share[:, None]
+                force = np.zeros(3)
             if ld.distribution == "bearing":
                 # as domain.py: the shaft pushes on the half of the bore facing
                 # the force, as a cosine over it
@@ -635,7 +655,67 @@ def _load_vectors(study, pts, surf, tol, faces=None):
                 w = np.linalg.solve(j + 1e-9 * np.trace(j) * np.eye(3), m)
                 f[nodes] += share[:, None] * np.cross(w, r)
         cases.append((case.name, f, np.unique(np.concatenate(nodes_all))))
+        if spreads is not None:
+            spreads.append(spread)
     return cases
+
+
+def _worst_directions(loads, spreads, solve, stress, counted):
+    """The displacement of every case, a force of unknown direction taken
+    in the direction that stresses the part most: (displacements, the loads
+    as judged, the directions or None).
+
+    The grid's check judges such a case in its worst direction
+    (verify.py, directions.py), and so does the optimizer. This check
+    solved it as written only: a drawer pull whose 150 N may come from any
+    side read 15 MPa and 0.15 mm here, pulled straight, against 45 MPa and
+    0.9 mm on the grid, pulled sideways, and its confirmed safety factor of
+    2.7 for 2 was 0.64. Solved here along each axis (and for the rest of
+    the case), then combined: the stress is linear in the direction, so the
+    worst one is found on the stresses themselves
+    (directions.worst_stress_direction, over `counted` vertices).
+    `solve(loads)` gives a displacement per load, `stress(us)` the stress
+    tensor at the vertices for each."""
+    if not any(sp is not None for sp in spreads):
+        return solve(loads), loads, [None] * len(loads)
+    from .directions import Spread, worst_stress_direction
+
+    ext, layout = [], []
+    for (name, f, ln), sp in zip(loads, spreads):
+        if sp is None:
+            layout.append((len(ext),))
+            ext.append((name, f, ln))
+            continue
+        basis, nominal, _ = sp
+        base = f - sum(nominal[a] * basis[a] for a in range(3))
+        i0 = None
+        if np.abs(base).max() > 1e-9 * max(float(np.abs(f).max()), 1e-300):
+            i0 = len(ext)
+            ext.append((name, base, ln))
+        layout.append((i0, len(ext), len(ext) + 1, len(ext) + 2))
+        ext.extend((name, b, ln) for b in basis)
+    us = solve(ext)
+    need = sorted({i for idx in layout if len(idx) > 1 for i in idx if i is not None})
+    sig = dict(zip(need, stress([us[i] for i in need])))
+    out_u, out_l, dirs = [], [], []
+    for (name, f, ln), sp, idx in zip(loads, spreads, layout):
+        if sp is None:
+            out_u.append(us[idx[0]])
+            out_l.append((name, f, ln))
+            dirs.append(None)
+            continue
+        basis, nominal, cos_half = sp
+        d, _ = worst_stress_direction(Spread(None, None, np.asarray(nominal, float), cos_half),
+                                      sig[idx[0]] if idx[0] is not None else None,
+                                      [sig[i] for i in idx[1:]], counted)
+        u = sum(d[j] * us[i] for j, i in enumerate(idx[1:]))
+        g = sum(d[j] * ext[i][1] for j, i in enumerate(idx[1:]))
+        if idx[0] is not None:
+            u, g = u + us[idx[0]], g + ext[idx[0]][1]
+        out_u.append(u)
+        out_l.append((name, g, ln))
+        dirs.append(np.asarray(d, float))
+    return out_u, out_l, dirs
 
 
 # 4-point Gauss rule on a tetrahedron (exact for degree 2: a P2 stiffness
@@ -1249,7 +1329,8 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     bfaces = _boundary_faces(tets)
     surf = np.unique(bfaces)
     tol = _capture_tolerance(mesh, size)
-    loads = _load_vectors(study, pts, surf, tol, bfaces)
+    spreads = []
+    loads = _load_vectors(study, pts, surf, tol, bfaces, spreads)
 
     t1 = time.time()
     nodes, conn, edges = _p2_mesh(pts, tets)
@@ -1289,10 +1370,13 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     radius, reading = stress_radius(study, size)
     clear_nodes = _clearance_nodes(study, pts, tol)
 
-    def summarize(results):
+    def stress_of(us):
+        return _averaged_stress(nodes, conn, us, mat.E, el, len(pts), radius)
+
+    def summarize(results, dirs):
         cases = []
         sfs, sfs_raw = [], []
-        for (name, f, lnodes), res in zip(loads, results):
+        for (name, f, lnodes), res, d in zip(loads, results, dirs):
             u, vm = res[0], res[1]
             sn = res[2] if len(res) > 2 else None
             peak, peak_at = peak_of(vm)
@@ -1319,15 +1403,18 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                           "maxDisplacement": float(np.linalg.norm(u, axis=1).max()),
                           **({"clearances": _clearance_rows(study, name, pts, u, clear_nodes)}
                              if clear_nodes else {}),
-                          "safetyFactor": raw / STRESS_ALLOWANCE, **row})
+                          "safetyFactor": raw / STRESS_ALLOWANCE, **row,
+                          **({"worstDirection": [float(v) for v in d]} if d is not None else {})})
         return {"safetyFactor": min(sfs), "safetyFactorNoAllowance": min(sfs_raw), "cases": cases}
 
     out = {}
     if backend in ("native", "both"):
-        us = _solve(nodes, conn, mat.E, el, fixed_dof, _pin_springs(pin_blocks, mat.E * size, len(nodes)),
-                    loads, len(pts), edges)
+        springs = _pin_springs(pin_blocks, mat.E * size, len(nodes))
+        us, _, dirs = _worst_directions(
+            loads, spreads, lambda ls: _solve(nodes, conn, mat.E, el, fixed_dof, springs, ls, len(pts), edges),
+            stress_of, far)
         out["native"] = summarize(_read_stress(nodes, conn, us, mat.E, el, len(pts), radius, normal, m_c,
-                                               shear_ratio))
+                                               shear_ratio), dirs)
         timings["native"] = time.time() - t1
     if backend in ("ccx", "both"):
         # the same quadratic mesh, held nodes and nodal forces: only the
@@ -1337,8 +1424,13 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         # (its stress read from its displacements the way the native one's
         # is, averaged over the same radius: CalculiX's own nodal stress,
         # extrapolated from its integration points, is a point value)
-        us_c = [r[0] for r in _solve_ccx(mat, nodes, conn, supports, loads, len(pts), el, normal, m_c, shear_ratio)]
-        out["ccx"] = summarize(_read_stress(nodes, conn, us_c, mat.E, el, len(pts), radius, normal, m_c, shear_ratio))
+        us_c, _, dirs_c = _worst_directions(
+            loads, spreads,
+            lambda ls: [r[0] for r in _solve_ccx(mat, nodes, conn, supports, ls, len(pts), el, normal, m_c,
+                                                 shear_ratio)],
+            stress_of, far)
+        out["ccx"] = summarize(_read_stress(nodes, conn, us_c, mat.E, el, len(pts), radius, normal, m_c,
+                                            shear_ratio), dirs_c)
         timings["ccx"] = time.time() - t2
     if not out:
         raise ValueError(f"backend must be 'native', 'ccx' or 'both', not {backend!r}")
