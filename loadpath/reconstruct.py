@@ -16,6 +16,8 @@ From a density field to a part you can print.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 from scipy import ndimage
 
@@ -491,6 +493,34 @@ def _rod_axes(g, scale=AXIAL_SCALE, spread=AXIAL_SPREAD):
     return T
 
 
+def _linear_at(field, coords):
+    """ndimage.map_coordinates(field, coords, order=1, mode="nearest"), the
+    points split over threads: each point's value is computed alone, so the
+    same bits, and scipy lets go of the GIL inside (2M points 0.36 -> 0.14 s
+    on 4 cores). _axial_smooth samples 2 x 21 of these per part: 43 s of
+    the robot upper arm's 1265 s full-tier run (2026-11-20)."""
+    n = coords.shape[1]
+    try:
+        cores = int(os.environ.get("LOADPATH_THREADS") or 0) or len(os.sched_getaffinity(0))
+    except (ValueError, AttributeError):
+        cores = os.cpu_count() or 1
+    parts = min(cores, n // 100_000)
+    if parts <= 1 or field.dtype.kind != "f":
+        return ndimage.map_coordinates(field, coords, order=1, mode="nearest")
+    from concurrent.futures import ThreadPoolExecutor
+
+    out = np.empty(n, field.dtype)
+    cuts = np.linspace(0, n, parts + 1).astype(int)
+
+    def one(i):
+        a, b = cuts[i], cuts[i + 1]
+        out[a:b] = ndimage.map_coordinates(field, coords[:, a:b], order=1, mode="nearest")
+
+    with ThreadPoolExecutor(parts) as ex:
+        list(ex.map(one, range(parts)))
+    return out
+
+
 def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_COHERENCE, rng=AXIAL_RANGE,
                   reach=2.5, samples=21, debias=False):
     """Average the surface's position along the local member axis.
@@ -552,7 +582,7 @@ def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_C
     cc = ((fi + 0.5) / upsample - 0.5).T
     t = np.empty((len(fi), 3, 3))
     for (i, j), a in T.items():
-        t[:, i, j] = t[:, j, i] = ndimage.map_coordinates(a, cc, order=1, mode="nearest")
+        t[:, i, j] = t[:, j, i] = _linear_at(a, cc)
     del cc
     mu, vec = np.linalg.eigh(t)
     del t
@@ -578,7 +608,7 @@ def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_C
         num = np.zeros(len(fi))
         den = np.zeros(len(fi))
         for zk, gk in zip(z, gz):
-            dk = ndimage.map_coordinates(field, base + (w * (zk * length * upsample)) * axis, order=1, mode="nearest")
+            dk = _linear_at(field, base + (w * (zk * length * upsample)) * axis)
             wk = gk * np.exp(-0.5 * (dk - ref) ** 2 / r2)
             num += wk * dk
             den += wk

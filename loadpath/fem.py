@@ -390,6 +390,34 @@ class Stiffness:
         nn = mesh.n_nodes
         enode = mesh.enode
         nijk = mesh.node_ijk
+        fixed = np.asarray(fixed, bool)
+        if fixed.shape != (mesh.n_dof,):
+            raise ValueError("fixed must be a bool per dof")
+        from . import femops
+
+        pair_off = _offset_index(CORNERS[None, :, :] - CORNERS[:, None, :])     # [a, b]
+        if femops.available():
+            # the same integers as the numpy below, in compiled loops (femops.stiffness_layout)
+            indptr, indices, slots, keep, diag = femops.stiffness_layout(mesh, pair_off, OFFSETS, fixed)
+            self.nnz = int(indptr[-1])
+            idx_t = slots.dtype
+            self._slots = slots
+            self._blks = np.empty((64, 9))
+            self._plan = None
+            self._assembled = False
+            self._pairs = []
+            for a in range(8):
+                for b in range(8):
+                    p = 8 * a + b
+                    self._blks[p] = self.ke[3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel()
+                    self._pairs.append((self._slots[p], self._blks[p]))
+            self.indptr = indptr.astype(idx_t)
+            self.indices = indices.astype(idx_t)
+            self.fixed = fixed
+            self._keep = keep
+            self._diag_fixed = diag
+            self.free = ~fixed
+            return
 
         # Which (node, offset) pairs actually share an element.
         adj = np.zeros((nn, 27), bool)

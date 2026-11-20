@@ -155,6 +155,43 @@ def test_same_layout_is_factored_on_the_last_analysis():
         _Pardiso.__init__ = init
 
 
+
+def test_upper_triangle_is_triu_to_the_bit():
+    """PARDISO takes K's upper triangle (nonlinear._Pardiso._upper): read
+    off the CSR layout, and on a layout seen before through the kept
+    selection, it is sp.triu's matrix entry for entry, order and bits;
+    another layout, unsorted indices or another format take sp.triu."""
+    import scipy.sparse as sp
+
+    from loadpath.nonlinear import _Pardiso
+
+    mesh, fixed, fs, e = _bar()
+    stiff = Stiffness(mesh, 0.3, fixed)
+    rng = np.random.default_rng(3)
+    p = _Pardiso.__new__(_Pardiso)
+
+    def same(a, k):
+        b = sp.triu(k, format="csr")
+        b.sort_indices()
+        assert a.shape == b.shape and a.has_sorted_indices
+        assert np.array_equal(a.indptr, b.indptr) and np.array_equal(a.indices, b.indices)
+        assert np.array_equal(a.data, b.data)
+
+    for _ in range(3):          # one layout: the second and third from the kept selection
+        k = stiff.assemble(e * rng.uniform(0.5, 2.0, len(e)))
+        same(p._upper(k), k)
+    mesh2, fixed2, _, e2 = _bar(nx=20)
+    k2 = Stiffness(mesh2, 0.3, fixed2).assemble(e2)
+    same(p._upper(k2), k2)       # another layout
+    r = sp.random(60, 60, density=0.2, random_state=4, format="csr")
+    r = (r + r.T).tocsr()
+    same(p._upper(r), r)
+    u = r.copy()
+    u.has_sorted_indices = False
+    same(p._upper(u), r)
+    same(p._upper(r.tocoo()), r)
+
+
 def _threads() -> int:
     """This process's threads, once the ones that have ended are gone: a
     joined thread is still listed while the kernel takes it down, so on a
@@ -634,7 +671,8 @@ def test_a_design_repeats_to_the_bit():
 
 
 TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix,
-         test_same_layout_is_factored_on_the_last_analysis, test_threads_do_not_pile_up,
+         test_same_layout_is_factored_on_the_last_analysis, test_upper_triangle_is_triu_to_the_bit,
+         test_threads_do_not_pile_up,
          test_kernels_after_a_factorization_do_not_pile_up, test_mechanism_raises,
          test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over,
          test_stalled_multigrid_answer_is_not_kept,
