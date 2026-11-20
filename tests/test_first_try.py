@@ -137,6 +137,8 @@ def test_bound_note_says_what_the_envelope_can_do():
     case = {"name": "pull-off", "safetyFactor": 4.0, "deflection": 0.2, "peakAt": [-24.0, 0.0, 4.0]}
     note, out = bound_note(s, {"mass": 20.0, "cases": [case], "margin": 1.6})
     assert not out and "meets the goal" in note
+    note, out = bound_note(s, {"mass": 20.0, "cases": [case], "margin": 1.6, "bodies": 2})
+    assert out and "2 separate pieces" in note and "meets the goal" not in note, note
 
 
 def test_a_part_in_pieces_gets_more_material_once():

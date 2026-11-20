@@ -77,8 +77,11 @@ def score(c, d) -> dict:
     row = {"id": c["id"], "tags": c.get("tags", [])}
     try:
         chk = json.load(open(os.path.join(d, "check.json")))
-        row["check"] = {"ok": bool(chk.get("ok")), "warnings": len(chk.get("warnings", [])),
-                        "first": (chk.get("warnings") or [chk.get("error", "")])[0][:160]}
+        # A warning about this machine's free memory is about the machine
+        # (it comes and goes with what else is running), not the study.
+        cw = [w for w in chk.get("warnings", []) if not w.startswith("this run needs about")]
+        row["check"] = {"ok": bool(chk.get("ok")), "warnings": len(cw),
+                        "first": (cw or [chk.get("error", "")])[0][:160]}
     except (OSError, ValueError):
         row["check"] = {"ok": False, "warnings": None, "first": "check wrote no report"}
     try:
@@ -102,7 +105,9 @@ def score(c, d) -> dict:
     if not row["passes"]:
         skip = ("no outcome meets", "no duration or repeat", "unconfirmed:")
         ws = [w for w in dl.get("warnings", []) if not w.startswith(skip)]
-        row["why"] = (ws or dl.get("warnings") or ["?"])[0][:240]
+        # what the envelope itself can carry says most about a failed run
+        said = [w for w in list(rep.get("warnings", [])) + ws if w.startswith("the whole design space as one solid block")]
+        row["why"] = (said or ws or dl.get("warnings") or ["?"])[0][:240]
     want = c.get("pass", {})
     if "diagnosis" in want:
         # a case that cannot be met as written: the pass is the tool saying so

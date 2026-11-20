@@ -465,6 +465,13 @@ def bound_note(study: Study, report: dict) -> tuple[str, bool]:
     no design moves it. Under 0.9 of the goal it is called out of reach;
     between 0.9 and 1 it is inside what two readings of one part differ by."""
     g = study.goal
+    n = report.get("bodies", 1) or 1
+    if n > 1:
+        # The block is everything the space allows: in pieces, so is every
+        # part in it, whatever each piece reads against its own load.
+        return (f"the whole design space as one solid block ({report['mass']:.1f} g of {study.material.name}) is "
+                f"itself in {n} separate pieces: no part in this space is one part, however strong each piece "
+                "reads. The design space is missing the way between them", True)
     mat = study.material
     cases = report.get("cases") or []
     parts, out = [], False
