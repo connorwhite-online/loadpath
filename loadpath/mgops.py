@@ -47,7 +47,7 @@ try:
 except ImportError:  # pragma: no cover - numba is a dependency
     nb = None
 
-__all__ = ["Cells", "apply_explicit", "apply_scaled", "apply_weights", "available", "dot", "prolong", "restrict"]
+__all__ = ["Cells", "add_csr", "csr_rows", "apply_explicit", "apply_scaled", "apply_weights", "available", "dot", "prolong", "restrict"]
 
 
 def available():
@@ -266,6 +266,54 @@ if nb is not None:
         # p = z + beta p
         for i in nb.prange(z.size):
             p[i] = z[i] + beta * p[i]
+
+
+if nb is not None:
+
+    # out += A u for a CSR matrix with entries in few of its rows (a grid
+    # level's extra terms), a row a thread, each row summed in its stored
+    # order in float64 and added in the field's precision: the numbers of
+    # (A @ u.astype(float64)).astype(u.dtype), without scipy's pass over the
+    # empty rows, its one thread and the three temporaries.
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _add_csr32(rows, indptr, indices, data, u, out):
+        for r in nb.prange(rows.size):
+            i = rows[r]
+            acc = 0.0
+            for j in range(indptr[i], indptr[i + 1]):
+                acc += data[j] * np.float64(u[indices[j]])
+            out[i] += np.float32(acc)
+
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _add_csr64(rows, indptr, indices, data, u, out):
+        for r in nb.prange(rows.size):
+            i = rows[r]
+            acc = 0.0
+            for j in range(indptr[i], indptr[i + 1]):
+                acc += data[j] * u[indices[j]]
+            out[i] += acc
+
+
+def add_csr(prepared, u, out) -> bool:
+    """out += A u on numba's threads (u, out: same-shape contiguous float32
+    or float64 fields; prepared: csr_rows(A)). False when it cannot (the
+    caller then does it with scipy)."""
+    if not (available() and u.flags.c_contiguous and out.flags.c_contiguous and u.dtype == out.dtype):
+        return False
+    if u.dtype == np.float32:
+        _add_csr32(*prepared, u.reshape(-1), out.reshape(-1))
+    elif u.dtype == np.float64:
+        _add_csr64(*prepared, u.reshape(-1), out.reshape(-1))
+    else:
+        return False
+    return True
+
+
+def csr_rows(a):
+    """(rows with entries, indptr, indices, data) of a scipy sparse matrix, for add_csr."""
+    a = a.tocsr()
+    return (np.nonzero(np.diff(a.indptr))[0].astype(np.int64), np.asarray(a.indptr, np.int64),
+            np.asarray(a.indices, np.int64), np.ascontiguousarray(a.data, np.float64))
 
 
 if nb is not None:
