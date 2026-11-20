@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from loadpath.spec import study_from_dict  # noqa: E402
-from loadpath.study import _pieces_again, bound_note  # noqa: E402
+from loadpath.study import _envelope_first, _pieces_again, bound_note  # noqa: E402
 from loadpath.tasks import check_study  # noqa: E402
 
 
@@ -174,6 +174,19 @@ def test_the_self_supporting_search_runs_only_where_the_screen_says_it_can_win()
             assert out.study.raw["supportDecision"]["rerun"] is bool(runs)
     finally:
         orient.choose_build_direction = real
+
+
+def test_an_impossible_limit_is_found_on_the_block_before_any_search():
+    """A deflection limit the solid envelope cannot meet is answered by the
+    block alone; a limit it can meet starts the searches as before."""
+    arm = {"designSpace": [_box([0, -6, 0], [60, 6, 10])],
+           "supports": [{"shape": _box([-1, -7, -1], [1, 7, 11])}],
+           "loadCases": [{"name": "tip", "loads": [{"shape": _box([58, -6, 8], [60, 6, 10]), "force": [0, 0, -20]}]}],
+           "material": "petg", "process": "none", "resolution": {"maxElements": 3000}}
+    r = _envelope_first(study_from_dict({**arm, "goal": {"safetyFactor": 2, "maxDeflection": 0.001}}), None, None)
+    assert r is not None and len(r.outcomes) == 1 and r.best is None
+    assert any("no shape in it meets the limit" in w for w in r.warnings), r.warnings
+    assert _envelope_first(study_from_dict({**arm, "goal": {"safetyFactor": 2, "maxDeflection": 5.0}}), None, None) is None
 
 
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
