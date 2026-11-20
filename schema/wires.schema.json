@@ -103,6 +103,11 @@
             "type": "boolean",
             "description": "goes with the motion"
           },
+          "exact": {
+            "type": "number",
+            "minimum": 0,
+            "description": "mm of exact distance near a mesh's surface (overrides the brief's)"
+          },
           "color": {
             "type": "string"
           }
@@ -527,6 +532,24 @@
                   "minimum": 0,
                   "description": "mm along the cable (default: its nearest point)"
                 },
+                "direction": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[+-]?[xyz]$"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "[x, y, z]"
+                    }
+                  ],
+                  "description": "the way the cable runs through the clip (default: from the point before it to the one after)"
+                },
                 "body": {
                   "type": "string"
                 }
@@ -536,7 +559,7 @@
               ],
               "additionalProperties": false
             },
-            "description": "clips: points the cable is held at"
+            "description": "clips: points the cable is held at. Clips placed by point are threaded in the order given: the way is found from the port through each clip in turn to the other port"
           },
           "routes": {
             "type": "integer",
@@ -699,6 +722,16 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 4
+    },
+    "exact": {
+      "type": "number",
+      "minimum": 0,
+      "description": "mm from each mesh body's surface within which its distances are exact, not voxel (default: the thickest cable's diameter + clearance + 1)"
+    },
+    "roomCells": {
+      "type": "number",
+      "minimum": 10000.0,
+      "description": "the most grid cells the ways are found on (default 3e6): fewer is faster, coarser"
     },
     "wiresCollide": {
       "type": "boolean",

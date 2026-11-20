@@ -505,6 +505,12 @@ class Stiffness:
         """Scatter per-element 24x24 matrices (a tangent that differs element
         to element, not a scaled copy of one) for elements `elems` into a CSR
         data array of length nnz. Finish with `finish(data)`."""
+        from . import femops
+
+        elems = np.asarray(elems)
+        if femops.available() and elems.dtype != bool and len(elems) >= 256 and kes.shape[1:] == (24, 24):
+            femops.add_elements(data, self._slots, kes, elems)
+            return
         for idx, (slots, _) in enumerate(self._pairs):
             a, b = divmod(idx, 8)
             data[slots[elems]] += kes[:, 3 * a:3 * a + 3, 3 * b:3 * b + 3].reshape(len(elems), 9)

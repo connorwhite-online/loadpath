@@ -1482,7 +1482,10 @@ class Tunnel:
             L.P = np.zeros((6,) + L.shape, np.float32)
             L.tau = np.full(L.shape, L.tau0, np.float32)
             L.ntype = np.zeros(L.shape, np.int8)
-            L.bid = np.full(L.shape if k == n - 1 and bid is not None else (1, 1, 1), -1, np.int32)
+            # the step kernels read every fluid cell's boundary index, so it
+            # spans the level (a (1, 1, 1) stand-in was read out of bounds:
+            # garbage, and now and then a segfault)
+            L.bid = np.full(L.shape, -1, np.int32)
             L.q = np.zeros((1, 19), np.float32)
             L.sig = np.zeros((1, 1, 1), np.float32)
             L.has_sig = False

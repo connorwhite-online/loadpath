@@ -1848,79 +1848,95 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                                             "extraThrust": round(extra, 4),
                                             "equivalentMass": round(extra * aero.grams_per_newton, 3)}
 
-    design = _union(study.design_space + [r.shape for r in study.preserve])
-    keep = _union([r.shape for r in study.keep_out])
-    envelope = design - keep if keep is not None else design
-    env_vol = float(envelope.volume())
-    report["designSpaceMass"] = env_vol * mat.density / 1000.0
-    report["massReduction"] = 1.0 - vol / env_vol if env_vol > 0 else None
-    # What must survive is each preserve less the keep-outs that cut it (a
-    # boss keeps its bore; rails stand in a board's clear zone, the skin
-    # under a part's way in). Anything else of the part in a keep-out
-    # intrudes.
-    pres_eff = drawn_kept(study)
-    designed = part - pres_eff if pres_eff is not None else part
-    report["keepOutIntrusion"] = float((designed ^ keep).volume()) if keep is not None else 0.0
-    if pres_eff is not None:
-        report["preserveMissing"] = _preserve_missing(pres_eff, part, mesh)
-    else:
-        report["preserveMissing"] = 0.0
-    # what was drawn, by region, and the exterior a skin keeps (drawncheck.py):
-    # until 2026-11-17 only switch and feel parts were read this way, so an
-    # ordinary study could lose one small boss inside a total that passed
-    if pres_eff is not None or (getattr(study, "raw", None) or {}).get("skin"):
-        try:
-            from .drawncheck import drawn_check, exterior_report
-            if pres_eff is not None:
-                report["drawn"] = drawn_check(study, mesh)
-            ext = exterior_report(study, mesh) if mesh.is_watertight else None
-            if ext is not None:
-                report["exterior"] = ext
-        except Exception as exc:  # noqa: BLE001 - a check that cannot run says so; it does not stop the analysis
-            report.setdefault("warnings", []).append(f"the drawn-geometry check did not run: "
-                                                     f"{type(exc).__name__}: {exc}")
-    report["outsideDesignSpace"] = float((part - design).volume())
-    report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
-    report.update(_creases(study, mesh))
-    report["closedBores"] = _closed_bores(study, mesh)
-    if (getattr(study, "raw", None) or {}).get("_fuses"):
-        # designed weak links (fuse.py): each sized link, the window it breaks in, the crash cases it caps
-        report["fuses"] = study.raw["_fuses"]
-    if getattr(study, "fits", None):
-        # bearing seats, pins and bolt holes: the hole in the file, the band
-        # it prints to, and whether the fit holds (fits.py)
-        from .fits import fits_report
-        report["fits"] = fits_report(study, mesh)
-    # decompose() lists each enclosed cavity too, as a negative volume
-    pieces = [b.volume() for b in part.decompose()]
-    report["bodies"] = sum(1 for v in pieces if v > 0)
     stock_on = bool(getattr(study, "stock", None))
     if stock_on:
-        # printed pieces that only the bought members join (two nodes on one tube) are one assembly:
-        # the count that has to be 1 is the assembly's
-        from .stock import assembly_mesh, stock_mass
-
-        report["printedBodies"] = report["bodies"]
-        report["bodies"] = sum(1 for b in manifold_from_trimesh(assembly_mesh(study, mesh)).decompose()
-                               if b.volume() > 0)
-        report["stockMass"] = stock_mass(study)
-        report["assemblyMass"] = report["mass"] + report["stockMass"]
         # the submodels re-solve a box of printed material alone: skipped, as with heat
         refine = 0
-    report["enclosedCavityVolume"] = float(-sum(v for v in pieces if v < 0))
 
-    if study.print_direction is not None:
-        report.update(_overhang(mesh, study.print_direction, study))
-    proc = study.process
-    build = study.print_direction if study.print_direction is not None else \
-        (proc.build if proc is not None and proc.build != "auto" else None)
-    if build is not None:
-        # sliced as a printer would: bridges, islands, support volume, bed
-        from .printcheck import check_print
+    def geometry(report, mesh):
+        """The checks of the part's shape alone (design space, preserves,
+        drawn geometry, creases, bores, fits, bodies, overhang, print):
+        nothing in the stress analysis reads them, so they run beside it
+        (about 5 s of the robot upper arm's 33 s check) into their own
+        dict, merged where they always stood."""
+        design = _union(study.design_space + [r.shape for r in study.preserve])
+        keep = _union([r.shape for r in study.keep_out])
+        envelope = design - keep if keep is not None else design
+        env_vol = float(envelope.volume())
+        report["designSpaceMass"] = env_vol * mat.density / 1000.0
+        report["massReduction"] = 1.0 - vol / env_vol if env_vol > 0 else None
+        # What must survive is each preserve less the keep-outs that cut it (a
+        # boss keeps its bore; rails stand in a board's clear zone, the skin
+        # under a part's way in). Anything else of the part in a keep-out
+        # intrudes.
+        pres_eff = drawn_kept(study)
+        designed = part - pres_eff if pres_eff is not None else part
+        report["keepOutIntrusion"] = float((designed ^ keep).volume()) if keep is not None else 0.0
+        if pres_eff is not None:
+            report["preserveMissing"] = _preserve_missing(pres_eff, part, mesh)
+        else:
+            report["preserveMissing"] = 0.0
+        # what was drawn, by region, and the exterior a skin keeps (drawncheck.py):
+        # until 2026-11-17 only switch and feel parts were read this way, so an
+        # ordinary study could lose one small boss inside a total that passed
+        if pres_eff is not None or (getattr(study, "raw", None) or {}).get("skin"):
+            try:
+                from .drawncheck import drawn_check, exterior_report
+                if pres_eff is not None:
+                    report["drawn"] = drawn_check(study, mesh)
+                ext = exterior_report(study, mesh) if mesh.is_watertight else None
+                if ext is not None:
+                    report["exterior"] = ext
+            except Exception as exc:  # noqa: BLE001 - a check that cannot run says so; it does not stop the analysis
+                report.setdefault("warnings", []).append(f"the drawn-geometry check did not run: "
+                                                         f"{type(exc).__name__}: {exc}")
+        report["outsideDesignSpace"] = float((part - design).volume())
+        report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
+        report.update(_creases(study, mesh))
+        report["closedBores"] = _closed_bores(study, mesh)
+        if (getattr(study, "raw", None) or {}).get("_fuses"):
+            # designed weak links (fuse.py): each sized link, the window it breaks in, the crash cases it caps
+            report["fuses"] = study.raw["_fuses"]
+        if getattr(study, "fits", None):
+            # bearing seats, pins and bolt holes: the hole in the file, the band
+            # it prints to, and whether the fit holds (fits.py)
+            from .fits import fits_report
+            report["fits"] = fits_report(study, mesh)
+        # decompose() lists each enclosed cavity too, as a negative volume
+        pieces = [b.volume() for b in part.decompose()]
+        report["bodies"] = sum(1 for v in pieces if v > 0)
+        if stock_on:
+            # printed pieces that only the bought members join (two nodes on one tube) are one assembly:
+            # the count that has to be 1 is the assembly's
+            from .stock import assembly_mesh, stock_mass
 
-        report["print"] = check_print(mesh, build, process=proc.kind if proc is not None else "fdm",
-                                      material=mat, bridge_span=getattr(proc, "bridge_span", None))
+            report["printedBodies"] = report["bodies"]
+            report["bodies"] = sum(1 for b in manifold_from_trimesh(assembly_mesh(study, mesh)).decompose()
+                                   if b.volume() > 0)
+            report["stockMass"] = stock_mass(study)
+            report["assemblyMass"] = vol * mat.density / 1000.0 + report["stockMass"]
+        report["enclosedCavityVolume"] = float(-sum(v for v in pieces if v < 0))
 
+        if study.print_direction is not None:
+            report.update(_overhang(mesh, study.print_direction, study))
+        proc = study.process
+        build = study.print_direction if study.print_direction is not None else \
+            (proc.build if proc is not None and proc.build != "auto" else None)
+        if build is not None:
+            # sliced as a printer would: bridges, islands, support volume, bed
+            from .printcheck import check_print
+
+            report["print"] = check_print(mesh, build, process=proc.kind if proc is not None else "fdm",
+                                          material=mat, bridge_span=getattr(proc, "bridge_span", None))
+        return report
+
+    from .pools import SerialExecutor, pool
+
+    pre_keys, pre_warn = list(report), len(report.get("warnings", []))
+    # (pool: a thread only where numba's layer takes two threads' kernels at once)
+    _geo_pool = pool(2, thread_name_prefix="loadpath-geometry")
+    # its own copy of the mesh: trimesh's caches are not for two threads
+    _geo = _geo_pool.submit(geometry, {}, mesh if isinstance(_geo_pool, SerialExecutor) else mesh.copy())
     g = _analysis_grid(study, mesh, vol, max_cells, min_pitch, contact_band, cut_cells, fractional,
                        max_pitch=max_pitch)
     pitch, cg, solid, origin, share = g.pitch, g.cg, g.solid, g.origin, g.share
@@ -2450,5 +2466,17 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         # fatigue (cases with cycles), creep and relaxation (hours, preload)
         report["durability"] = assess(study, cases, STRESS_ALLOWANCE)
     report["analysisCells"] = int(hm.n_elem)
+    side = _geo.result()
+    _geo_pool.shutdown()
+    # in the order the checks always ran: what came before them, theirs, the analysis's
+    merged = {k: report[k] for k in pre_keys if k in report}
+    warn = report.get("warnings", [])
+    side_warn = side.pop("warnings", [])
+    merged.update(side)
+    for k, v in report.items():
+        merged.setdefault(k, v)
+    if warn or side_warn:
+        merged["warnings"] = warn[:pre_warn] + side_warn + warn[pre_warn:]
+    report = merged
     report["seconds"] = time.time() - t0
     return report

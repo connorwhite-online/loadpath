@@ -37,7 +37,7 @@ try:
 except ImportError:  # pragma: no cover - numba is a dependency
     nb = None
 
-__all__ = ["available", "element_energy", "scatter", "gather_plan", "scatter_gather", "stiffness_layout"]
+__all__ = ["available", "element_energy", "scatter", "gather_plan", "scatter_gather", "stiffness_layout", "add_elements"]
 
 
 def available():
@@ -196,6 +196,21 @@ if nb is not None:
         return diag
 
 
+    @nb.njit(cache=True, parallel=True)
+    def _add_elements(data, slots, kes, elems):
+        # pair by pair (a pair's slots are distinct across elements, so its
+        # elements run in parallel and each slot gets its additions in pair
+        # order): numpy's data[slots[p][elems]] += block, the same bits
+        ne = elems.size
+        for p in range(64):
+            a = p // 8
+            b = p - 8 * a
+            for i in nb.prange(ne):
+                e = elems[i]
+                for t in range(9):
+                    data[slots[p, e, t]] += kes[i, 3 * a + t // 3, 3 * b + t % 3]
+
+
 # below this many elements a parallel region per corner pair costs more than
 # it saves (64 thread launches; on a busy machine each can stall)
 _SERIAL_BELOW = 20_000
@@ -254,3 +269,10 @@ def stiffness_layout(mesh, pair_off, offsets, fixed):
     keep = np.empty(nnz, np.bool_)
     diag = _layout_fixed(indptr, indices, np.ascontiguousarray(fixed, np.bool_), keep)
     return indptr, indices, slots, keep, diag
+
+
+def add_elements(data, slots, kes, elems):
+    """fem.Stiffness.add_elements: data[slots[p][elems]] += each element's
+    9 entries of corner pair p, p in order, in place, bit for bit."""
+    _add_elements(data, slots, np.ascontiguousarray(kes, np.float64), np.ascontiguousarray(elems, np.int64))
+    return data
