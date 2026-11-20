@@ -224,7 +224,7 @@ def test_a_pinned_wall_sets_the_cell_when_the_study_did_not():
     cells across the skin and check has nothing to say about it; an
     explicit pitch is left alone, and a wall too thin for four times the
     budget still warns."""
-    from loadpath.domain import build_domain
+    from loadpath.domain import build_domain, wall_pitch
 
     def lid(skin, **res):
         return {"designSpace": [_box([-30, -20, 0], [30, 20, 9])], "skin": {"thickness": skin, "open": ["-z"]},
@@ -235,10 +235,12 @@ def test_a_pinned_wall_sets_the_cell_when_the_study_did_not():
                 "resolution": res or {"maxElements": 20000}}
 
     thin = lambda r: [w for w in r["warnings"] if "cells thick" in w or "two cells" in w]  # noqa: E731
-    d = build_domain(study_from_dict(lid(1.5)))
-    assert d.pitch <= 0.75 + 1e-9 and d.n_elem <= 80000, (d.pitch, d.n_elem)
+    st = study_from_dict(lid(1.5))
+    d = build_domain(st, wall_pitch(st))
+    assert d.pitch <= 0.75 + 1e-9 and d.n_elem <= 84000, (d.pitch, d.n_elem)
     assert not thin(check_study(lid(1.5)))
-    assert abs(build_domain(study_from_dict(lid(1.5, pitch=1.2))).pitch - 1.2) < 1e-9
+    assert wall_pitch(study_from_dict(lid(1.5, pitch=1.2))) is None
+    assert wall_pitch(study_from_dict({k: v for k, v in lid(1.5).items() if k != "skin"})) is None
     assert thin(check_study(lid(1.5, pitch=1.2)))
     assert thin(check_study(lid(0.6)))
 

@@ -1238,7 +1238,7 @@ preserve or accept the supports `deliver` → `print` reports.
 than linearly with cells; a safety-factor search runs several). Members thinner than
 about two cells cannot form; `check` warns when `minMember` is too fine for
 the grid. A wall the study pins (a `skin`, a keep-out's `wall`) needs two
-cells across to bend as it should, so it sets the cell itself, up to four
+cells across to bend as it should, so in `loadpath run` it sets the cell itself, up to four
 times `maxElements` cells; `check` warns only where that is not enough. `maxElements` is a target the pitch is estimated from, so the grid
 can come out a few percent over; set `resolution.pitch` for an exact grid.
 A safety-factor search re-checks its pick on a finer grid (up to 150k

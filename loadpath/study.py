@@ -1289,6 +1289,12 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     passes, or the lightest overall when the goal has no pass/fail."""
     import dataclasses
 
+    from .domain import wall_pitch
+    wp = wall_pitch(study)
+    if wp is not None:
+        # a pinned wall sets the cell (domain.wall_pitch)
+        study = dataclasses.replace(study, pitch=wp)
+
     if study.process is not None and study.process.build == "auto":
         # compare build directions for the free design on supports, search
         # it, then decide at the fraction it was delivered at whether

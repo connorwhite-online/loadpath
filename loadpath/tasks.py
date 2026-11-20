@@ -177,7 +177,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     """Lint against the schema (every problem at once), then parse and build
     the voxel problem. {"ok": False, "error", "issues"} or {"ok": True,
     "pitch", "cells", ..., "warnings"}."""
-    from .domain import build_domain
+    from .domain import build_domain, wall_pitch
     from .schema import lint
     from .simp import filter_radius
     from .spec import study_from_dict
@@ -210,7 +210,8 @@ def check_study(raw, base_dir: str | None = None) -> dict:
                              "next": "loadpath build (MCP: loadpath_build)"})
     try:
         s = study_from_dict(raw, base_dir=base_dir or os.getcwd())
-        d = build_domain(s)
+        # the grid a run would use (a pinned wall sets the cell, domain.wall_pitch)
+        d = build_domain(s, wall_pitch(s))
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         return {"ok": False, "error": str(exc) or type(exc).__name__, "issues": issues}
     warnings = [f"{i['path']}: {i['message']}" for i in issues] + list(d.warnings)
