@@ -272,7 +272,11 @@ class _Level:
             fe = np.matmul(self.patch_k.astype(u.dtype, copy=False), ue[:, :, None])[:, :, 0]
             self._patch_scatter(fe, out)
         if self.extra is not None:
-            out += (self.extra @ u.reshape(-1).astype(np.float64)).astype(u.dtype).reshape(out.shape)
+            pre = self.__dict__.get("_extra_rows")
+            if pre is None or pre[0] is not self.extra:
+                pre = self._extra_rows = (self.extra, _mgops.csr_rows(self.extra))
+            if not _mgops.add_csr(pre[1], u, out):
+                out += (self.extra @ u.reshape(-1).astype(np.float64)).astype(u.dtype).reshape(out.shape)
         return out
 
     def _patch_index(self):

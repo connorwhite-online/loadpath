@@ -275,3 +275,25 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_extra_terms_add_as_scipy_does():
+    """A level's extra sparse terms (springs, cut cells) are added on numba's
+    threads, rows with entries only: the numbers scipy's product gives."""
+    import scipy.sparse as sp
+
+    from loadpath import mgops
+
+    if not mgops.available():
+        return
+    rng = np.random.default_rng(0)
+    n = 6000
+    rows = rng.choice(n, 700, replace=False)
+    a = sp.csr_matrix((rng.standard_normal(40000), (rng.choice(rows, 40000), rng.choice(n, 40000))), shape=(n, n))
+    pre = mgops.csr_rows(a)
+    for dt in (np.float32, np.float64):
+        u = rng.standard_normal((3, n // 3)).astype(dt)
+        out = rng.standard_normal((3, n // 3)).astype(dt)
+        want = out + (a @ u.reshape(-1).astype(np.float64)).astype(dt).reshape(out.shape)
+        assert mgops.add_csr(pre, u, out)
+        assert np.array_equal(out, want)
