@@ -777,12 +777,24 @@ def _estimate_force(re, nu, dh):
     return fd * u * u / (2.0 * dh), u
 
 
+def _disturb(f, fluid, amp, rng):
+    """Move every fluid node's velocity by amp times unit noise: the
+    populations' first-order change for that momentum (3 w c . du), which
+    adds no mass."""
+    for k in range(3):
+        du = np.float32(amp) * rng.standard_normal(fluid.shape, dtype=np.float32)
+        du[~fluid] = 0.0
+        for i in range(19):
+            if C19[i, k]:
+                f[..., i] += np.float32(3.0 * W19[i] * C19[i, k]) * du
+
+
 def cell_flow(fluid: np.ndarray, h: float = 1.0, axis: int = 0, re=(100.0,), *, pr: float = 0.71,
               sdf: np.ndarray | None = None, wall: np.ndarray | None = None, k_ratio: float = 0.0,
               u_max: float = 0.06, nu_min: float = 0.0008, nu_max: float = 0.05, cs: float = 0.1,
               heat: bool = True, heating: str = "uniform", prt: float | None = None, tol: float = 5e-3,
               passes: float = 4.0, develop: float = 15.0, max_steps: int = 300000, chunk: int = 250,
-              forces=None, nu=None, verbose: bool = False) -> dict:
+              forces=None, nu=None, disturbance: float = 1e-4, verbose: bool = False) -> dict:
     """Fully developed flow and heat transfer in one periodic cell.
 
     fluid: boolean mask (True = fluid) that tiles along all three axes;
@@ -820,6 +832,17 @@ def cell_flow(fluid: np.ndarray, h: float = 1.0, axis: int = 0, re=(100.0,), *, 
     short stop window catches either. "unsteadiness" is the rms of the flow over the last
     window, over its mean. Successive drives start from the previous one's
     flow.
+
+    Each drive is disturbed once, a chunk in: every fluid node's velocity
+    is moved by `disturbance` times the mean interstitial speed times unit
+    noise (the same noise every run; momentum only, no mass). A flow that
+    is stable forgets it; one that is not needs something to grow from, and
+    in a symmetric cell started symmetrically the only other seed is
+    rounding. Without it a 64-voxel gyroid cell driven toward Re 150 stayed
+    on its symmetric steady flow (Re 125, f 4.02, Nu 15.5, no unsteadiness
+    at all) where any disturbance takes it to the unsteady flow it has in
+    life (Re 113-115, f 4.8-4.9, Nu 13.6); at Re 20 the two agree to 7
+    digits. 0 turns it off.
 
     The lattice viscosity is chosen so the interstitial velocity stays
     under u_max (Mach), never below nu_min (the LES carries the rest).
@@ -860,6 +883,7 @@ def cell_flow(fluid: np.ndarray, h: float = 1.0, axis: int = 0, re=(100.0,), *, 
 
     out = []
     prev = None
+    noise = np.random.default_rng(0)
     for g, nu_lu, r_target in runs:
         t0 = time.time()
         tau0 = 0.5 + 3.0 * nu_lu
@@ -889,6 +913,8 @@ def cell_flow(fluid: np.ndarray, h: float = 1.0, axis: int = 0, re=(100.0,), *, 
             m = float(u[axis].mean())
             if not np.isfinite(m):
                 break
+            if disturbance and it == chunk:
+                _disturb(f, fluid, disturbance * abs(m) / phi, noise)
             hist.append(m)
             through = shape[axis] / max(abs(m / phi), 1e-5)          # steps per flow-through
             w = _window(m / phi, shape[axis], chunk, passes)
