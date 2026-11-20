@@ -264,18 +264,26 @@ class CutGrid:
         pos[self.cut_index] = np.arange(len(self.cut_index))
         g = np.array([[a, b, cc] for a in (-_GAUSS, _GAUSS) for b in (-_GAUSS, _GAUSS) for cc in (-_GAUSS, _GAUSS)])
         xyz, w, sig = [], [], []
+        # what an element brings to every one of its points, once: its
+        # nodes' displacements, bubble amplitudes and (cut cells) the mean
+        # bubble strain taken off
+        els = np.nonzero(near)[0]
+        row = np.full(m.n_elem, -1, np.int64)
+        row[els] = np.arange(len(els))
+        ue_n = u[m.edof[els]]
+        alpha_n = ue_n @ self.r_full.T
+        off_n = np.zeros((len(els), 6))
+        k = pos[els]
+        isc = k >= 0
+        if isc.any():
+            alpha_n[isc] = np.einsum("pij,pj->pi", self.r_cut[k[isc]], ue_n[isc])
+            off_n[isc] = np.einsum("pij,pj->pi", self.mbar_cut[k[isc]], alpha_n[isc])
 
         def put(el, xi_pt, weight):
-            ue = u[m.edof[el]]
-            alpha = ue @ self.r_full.T
-            k = pos[el]
-            isc = k >= 0
-            if isc.any():
-                alpha[isc] = np.einsum("pij,pj->pi", self.r_cut[k[isc]], ue[isc])
+            j = row[el]
             bu, ba = b_nodes(xi_pt[None])[0], b_bubbles(xi_pt[None])[0]
-            eps = ue @ bu.T + alpha @ ba.T
-            if isc.any():
-                eps[isc] -= np.einsum("pij,pj->pi", self.mbar_cut[k[isc]], alpha[isc])
+            eps = ue_n[j] @ bu.T + alpha_n[j] @ ba.T
+            eps -= off_n[j]
             eps /= self.pitch
             if th is not None:
                 eps[:, :3] -= th[el][:, None]
