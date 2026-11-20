@@ -53,7 +53,53 @@ because every study passes through the early ones.
 
 ## Where loadpath stood, cold
 
-RESULTS_TABLE
+Run on main a2881fa from a pristine checkout, 2026-11-20, 4 cloud cores,
+`maxElements` 40000. "First try" is a clean `check` and a delivered part
+that passes.
+
+**First try 3 of 11. A passing part delivered 4 of 11. Clean check 7 of 11.**
+
+| Part | Cold result | What went wrong |
+|---|---|---|
+| drawer pull (PLA) | passes, 11.2 g, 17 min | |
+| tablet stand (PLA) | passes, 47.1 g, 16 min | |
+| pipe saddle clamp (PETG) | passes, 6.7 g, 14 min | |
+| caster fork (PETG) | passes, 20.6 g, 44 min | `check` gave 8 warnings, all about loadpath's own fastener rings |
+| corner bracket for 2020 extrusion (PETG) | no part, SF 2.48 for 2.5 at the 70% ceiling, 16 min | the solid block reads 2.78: a part existed and was not delivered |
+| VESA adapter plate (PETG) | two loose straps, four times, 6 min | pieces that do not need each other; the search added material; 8 fastener-ring warnings |
+| hinge leaf (PETG) | two pieces, SF 0 | a named build direction banned every overhang; the goal (SF 3 on a 4 mm leaf) is also out of reach, and nothing said so |
+| crank lever (PA12) | fails, ran to the ceiling, 5 min | asked to deflect under 1 mm where its solid envelope deflects 2.24: told to "raise the volume fraction" |
+| C-clamp (PETG) | fails, SF 1.0 for 2, 4 min | peak at the throat's sharp inside corner; solid block reads 1.38 |
+| action-camera mount (PETG) | fails, SF 0.82 for 2.5, 3 min | peak at the slots; solid block reads 0.80; 4 fastener-ring warnings |
+| pipe clamp, envelope too short (a wrong problem statement, kept as a test of diagnosis) | two feet, SF 5.2, not diagnosed | the design space was in two pieces and nothing said so |
+
+Six of the seven failures are not the optimizer failing to find a shape.
+Four are problem statements that cannot work as written (a goal the
+envelope cannot meet, a space in pieces) answered with a long run and
+wrong advice; one is a rule applied as a veto; one is a part that existed
+and was thrown away. The seventh (the VESA plate) is a real modelling gap.
+
+### After the first fixes (re-run in progress: 7 of 11 so far)
+
+| Part | Cold | With the fixes |
+|---|---|---|
+| corner bracket | no part | passes, 10.3 g, tet-confirmed margin 1.08, 31 min |
+| VESA plate | two straps | passes, one piece, 13.5 g, 30 min |
+| hinge leaf | two pieces, SF 0 | one piece; told in 3 min the solid block reads SF 0.83 for 3 |
+| crank lever | wrong advice | told in 6 min: needs 2.2x the stiffness, or 1.31x the depth, or a 2.5 mm limit |
+| C-clamp | wrong advice | told in 5 min: the envelope carries 69% of the load, peak at the throat |
+| action-camera mount | wrong advice | told in 3 min: the envelope carries 32% of the load, peak at the slots |
+| pipe clamp, short envelope | not diagnosed | `check` says the space is in two pieces before the run |
+
+Read with care: this is one run per part, on fixes made after seeing the
+cold results (general causes, but chosen with these failures in view). The
+two parts that now pass take twice as long as their cold runs did: the
+supports decision designs the part twice. On the corner bracket a coarse
+screening read of the delivered part gave SF 1.5 where the tet check gives
+2.69: the spread between readings (gap 7) is not closed. Four parts (drawer
+pull, tablet stand, caster fork, pipe clamp) had not been re-run when this
+was written; the run history in `loadpath/evals/heldout/README.md` is kept
+current.
 
 ## Gaps, ranked by how many users they hit
 
@@ -62,8 +108,8 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 
 | # | Gap | Link | Hits | State |
 |---|---|---|---|---|
-| 1 | A goal the envelope cannot meet is found by running to the 70% ceiling, then answered with "raise the volume fraction" | 1, 6 | 4 of 11, every new user | **Fixed**: a failing search verifies the solid envelope, stops if the goal is out of reach, and says what the block reads, where it peaks and what would reach the goal (`report.bound`) |
-| 2 | `check` warns on loadpath's own fastener rings, so a clean check means nothing | 1 | 5 of 11, every study with a bolt | **Fixed**: the warning measures the wall the cut leaves, not the share cut |
+| 1 | A goal the envelope cannot meet is found by running to the 70% ceiling, then answered with "raise the volume fraction" | 1, 6 | 5 of 11, every new user | **Fixed**: a failing search verifies the solid envelope, stops if the goal is out of reach, and says what the block reads, where it peaks and what would reach the goal (`report.bound`) |
+| 2 | `check` warns on loadpath's own fastener rings, so a clean check means nothing | 1 | 4 of 11 at check, more during the run; every study with a bolt | **Fixed**: the warning measures the wall the cut leaves, not the share cut |
 | 3 | A named build direction forbids every overhang, so parts split or balloon | 4 | 2 of 11, every FDM study that names a direction | **Fixed**: the direction sets the layers; supports are decided by cost unless `overhangs` is declared |
 | 4 | The solid block passes but the search stops at 70% and hands back nothing | 6 | 1 of 11 | **Fixed**: the block is delivered when nothing lighter passes, with a note that the envelope sets the mass |
 | 5 | A design space in separate pieces runs for minutes and passes or fails without saying so | 1 | 1 of 11, common with keep-outs through thin envelopes | **Fixed**: flagged by `check` before the run |

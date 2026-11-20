@@ -38,4 +38,11 @@ python -m loadpath.evals.heldout table runs/NAME
 
 ## Run history
 
-RUN_HISTORY
+| Date | Code | First try | Passing part | Clean check | Notes |
+|---|---|---|---|---|---|
+| 2026-11-20 | main a2881fa (cold, pristine checkout) | 3 of 11 | 4 of 11 | 7 of 11 | The baseline. Per-part results in docs/GENERAL-DESIGN.md |
+| 2026-11-20 | first fixes (pull request 14) | partial: 7 of 11 re-run | 2 of those 7 (0 cold) | 6 of those 7 | Corner bracket and VESA plate now pass; hinge, crank, C-clamp, action-cam mount told what their envelope carries in 3 to 6 min; short pipe clamp flagged at check. Drawer pull, tablet stand, caster fork, pipe clamp not yet re-run |
+
+The scorer leaves a warning about this machine's free memory out of the
+"clean check" count: it is about the machine, not the study. A diagnosis
+case (`pass.diagnosis`) counts as first try when `check` says what is wrong.
