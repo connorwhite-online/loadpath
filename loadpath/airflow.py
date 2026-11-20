@@ -381,6 +381,7 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
     fan_dp = None
     converged = False
     ml_p = None
+    pat_p = pat_t = keep_t = None        # the pressure and energy matrices' patterns, found once
     it = 0
     d_store = [None, None, None]
     q_in_total = float(q_cell.sum())
@@ -489,10 +490,11 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             # under-relaxation
             aPr = aP / au
             src += (1.0 - au) * aPr * uf
-            M = sp.csr_matrix((np.concatenate(vals) if vals else np.zeros(0),
-                               (np.concatenate(rows) if rows else np.zeros(0, int),
-                                np.concatenate(cols) if cols else np.zeros(0, int))), shape=(n, n))
-            M = M + sp.diags(aPr)
+            nnb = sum(len(r_) for r_ in rows)
+            if cp_.get("pattern") is None or cp_["pattern"].entries != nnb:
+                cp_["pattern"] = _Pattern(np.concatenate(rows) if rows else np.zeros(0, int),
+                                          np.concatenate(cols) if cols else np.zeros(0, int), n)
+            M = cp_["pattern"].matrix(np.concatenate(vals) if vals else np.zeros(0), aPr)
             Minv = sp.diags(1.0 / aPr)
             x, _ = spla.bicgstab(M, src, x0=uf, rtol=1e-4, maxiter=60, M=Minv)
             new = U[a].copy()
@@ -528,13 +530,12 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
             vals += [-c_[both], -c_[both]]
             diag += np.bincount(l_[l_ >= 0], c_[l_ >= 0], minlength=diag.size)
             diag += np.bincount(h_[h_ >= 0], c_[h_ >= 0], minlength=diag.size)
-        r_ = np.concatenate(rows)
-        c_ = np.concatenate(cols)
         v_ = np.concatenate(vals)
-        Mp = sp.csr_matrix((v_, (pnum[r_], pnum[c_])), shape=(npn, npn))
+        if pat_p is None or pat_p.entries != len(v_):
+            pat_p = _Pattern(pnum[np.concatenate(rows)], pnum[np.concatenate(cols)], npn)
         dg = diag[fl]
         dg = np.where(dg > 0, dg, 1.0)
-        Mp = (Mp + sp.diags(dg * (1.0 + 1e-9))).tocsr()
+        Mp = pat_p.matrix(v_, dg * (1.0 + 1e-9))
         bp = -mass[fl]
         if ml_p is None or it % 25 == 1:
             import pyamg
@@ -615,16 +616,16 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
         # mass); while it does not yet, this keeps every row summing to zero,
         # so no cell is a sink or a source of heat by a mass imbalance
         diagT += f_in
-        rows = np.concatenate(rows)
-        cols = np.concatenate(cols)
         vals = np.concatenate(vals)
         fm_ = fix_mask.ravel()
-        keep = ~fm_[rows]
-        MT = sp.csr_matrix((vals[keep], (rows[keep], cols[keep])), shape=(N, N))
+        if pat_t is None or len(keep_t) != len(vals):
+            rows = np.concatenate(rows)
+            keep_t = ~fm_[rows]
+            pat_t = _Pattern(rows[keep_t], np.concatenate(cols)[keep_t], N)
         dT = np.where(fm_, 1.0, diagT)
         bT = np.where(fm_, fix_t.ravel(), bT)
         dT = np.where(dT > 0, dT, 1e-12)
-        MT = (MT + sp.diags(dT)).tocsr()
+        MT = pat_t.matrix(vals[keep_t], dT)
         Tn = solve_t(MT, bT, T)
         dTmax = float(np.abs(Tn - T).max())
         T = T + at * (Tn - T)
@@ -673,6 +674,42 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
     return AirflowResult(t=Tc, u=U, p=P.reshape(shape), velocity=vel, solid=solid, pitch=float(pitch), ambient=amb,
                          walls=walls, balance=bal, iterations=it, converged=converged, history=hist, air=air,
                          seconds=round(time.time() - t0, 1))
+
+
+class _Pattern:
+    """A sparse matrix whose entries change from pass to pass and whose
+    pattern does not: off-diagonal entries at (rows, cols), in the order the
+    assembly lists them, and a diagonal. The pattern is sorted once; a pass
+    then drops its values into place. Built afresh every pass (triplets
+    sorted into rows, the diagonal added as a second matrix) the same three
+    matrices cost an eighth of a pass on 184,000 cells. The matrix is the
+    one that gave, entry for entry: values listed twice add up in the order
+    listed, and an entry that comes to exactly zero is left out."""
+
+    def __init__(self, rows, cols, n):
+        self.n = n
+        self.entries = len(rows)
+        d = np.arange(n, dtype=np.int64)
+        key = np.concatenate([np.asarray(rows, np.int64), d]) * n + np.concatenate([np.asarray(cols, np.int64), d])
+        uniq, inv = np.unique(key, return_inverse=True)
+        inv = inv.ravel()
+        it = np.int32 if max(n, len(uniq)) < 2 ** 31 - 1 else np.int64
+        self.indices = (uniq % n).astype(it)
+        self.indptr = np.concatenate([[0], np.cumsum(np.bincount(uniq // n, minlength=n))]).astype(it)
+        self.slot = inv[:self.entries]
+        self.dslot = inv[self.entries:]
+        self.nnz = len(uniq)
+
+    def matrix(self, vals, diag):
+        data = np.bincount(self.slot, weights=vals, minlength=self.nnz)
+        data[self.dslot] += diag
+        M = sp.csr_matrix((data, self.indices, self.indptr), shape=(self.n, self.n))
+        M.has_sorted_indices = True
+        M.has_canonical_format = True
+        if not data.all():
+            M = M.copy()                    # the pattern is shared between passes: prune a copy
+            M.eliminate_zeros()
+        return M
 
 
 class _TSolve:
