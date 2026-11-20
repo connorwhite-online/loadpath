@@ -206,5 +206,5 @@
  "pass": {
   "safetyFactor": 2
  },
- "note": "Twin of fan-duct-4010-pla with gravity written as a vector (3 g downward), nothing else changed."
+ "note": "Twin of fan-duct-4010-pla with gravity written as a vector (3 g downward), nothing else changed. Refused at check as well: its shake puts a force of unknown direction on each of the fan's two screws, and a case may hold one. Kept; the twin fan-duct-4010-pla-c gives the fan's weight as one force on both screw sleeves."
 }

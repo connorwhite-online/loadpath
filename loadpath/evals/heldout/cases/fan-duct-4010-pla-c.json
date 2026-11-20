@@ -1,0 +1,233 @@
+{
+ "id": "fan-duct-4010-pla-c",
+ "batch": 2,
+ "brief": "A part-cooling duct in PLA (FDM, layers along Z) for a 3D printer. A 40 x 40 x 10 mm fan (22 g) bolts flat onto its top face (the plane z = 40) with two M3 screws on a diagonal (x, y = -16, -16 and 16, 16) that thread 6 mm into the duct. Air goes down from a 36 mm round inlet under the fan and narrows to a 30 x 6 mm slot outlet at z = 0 (x = -15 to 15, y = 10 to 16). The duct hangs from the carriage by two M3 screws through a tab on the back: the tab is the plane y = -20, screws at x = -12 and 12, z = 30. Keep it inside x = -20 to 20, y = -20 to 20, z = 0 to 40. The carriage shakes it at up to 3 g in any direction. Walls 1.2 mm. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "duct",
+  "fdm",
+  "fasteners",
+  "light-load",
+  "any-direction"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -20,
+     -20,
+     0
+    ],
+    "max": [
+     20,
+     20,
+     40
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "air",
+    "wall": 1.2,
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        0,
+        0,
+        41
+       ],
+       "p1": [
+        0,
+        0,
+        24
+       ],
+       "r": 18
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0,
+        0,
+        24
+       ],
+       "p1": [
+        0,
+        13,
+        6
+       ],
+       "r": 9
+      },
+      {
+       "type": "box",
+       "min": [
+        -15,
+        10,
+        -1
+       ],
+       "max": [
+        15,
+        16,
+        8
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "fan-a",
+    "size": "M3",
+    "seat": [
+     -16,
+     -16,
+     40
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 6
+   },
+   {
+    "id": "fan-b",
+    "size": "M3",
+    "seat": [
+     16,
+     16,
+     40
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 6
+   },
+   {
+    "id": "m-a",
+    "size": "M3",
+    "seat": [
+     -12,
+     -16,
+     30
+    ],
+    "direction": "-y",
+    "grip": 4,
+    "end": "face",
+    "driver": 10
+   },
+   {
+    "id": "m-b",
+    "size": "M3",
+    "seat": [
+     12,
+     -16,
+     30
+    ],
+    "direction": "-y",
+    "grip": 4,
+    "end": "face",
+    "driver": 10
+   }
+  ],
+  "supports": [
+   {
+    "region": "m-a-bore",
+    "fix": "xz"
+   },
+   {
+    "region": "m-b-bore",
+    "fix": "xz"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -20,
+      -20.5,
+      22
+     ],
+     "max": [
+      20,
+      -19.7,
+      38
+     ]
+    },
+    "fix": "y"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "shake",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          -16,
+          -16,
+          40
+         ],
+         "p1": [
+          -16,
+          -16,
+          34
+         ],
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          16,
+          16,
+          40
+         ],
+         "p1": [
+          16,
+          16,
+          34
+         ],
+         "r": 3
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       -0.65
+      ],
+      "direction": "any"
+     }
+    ]
+   }
+  ],
+  "gravity": [
+   0,
+   0,
+   -29.4
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "fan-duct-4010-pla-c",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ },
+ "note": "Twin of fan-duct-4010-pla: gravity as a vector, and the fan's 0.65 N at 3 g as one force of unknown direction on both screw sleeves. Nothing else changed."
+}

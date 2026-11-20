@@ -459,6 +459,12 @@ def _closed_bores(study: Study, mesh) -> list:
         ring = [np.zeros(3)] + [0.3 * sh.r * (np.cos(t) * u + np.sin(t) * v)
                                 for t in np.linspace(0, 2 * np.pi, 6, endpoint=False)]
         for end, cap, out_dir in (("p0", sh.p0, -a), ("p1", sh.p1, a)):
+            # a tapped hole is blind by design: the screw comes in at its
+            # mouth (p0, fasteners.py) and stops short of the far end, so
+            # material past that end is the hole's floor, not a cap
+            # (tasks.check_study leaves it out the same way)
+            if end == "p1" and str(r.id).endswith("-tap"):
+                continue
             probes = np.array([cap + d * out_dir + o for d in (1.5, 3.0) for o in ring])
             # ray parity (_inside): trimesh's contains (no embree) took
             # 4-5 s a verify on the wrist yoke for these few dozen points
