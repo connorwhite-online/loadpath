@@ -306,7 +306,7 @@ class CutGrid:
         if self._tree is None:
             self._tree = cKDTree(self._faces)
         xyz = np.asarray(xyz, float)
-        dist, idx = self._tree.query(xyz, k=k)
+        dist, idx = self._tree.query(xyz, k=k, workers=-1)
         p = self._faces[idx].mean(axis=1)
         ijk = np.floor((xyz - self.origin) / self._fine_h).astype(np.int64)
         ok = np.all((ijk >= 0) & (ijk < np.array(self._fine.shape)), axis=1)
@@ -378,7 +378,7 @@ class CutGrid:
             return out
         tree = cKDTree(xyz)
         k = min(FIT_POINTS, len(xyz))
-        dist, idx = tree.query(p, k=k)
+        dist, idx = tree.query(p, k=k, workers=-1)
         out[cand] = _fit_linear(p, xyz, sig, w, dist, idx, self.pitch)
         return out
 
