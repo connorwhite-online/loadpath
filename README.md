@@ -408,7 +408,7 @@ print(best.report["mass"], best.report["safetyFactor"])
 - [Case studies](docs/case-studies/) and [benchmarks](docs/BENCHMARKS.md).
 - Topics: [fields](docs/fields.md), [materials](docs/materials.md),
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
-  [CAD import](docs/IMPORT.md), [scans and splats](docs/SCAN.md), [slicer](docs/slicer.md),
+  [CAD import](docs/IMPORT.md), [scans and splats](docs/SCAN.md), [slicer](docs/slicer.md), [freeform surfacing from curves](docs/FREEFORM.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md), [breakaway links](docs/FUSES.md),
   [mechanisms](docs/MECHANISMS.md), [a part in one run from a spec](docs/BUILD.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md), [a first exterior round the parts](docs/ENVELOPE.md),

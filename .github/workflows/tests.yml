@@ -94,7 +94,7 @@ jobs:
             pip: build123d
             files: >-
               tests/test_cadimport.py tests/test_latticestep.py tests/test_sharp.py tests/test_fit.py
-              tests/test_subd.py tests/test_build.py
+              tests/test_subd.py tests/test_build.py tests/test_surfacing.py
           # NeuralFoil (the aero extra) only here: the propeller's polars
           - group: aero            # ~3 min
             extras: ",aero"
