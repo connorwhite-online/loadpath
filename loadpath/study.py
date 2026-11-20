@@ -508,7 +508,12 @@ def bound_note(study: Study, report: dict, pitch: float | None = None) -> tuple[
                 + ((". More material cannot help, there is none left to add: "
                     + (_square_edge_note(study, at, pitch) or "")
                     + "lower the load or the factor, use a stronger material, or give the part more room where "
-                      "the peak is (a thicker section, a larger radius at a keep-out's corner, a wider ring)")
+                      "the peak is (a thicker section, a larger radius at a keep-out's corner, a wider ring). "
+                      # how much: a section's stress goes with 1 / depth^2 where it bends and with
+                      # 1 / area where it is pulled or sheared, so the two bracket what it needs
+                      f"For the section there to carry it as it stands it needs {(g.safety_factor / sf) ** 0.5:.2g}x "
+                      f"the depth along the load if it bends, {g.safety_factor / sf:.2g}x the area if it is "
+                      "pulled or sheared")
                    if hard else ", inside what two readings of one part differ by"))
     if not parts:
         m = report.get("margin")

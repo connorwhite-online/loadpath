@@ -137,13 +137,21 @@ What the re-run itself showed:
   (78 s, same part). The rest of a 20 to 30 minute run is the ordinary
   search going on to lighter parts once one passes, and on the pipe clamp
   the constrained method at a fine grid (about 460 s a pass, repeated while
-  the tet margin is above 1.12).
+  the tet margin is above 1.12). Read off the progress events of two small
+  passing parts (15 to 16 min each): the tetrahedral confirm is 35 to 40%
+  (60 to 135 s a time, three to five times), the grid verify about 25%
+  (27 s, nine times), the optimizer about 15%, the supports decision about
+  12% and meshing about 7%. So most of a passing run is checking the
+  candidates, not finding them.
 - **Impossible goals on small studies** are now read on the solid block
   before the parallel searches start (545 s to 47 s on an impossible shelf
   bracket). The four above were timed before that.
 - **Readings still spread.** The corner bracket's coarse screen read SF 1.5
   where the tet check gives 2.69, and the tablet stand's delivered part
-  reads 19 on the grid and 8.0 on tets at the same deflection (gap 7).
+  read 19 on the search's coarse grid and 8.0 on tets. That one is settled:
+  on equal terms the grid gives 10.2 at 60k cells and tets 8.25 to 8.49, so
+  the two model the same problem and the 19 was grid coarseness, on a part
+  with a margin of four either way.
 - The four parts that are told what their envelope carries are not passes.
   Checked by hand since (gap 7), the limits are real for the studies as
   written.
@@ -161,7 +169,7 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 4 | The solid block passes but the search stops at 70% and hands back nothing | 6 | 1 of 11 | **Fixed**: the block is delivered when nothing lighter passes, with a note that the envelope sets the mass |
 | 5 | A design space in separate pieces runs for minutes and passes or fails without saying so | 1 | 1 of 11, common with keep-outs through thin envelopes | **Fixed**: flagged by `check` before the run |
 | 6 | A part in pieces: the search adds material, which never joins pieces that do not need each other | 5 | 1 of 11, any plate or frame with paired mounts | **Partly**: the search stops and says which load is missing. Open: the load that makes a part one piece (being carried, assembly) is not modelled |
-| 7 | The safety factor is set at something the study drew, not by the shape: a keep-out's square inside corner, a thin section, a bore held as if glued | 2 | 4 of 11, every part with a clearance cut or a bore | **Partly**: checked by hand, the four limits are real for the studies as written (hinge: 150 N on a 26 mm arm of a 4 mm PETG leaf is 40 MPa nominal against 47; crank: beam theory gives 1.9 mm of the 2.24 read; C-clamp: 10 MPa nominal, 34 at the throat's square corner, and the block reads 1.37, 1.73 and 2.36 with the corner square, at 4 mm and at 8 mm radius). A peak on a keep-out's square edge is now named as the notch to round; followed on the C-clamp (8 mm radius at the throat, nothing else changed), the second try passes: 45.9 g, SF 2.19 for 2, 19 min. Open: how much radius or section is needed is not said for strength as it is for stiffness; a bore held rigidly all round (docs/PHYSICS.md, open item 1); the 0.86 mm reading length is assumed for PETG and PLA |
+| 7 | The safety factor is set at something the study drew, not by the shape: a keep-out's square inside corner, a thin section, a bore held as if glued | 2 | 4 of 11, every part with a clearance cut or a bore | **Partly**: checked by hand, the four limits are real for the studies as written (hinge: 150 N on a 26 mm arm of a 4 mm PETG leaf is 40 MPa nominal against 47; crank: beam theory gives 1.9 mm of the 2.24 read; C-clamp: 10 MPa nominal, 34 at the throat's square corner, and the block reads 1.37, 1.73 and 2.36 with the corner square, at 4 mm and at 8 mm radius). A peak on a keep-out's square edge is now named as the notch to round; followed on the C-clamp (8 mm radius at the throat, nothing else changed), the second try passes: 45.9 g, SF 2.19 for 2, 19 min. A strength shortfall now also says how much more section the weak spot needs (the square root of the shortfall in depth if it bends, the shortfall in area if it is pulled or sheared). Open: how much radius a notch needs; a bore held rigidly all round (docs/PHYSICS.md, open item 1); the 0.86 mm reading length is assumed for PETG and PLA |
 | 8 | Small parts take 5 to 17 minutes | 8 | all | **Partly**: an impossible goal is read on the solid block first (under a minute on small studies); the supports decision searches only where it can win. Open: 16 to 50 minutes for a part that passes, most of it the search for lighter parts and the constrained method's passes |
 | 8a | A part passed by the confirming check on a load other than the one asked: a force from any direction checked as written | 6 | 1 of 11, every study with a direction-uncertain load | **Fixed**: the tetrahedral check judges the worst direction |
 | 8b | A sound design thrown away because its mesh folds next to a keep-out | 5 | 1 of 11 seen (8 of its 12 designs), any part with a blind tapped hole | **Fixed**: the smoothing's blend back from a keep-out eases over the shift it undoes |
