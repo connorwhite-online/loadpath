@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from loadpath.spec import study_from_dict  # noqa: E402
-from loadpath.study import bound_note  # noqa: E402
+from loadpath.study import _pieces_again, bound_note  # noqa: E402
 from loadpath.tasks import check_study  # noqa: E402
 
 
@@ -137,6 +137,15 @@ def test_bound_note_says_what_the_envelope_can_do():
     case = {"name": "pull-off", "safetyFactor": 4.0, "deflection": 0.2, "peakAt": [-24.0, 0.0, 4.0]}
     note, out = bound_note(s, {"mass": 20.0, "cases": [case], "margin": 1.6})
     assert not out and "meets the goal" in note
+
+
+def test_a_part_in_pieces_gets_more_material_once():
+    """More material joins a loose pad. It does not join two straps that
+    each carry their own load: the second fuller part in pieces ends it."""
+    assert not _pieces_again([], 0.30, False), "the first part in pieces stopped the search"
+    assert _pieces_again([0.30], 0.39, False), "a fuller part in pieces again went on adding material"
+    assert not _pieces_again([0.30], 0.25, False), "a lighter try in pieces says nothing about adding material"
+    assert not _pieces_again([0.30], 0.39, True), "a search that has a passing part was stopped"
 
 
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]

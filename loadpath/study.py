@@ -427,6 +427,14 @@ def _margin(study: Study, report: dict) -> float | None:
     return min(ms) if ms else None
 
 
+def _pieces_again(pieces: list, vf: float, passed: bool) -> bool:
+    """A part that is strong enough but in pieces is given more material once
+    (a loose pad or a fastener's ring is reconnected by it). If the fuller
+    part is in pieces too and nothing has passed, the pieces do not need each
+    other under the declared loads and no fraction will join them."""
+    return bool(pieces) and vf > pieces[-1] and not passed
+
+
 def _nearest_region(study: Study, at) -> str | None:
     """The drawn region (preserve, keep-out, fastener ring) nearest a point,
     as "'id' (d mm away)": what a peak stress sits against."""
@@ -3451,7 +3459,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 # unloaded pad left floating) is a failed outcome: step up
                 # about a third, more material reconnects it. It used to
                 # count as passing and end the search with no passing part.
-                if pieces and vf > pieces[-1] and hi_pass is None:
+                if _pieces_again(pieces, vf, hi_pass is not None):
                     # More material came back in pieces again: each piece
                     # carries its own load to its own support and nothing in
                     # the load cases asks them to hold each other, so no
