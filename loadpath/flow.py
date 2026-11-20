@@ -830,8 +830,8 @@ def cell_flow(fluid: np.ndarray, h: float = 1.0, axis: int = 0, re=(100.0,), *, 
     2.8), then might break down into the more chaotic one (f 3.6-3.7): the
     first is the flow held near the cell's symmetry, and the 20% scatter
     between runs from Re ~200 to ~1,500 was which of the two a run was
-    caught on. Disturbed (below), the runs land on the second, and a
-    short stop window catches either. "unsteadiness" is the rms of the flow over the last
+    caught on. Disturbed (below), the runs land on the second.
+    "unsteadiness" is the rms of the flow over the last
     window, over its mean. Successive drives start from the previous one's
     flow.
 
