@@ -682,15 +682,45 @@ def _submodel_gate():
     return _MemoryGate(None if avail is None else 0.8 * avail)
 
 
+# The most unknowns one submodel box is built with. A box's half-width is
+# eight global cells but at least 6 mm, and it is solved 2.5x finer: on a
+# grid of 1 mm cells that is ~200k dofs at most, but the floor holds the box
+# at 12 mm whatever the pitch, so the unknowns grow as 1 / pitch^3. A
+# 0.85 mm skin at four cells through (_SHELL_CELLS: 0.21 mm, whatever
+# --cells asks) made boxes of 0.67-0.82M dofs on the puck enclosure's drop
+# study: 106-147 s of AMG-CG and ~3.6 GB each, three to six a load case,
+# three at once; six cases ran past 2 h at 11 GB and were killed. Over the
+# budget, the box shrinks toward the eight global cells (no smaller): the
+# same hotspots, the same 2.5x finer cells, a smaller neighbourhood.
+_SUB_MAX_DOFS = 250_000
+
+
+def _submodel_dofs(hm, center, half, pitch) -> float:
+    """A submodel box's unknowns, before it is built: the global grid's
+    nodes in the box, times the refinement cubed, three each."""
+    inbox = np.all(np.abs(hm.node_xyz - center) <= half, axis=1).sum()
+    return 3.0 * float(inbox) * (hm.pitch / pitch) ** 3
+
+
+def _submodel_half(hm, center, half, pitch, budget=None) -> float:
+    """`half`, shrunk (to no less than eight global cells) until the box
+    holds at most `budget` (_SUB_MAX_DOFS) unknowns."""
+    budget = _SUB_MAX_DOFS if budget is None else budget
+    floor = min(half, 8.0 * hm.pitch)
+    while half > floor and _submodel_dofs(hm, center, half, pitch) > budget:
+        half = max(floor, 0.85 * half)
+    return half
+
+
 def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None, edges=None,
                    cut=False, ratio=1.0, gate=None):
     """_submodel_box, holding its share of `gate` (a _MemoryGate) while it
-    builds and solves. Its unknowns are known before it is built: the
-    global grid's nodes in the box, times the refinement cubed."""
+    builds and solves; its box no bigger than _SUB_MAX_DOFS unknowns
+    (_submodel_half)."""
+    half = _submodel_half(hm, center, half, pitch)
     if gate is None:
         return _submodel_box(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case, edges, cut, ratio)
-    inbox = np.all(np.abs(hm.node_xyz - center) <= half, axis=1).sum()
-    need = gate.take(_SUB_DOF_BYTES * 3.0 * float(inbox) * (hm.pitch / pitch) ** 3)
+    need = gate.take(_SUB_DOF_BYTES * _submodel_dofs(hm, center, half, pitch))
     try:
         return _submodel_box(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case, edges, cut, ratio)
     finally:
