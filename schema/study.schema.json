@@ -1821,6 +1821,17 @@
             "type": "string",
             "description": "the subject's silhouette as an image (white on black)"
           },
+          "kind": {
+            "enum": [
+              "render",
+              "sketch"
+            ],
+            "description": "sketch: read the image as pencil on paper (ink strokes, dot grid and shading dropped, the drawn outline filled for an overlap score); default render"
+          },
+          "turn": {
+            "type": "boolean",
+            "description": "a fitted camera may turn from its start (default true; false for a sketch, whose views are orthographic: only zoom and pan are fitted)"
+          },
           "gate": {
             "type": "boolean",
             "description": "false: scored and drawn side by side, but never fails the build (the default for a fitted camera: a sketch is not to scale, so its score is for a reviewer's eye)"

@@ -271,12 +271,33 @@ def _conforming_cradle(meshes, bounds, side: np.ndarray, thickness: float, ext_s
     except Exception:  # noqa: BLE001 - the bounding slab stands in
         return None
     hf = {"type": "heightfield", "normal": _r(n, 6), "axes": [_r(e1, 6), _r(e2, 6)],
-          "origin": _r(lo, 4), "step": step, "heights": np.round(H, 4).tolist()}
+          "origin": _r(lo, 4), "step": step}
+    low = _offset_below(H, step, float(thickness))
     return {"type": "intersect", "shapes": [
         {"type": "mesh", "path": os.path.abspath(path)},
-        {**hf, "side": "below", "depth": round(float(thickness) + 1.0, 4)},
-        {**hf, "side": "above", "offset": -round(float(thickness), 4), "depth": round(float(thickness) + 1.0, 4)},
+        {**hf, "heights": np.round(H, 4).tolist(), "side": "below", "depth": round(float(thickness) + 1.0, 4)},
+        {**hf, "heights": np.round(low, 4).tolist(), "side": "above", "depth": round(float(thickness) + 1.0, 4)},
         ext_spec]}
+
+
+def _offset_below(H, step: float, t: float):
+    """The cradle layer's lower surface: `t` mm below the part's underside
+    h(u, v) along n, except where the underside tilts past 60 degrees
+    (a layer t deep along n is t * cos(tilt) thick there, under half of
+    t), where the layer stops. Along n alone the
+    speaker's driver cradle came out a 0.05 mm film down the driver's
+    flange step, carrying the driver's whole drop load (its part read SF
+    0.03 against 1.5). Thickening it square to the step instead (an
+    envelope of balls) moved the cradle into the desk hub's board's tilted
+    way in."""
+    H = np.asarray(H, float)
+    gy, gx = np.gradient(H, step)
+    steep = np.hypot(gx, gy) > np.sqrt(3.0)     # tilt over 60 degrees
+    # (past the surface there, not on it: a layer of no thickness over a
+    # stretch put the two heightfields face to face, and the delivered
+    # speaker came out not watertight; between samples the layer now
+    # closes across a clean line)
+    return np.where(steep, H + t, H - t)
 
 
 def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None) -> dict:
@@ -960,6 +981,44 @@ def _way_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, hint=None, tilt=
             return rec
         last = {"insertFrom": None, "closest": ins, "worstPenetration": round(float(pen), 3),
                 "at": _r(where, 2), "after": round(dist, 2)}
+    # a big part in a snug place: past placement._PATH_CELLS the grid's
+    # pitch grows to a millimetre or more, every contact reads as blocked
+    # and the grid search finds nothing, or only a route that is blocked
+    # when checked exactly. Try each straight way out exactly at the part's
+    # surface points, then each two-leg way (a short move along an axis,
+    # then out along an axis: a board pressed down out of a cup, then back)
+    if last is None or last.get("insertFrom") is None:
+        from .placement import _DIRS
+        _an = _axis_name
+        hv = _axis_vec(hint) if isinstance(hint, str) else np.zeros(3)
+        order = sorted(_DIRS, key=lambda v: -float(v @ hv))
+        best = last if last is not None and last.get("closest") is not None else None
+        pen_ = _Pen(obstacles)
+        lo_, hi_ = exit_bounds
+        for d in order:
+            ok, pen, _, where, dist = _path_check(pts, pen_, [(d, None)], lo_, hi_, tol)
+            if ok:
+                return {"insertFrom": _an(d), "legs": 1, "worstPenetration": round(float(pen), 3),
+                        "search": "straight, exact (the grid was too coarse)"}
+            if best is None or dist > best["after"]:
+                best = {"insertFrom": None, "closest": _an(d), "worstPenetration": round(float(pen), 3),
+                        "at": _r(where, 2), "after": round(dist, 2)}
+        axes = [v for v in order if np.count_nonzero(np.abs(v) > 1e-9) == 1]
+        span = float(np.max(np.asarray(hi_, float) - np.asarray(lo_, float)))
+        for d2 in axes:
+            for d1 in axes:
+                if abs(float(d1 @ d2)) > 0.5:
+                    continue
+                for L in (2.0, 5.0, 10.0, 20.0, 40.0):
+                    if L > span:
+                        break
+                    lg = [(d1, L), (d2, None)]
+                    ok, pen, _, where, dist = _path_check(pts, pen_, lg, lo_, hi_, tol)
+                    if ok:
+                        return {"insertFrom": [{"toward": _an(d1), "length": L}, _an(d2)], "legs": 2,
+                                "worstPenetration": round(float(pen), 3),
+                                "search": "two legs, exact (the grid was too coarse)"}
+        last = best
     if tilt and float(tilt.get("max", 0)) > 0:
         rec = _tilt_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, tilt)
         if rec is not None:
@@ -1692,6 +1751,84 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
     return out
 
 
+def _designed(sp, design, pitches=None, iterations=None, nonlinear=None, on_progress=None):
+    """A switch, feel or cooling study designed and its report written."""
+    from .__main__ import _write_report
+    from .spec import study_from_dict
+
+    raw = json.load(open(sp))
+    st = study_from_dict(raw, os.path.dirname(os.path.abspath(sp)))
+    if raw.get("cooling"):
+        from .cooling import run_cooling
+        rep = run_cooling(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress)
+    elif raw.get("feel"):
+        from .feel import run_feel
+        rep = run_feel(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress,
+                       nonlinear=nonlinear)
+    else:
+        from .switch import run_switch
+        rep = run_switch(st, design, pitches=pitches, iterations=iterations, nonlinear=nonlinear,
+                         on_progress=on_progress)
+    _write_report(design, {"ok": rep["passes"], **rep})
+    return {"passes": bool(rep["passes"])}
+
+
+_PROGRESS = "@loadpath-progress "
+
+
+def _progress_line(ev, _x=None):
+    import sys
+    from .__main__ import _jsonable
+    print(_PROGRESS + json.dumps(_jsonable(ev), default=float), file=sys.stderr, flush=True)
+
+
+def _fresh(what: str, *args, on_progress=None, **kw):
+    """_designed or check_delivered run in a fresh Python process, its
+    progress events passed on to on_progress; returns its result. A
+    ValueError there is raised here."""
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        job, res = os.path.join(tmp, "job.json"), os.path.join(tmp, "result.json")
+        with open(job, "w") as fh:
+            json.dump({"what": what, "args": args, "kw": kw, "progress": on_progress is not None, "result": res}, fh)
+        cmd = [sys.executable, "-c", "import sys; from loadpath.enclosure import _child; _child(sys.argv[1])", job]
+        with subprocess.Popen(cmd, stdout=sys.stderr, stderr=subprocess.PIPE, text=True) as proc:
+            for line in proc.stderr:
+                if line.startswith(_PROGRESS) and on_progress is not None:
+                    try:
+                        on_progress(json.loads(line[len(_PROGRESS):]), None)
+                        continue
+                    except Exception:  # noqa: BLE001 - a progress line is only a note
+                        pass
+                sys.stderr.write(line)
+            code = proc.wait()
+        if not os.path.exists(res):
+            raise RuntimeError(f"{what} process ended with code {code} and no result (out of memory?)")
+        out = json.load(open(res))
+    if "valueError" in out:
+        raise ValueError(out["valueError"])
+    return out["result"]
+
+
+def _child(job_path: str):
+    from .__main__ import _jsonable
+
+    job = json.load(open(job_path))
+    fn = {"design": _designed, "check": check_delivered}[job["what"]]
+    kw = dict(job["kw"])
+    if job["progress"]:
+        kw["on_progress"] = _progress_line
+    try:
+        out = {"result": fn(*job["args"], **kw)}
+    except ValueError as exc:
+        out = {"valueError": str(exc)}
+    with open(job["result"], "w") as fh:
+        json.dump(_jsonable(out), fh, default=float)
+
+
 def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_limit: float | None = None,
                      quick: bool = False, nonlinear: bool | None = None, on_progress=None) -> dict:
     """Design what run_enclosure wrote and check it as delivered. `r` is
@@ -1702,9 +1839,8 @@ def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_
     and cover, each designed and checked on its own. Writes
     <out>/design[-half]/ and <out>/checks.json; returns {parts: {half:
     checks}, ok}."""
-    from .__main__ import _jsonable, _write_report
+    from .__main__ import _jsonable
     from .__main__ import main as cli
-    from .spec import study_from_dict
 
     halves = dict(r.get("split") or {}) or {"whole": r["studyPath"]}
     parts = {}
@@ -1715,19 +1851,12 @@ def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_
         code = 0
         try:
             if raw.get("cooling") or raw.get("feel") or raw.get("switch"):
-                st = study_from_dict(raw, os.path.dirname(os.path.abspath(sp)))
-                if raw.get("cooling"):
-                    from .cooling import run_cooling
-                    rep = run_cooling(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress)
-                elif raw.get("feel"):
-                    from .feel import run_feel
-                    rep = run_feel(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress,
-                                   nonlinear=nonlinear)
-                else:
-                    from .switch import run_switch
-                    rep = run_switch(st, design, pitches=pitches, iterations=iterations, nonlinear=nonlinear,
-                                     on_progress=on_progress)
-                _write_report(design, {"ok": rep["passes"], **rep})
+                # in a process of its own, as the check after it: what the
+                # design leaves allocated (factor pools, meshes) stayed in
+                # the process, and the speaker's delivered check (11.9 GB
+                # alone) was killed beside it
+                _fresh("design", sp, design, pitches=pitches, iterations=iterations, nonlinear=nonlinear,
+                       on_progress=on_progress)
             else:
                 argv = ["run", sp, "--out", design, "--viewer", "none"] + \
                     (["--time-limit", str(time_limit)] if time_limit else []) + (["--quick"] if quick else [])
@@ -1745,7 +1874,7 @@ def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_
         except ValueError as exc:
             parts[half] = {"ok": False, "error": str(exc), "designSeconds": round(time.time() - t0, 1)}
             continue
-        chk = check_delivered(sp, design, quick=quick, on_progress=on_progress)
+        chk = _fresh("check", sp, design, quick=quick, on_progress=on_progress)
         chk["designSeconds"] = round(time.time() - t0, 1)
         chk["ok"] = bool(chk["ok"] and code in (0, None))
         parts[half] = chk

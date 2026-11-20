@@ -1529,6 +1529,103 @@ def _bodies(man):
     return sorted(man.decompose(), key=lambda b: -b.volume())
 
 
+WELD_GAP = 0.5   # of a cell: a gap under this the optimizer's grid cannot see
+
+
+def _gap_weld(a, b, tol: float, step: float):
+    """Material filling the gap between two bodies (trimesh) where their
+    surfaces stand within `tol` of each other: a hull per `step`-sized patch
+    of the facing surfaces (with its neighbours, so the hulls overlap), each
+    spanning the gap between the points that face each other and no further.
+    None where they nowhere come that close."""
+    import manifold3d as m3d
+    import trimesh
+    from scipy.spatial import cKDTree
+
+    lo, hi = b.bounds[0] - 2 * tol, b.bounds[1] + 2 * tol
+
+    def near(m, lo, hi, n_per):
+        t = m.triangles
+        f = np.all((t.min(axis=1) <= hi) & (t.max(axis=1) >= lo), axis=1)
+        if not f.any():
+            return np.zeros((0, 3))
+        sub = m.submesh([np.nonzero(f)[0]], append=True)
+        n = int(min(400_000, max(2000, sub.area * n_per)))
+        return np.asarray(trimesh.sample.sample_surface_even(sub, n, seed=0)[0], float)
+
+    dens = 1.0 / (0.25 * tol) ** 2
+    pa = near(a, lo, hi, dens)
+    if not len(pa):
+        return None
+    pb = near(b, pa.min(axis=0) - tol, pa.max(axis=0) + tol, dens)
+    if not len(pb):
+        return None
+    d, i = cKDTree(pa).query(pb, distance_upper_bound=tol)
+    on = d < tol
+    if not on.any():
+        return None
+    q, r = pb[on], pa[i[on]]
+    key = np.floor(q / step).astype(int)
+    groups = {}
+    for n, k in enumerate(map(tuple, key)):
+        groups.setdefault(k, []).append(n)
+    hulls = []
+    for k in groups:
+        sel = [n for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+               for n in groups.get((k[0] + dx, k[1] + dy, k[2] + dz), ())]
+        pts = np.vstack([q[sel], r[sel]])
+        if len(pts) < 4:
+            continue
+        h = m3d.Manifold.hull_points(pts)
+        if h.volume() > 1e-9:
+            hulls.append(h)
+    if not hulls:
+        return None
+    return m3d.Manifold.batch_boolean(hulls, m3d.OpType.Add)
+
+
+def _weld_field_joints(part, kept, field: "_FieldBodies", pitch: float, clip=None):
+    """The part with each drawn body the optimized field joins to the main
+    one welded to it across the gap the exact shapes leave, and the welds'
+    volume (0 when none was needed).
+
+    The grid cannot see a gap under half a cell: a speaker's drawn driver
+    cradle stood 0.05 mm from the skin, their cells shared faces, and the
+    optimizer carried the driver through that joint with no material of its
+    own. The exact union then delivered the cradle as a body of its own,
+    loose inside the shell with the driver's load on it. Where the field
+    has the two joined, the part was designed on that joint, so it is built:
+    the gap is filled where the surfaces stand within WELD_GAP of a cell,
+    bounded by `clip` (the envelope less the keep-outs that cut)."""
+    import manifold3d as m3d
+
+    if len(kept) < 2 or field is None:
+        return part, kept, 0.0
+    main = field.of(kept[0])
+    tol = WELD_GAP * pitch
+    joined = [kept[0]]
+    welds, rest = [], []
+    for b in kept[1:]:
+        w = None
+        if field.of(b) & main:
+            w = _gap_weld(trimesh_from_manifold(m3d.Manifold.batch_boolean(joined, m3d.OpType.Add)),
+                          trimesh_from_manifold(b), tol, pitch)
+            if w is not None and clip is not None:
+                w = w ^ clip
+        if w is not None and w.volume() > 1e-9:
+            welds.append(w)
+            joined.append(b)
+        else:
+            rest.append(b)
+    if not welds:
+        return part, kept, 0.0
+    weld = m3d.Manifold.batch_boolean(welds, m3d.OpType.Add)
+    vol = float((weld - part).volume())
+    part = part + weld
+    bodies = [b for b in _bodies(part) if b.volume() > 0]
+    return part, bodies[:1] + [b for b in bodies[1:] if any((b ^ r).volume() > 1e-6 for r in rest)], vol
+
+
 class _FieldBodies:
     """The optimized field's own solid bodies (26-connected cells at the
     meshing level), to tell a fragment the field made from one meshing cut
@@ -1836,8 +1933,20 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
     dropped = 0.0
     if study.preserve:
         pres_man = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
+    cell = float(domain.pitch) ** 3
     for b in bodies[1:]:
         if study.preserve and (b ^ pres_man).volume() > 1e-6:
+            if b.volume() < cell:
+                # a sliver of a drawn shape smaller than a cell, standing
+                # apart from everything (the speaker cradle's flank, 0.2 mm
+                # thick where its trim met the driver's clearance: 0.4 mm^3)
+                # is one the grid never held and the design never carried:
+                # it goes unless the field has material there
+                field = field or _FieldBodies(domain, xphys, o.level)
+                if not field.of(b):
+                    loose.append(b)
+                    dropped += b.volume()
+                    continue
             kept.append(b)
         else:
             loose.append(b)
@@ -1851,6 +1960,15 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
             main |= field.of(b)
         fragments += [_fragment(b, "trim", field, main) for b in loose]
         part = part - (m3d.Manifold.batch_boolean(loose, m3d.OpType.Add) if len(loose) > 1 else loose[0])
+    if len(kept) > 1:
+        field = field or _FieldBodies(domain, xphys, o.level)
+        wclip = envelope
+        if cut_ko:
+            wclip = envelope - m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in cut_ko],
+                                                          m3d.OpType.Add)
+        part, kept, welded = _weld_field_joints(part, kept, field, float(domain.pitch), wclip)
+        if welded:
+            info["weldedGapVolume"] = welded
     info["bodies"] = len(kept)
     # (the organic specks dropped before the trim count too: a rib severed
     # in the field's meshing is one of those)

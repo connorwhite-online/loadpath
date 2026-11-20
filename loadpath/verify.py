@@ -873,11 +873,19 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
 
     rng = np.random.default_rng(0)
     total = 0.0
-    for b in (pres_eff - part).decompose():
-        v = b.volume()
+    diff = pres_eff - part
+    if diff.volume() <= 1e-3:
+        # no piece can count (each is under the whole): a skin the part
+        # meets face to face leaves thousands of slivers (the speaker's
+        # 1M-triangle skin, 7,897 of them, 0.006 mm^3 in all), and taking
+        # them apart took manifold3d's decompose 12 minutes
+        return 0.0
+    # the pieces by face connectivity (trimesh, seconds where decompose
+    # took minutes on the same sliver field)
+    for tb in trimesh_from_manifold(diff).split(only_watertight=False):
+        v = abs(float(tb.volume))
         if v <= 1e-3:
             continue
-        tb = trimesh_from_manifold(b)
         lo, hi = tb.bounds
         pts = np.empty((0, 3))
         for n in (samples, 20 * samples):     # rejection sampling in the piece's box
@@ -888,7 +896,7 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
         if len(pts) < 10:
             # too thin a sliver for sampling to land in: missing only if it
             # is thicker than a print resolves (thickness ~ 2 V / A)
-            total += v if 2.0 * v / max(b.surface_area(), 1e-9) > 0.1 else 0.0
+            total += v if 2.0 * v / max(float(tb.area), 1e-9) > 0.1 else 0.0
             continue
         total += v * float((~_inside(mesh, pts, rng)).mean())
     return total

@@ -356,9 +356,12 @@ def test_write_3mf_places_part_on_bed():
         s = trimesh.load(p, force="mesh")
         assert np.allclose(s.bounds, [[113, 118, 0], [143, 138, 10]], atol=1e-4), s.bounds
         assert abs(s.volume - m.volume) < 1e-6
-        # -x is up: the notch at the part's +x end is on the bed
-        cut = s.contains([[128 + 13, 128 + 9, 1.0]])
-        assert not cut[0]
+        # -x is up: the notch at the part's +x end is on the bed. Probe the
+        # notch's centre (x 141-143, y 136-138, z 0-2), not its face: x 141
+        # lay on the face, where a ray cast's inside/outside is a coin toss
+        # (it read inside on CI, 2026-11-19); the far end is solid there
+        cut = s.contains([[128 + 14, 128 + 9, 1.0], [128 - 14, 128 + 9, 1.0]])
+        assert not cut[0] and cut[1], cut
 
 
 def test_verify_reports_print_block_and_layered_bond():

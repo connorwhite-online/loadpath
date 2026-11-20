@@ -336,7 +336,7 @@ class _Gen:
         self._ok[key] = False          # cycles are refused by the graph anyway
         nd = self.g.nodes[name]
         ok = self._local_ok(nd)
-        if ok and nd.op == "transform":
+        if ok and (nd.op == "transform" or self._redist(nd)):
             ok = self._all_ok(nd.refs["input"])
         self._ok[key] = ok
         return ok
@@ -512,7 +512,7 @@ class _Gen:
                     out = self.t(f"-_smin(-{out}, {b}, {k})")
             return out
         if op == "shell":
-            a, t = v("input"), v("thickness")
+            a, t = self._input_distance(nd, f), v("thickness")
             side = s.get("side", "inside")
             if side == "inside":
                 return self.t(f"_mx({a}, -({a} + {t}))")
@@ -520,7 +520,7 @@ class _Gen:
                 return self.t(f"_mx(-{a}, {a} - {t})")
             return self.t(f"abs({a}) - 0.5 * {t}")
         if op == "offset":
-            return self.t(f"{v('input')} - {v('distance')}")
+            return self.t(f"{self._input_distance(nd, f)} - {v('distance')}")
         if op == "distance":
             return self._distance(nd, f)
         if op == "lattice":
@@ -681,6 +681,29 @@ class _Gen:
         if form in ("network", "_plus"):
             return self.t(f"{d} - 0.5 * {t}")
         return self.t(f"-{d} - 0.5 * {t}")
+
+    def _redist(self, nd):
+        return nd.op in ("shell", "offset") and self.g is not None and self.g.redistances(nd.name)
+
+    def _input_distance(self, nd, f):
+        """A shell's or an offset's input, divided by its gradient length
+        when the graph says so (fields.FieldGraph.redistances): the input is
+        evaluated in four more frames shifted by the tetrahedral stencil."""
+        ref = nd.refs["input"]
+        a = self.val(ref, f)
+        if not self._redist(nd) or not isinstance(ref, str):
+            return a
+        from .fields import _REDIST_TET, REDISTANCE_FLOOR, REDISTANCE_STEP
+
+        q = self.frames[f]
+        vals = []
+        for t in _REDIST_TET:
+            self.frames.append(tuple(self.t(f"{p} + {self.c(t[i])}") for i, p in enumerate(q)))
+            vals.append(self.node(ref, len(self.frames) - 1))
+        g = [self.t("(" + " + ".join(f"{self.c(_REDIST_TET[j, i])} * {vals[j]}" for j in range(4))
+                    + f") / {self.c(4.0 * REDISTANCE_STEP ** 2)}") for i in range(3)]
+        return self.t(f"{a} / min(max(({g[0]} * {g[0]} + {g[1]} * {g[1]} + {g[2]} * {g[2]}) ** 0.5, "
+                      f"{self.c(REDISTANCE_FLOOR)}), 1.0)")
 
     def _transform(self, nd, f):
         s = nd.spec

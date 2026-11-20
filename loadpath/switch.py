@@ -1082,7 +1082,8 @@ def _relax_skin_limited(domain, nu, spec, floor, modulus):
 
 def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_max: float = 16.0,
                     beta_every: int = 15, move: float = 0.1, on_iter=None, tol: float = 0.003,
-                    providers=None, move_sharp: float | None = None, beta_start: float = 1.0) -> SwitchResult:
+                    providers=None, move_sharp: float | None = None, beta_start: float = 1.0,
+                    guarded: bool = False) -> SwitchResult:
     """Minimize volume subject to the study's `switch` block (see the module
     docstring), on each pitch in turn (coarse to fine). Returns the last
     level's design, its fire forces and the per-level summaries.
@@ -1100,6 +1101,17 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
     first pitch's grid, one value per element; beta_start the projection
     sharpness to start from (a warm start from a finished design wants it
     high, or the blurred start forgets the design).
+
+    guarded: step as the stress-constrained method does (constrained.py):
+    a step that leaves the design less feasible halves the move limit and
+    pulls the asymptotes in, the projection sharpens only once the design
+    is inside its limits (or after three times the usual wait), and each
+    sharpening shrinks the steps. A stress limit is far more nonlinear in
+    the design than a click's force or a temperature: on the speaker's
+    1.5 mm grid two full 0.1 steps cut its driver cradle loose
+    (stress 0.4 -> 44 times its limit) and it never came back, the
+    near-void cells round the loose piece each reading less with less
+    material.
 
     move_sharp: the move limit once the projection is at full sharpness
     (default: `move` throughout). At beta 16 a 0.1 step in x is nearly a
@@ -1155,6 +1167,8 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
             m += sum(p.max is not None for p in spec.presses) + sum(p.min is not None for p in spec.presses) + \
                 (nP if spec.max_travel is not None else 0) + len(prob.hold) + (1 if prob.clr_dofs is not None else 0)
         mma = MMA(int(design.sum()), max(m, 1), xmin=0.0, xmax=1.0, move=move)
+        move_cap, worst_prev = move, np.inf
+        best, trail = None, []
         since = 0
         nd = float(design.sum())
         for it in range(1, int(iters[li]) + 1):
@@ -1164,7 +1178,7 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
             xp[pres] = 1.0
             dp = _dproject(xt, beta, 0.5)
             beta_seen = beta
-            if move_sharp is not None:
+            if move_sharp is not None and not guarded:
                 mma.move = move_sharp if beta >= beta_max else move
             held = floor > xp
             xp[held] = floor[held]
@@ -1205,6 +1219,14 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
             dvol = (ht @ (dp / hs))[design] / nd
             if not cons:
                 cons, dcons = [vol - 1.0], [dvol * 0]
+            worst = float(max(cons)) if cons else 0.0
+            if guarded:
+                if worst > 0.02 and worst > worst_prev:
+                    mma.move = max(0.02, 0.5 * mma.move)
+                    mma.tighten(0.5)
+                elif worst <= 0.02:
+                    mma.move = min(move_cap, 1.2 * mma.move)
+                worst_prev = worst
             x_seen = x.copy()
             xn = x.copy()
             xn[design] = mma.update(x[design], vol * 10.0, dvol * 10.0, np.array(cons), np.array(dcons))
@@ -1218,15 +1240,32 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
             if on_iter is not None:
                 on_iter(rec, xp)
             since += 1
-            if beta < beta_max and (since >= beta_every or (change < 2 * tol and since >= 5)):
+            ready = since >= beta_every or (change < 2 * tol and since >= 5)
+            if guarded:
+                ready = (worst <= 0.02 and ready) or since >= 3 * beta_every
+            if beta < beta_max and ready:
                 beta, since = min(2 * beta, beta_max), 0
+                if guarded:
+                    move_cap = max(0.02, 0.6 * move_cap)
+                    mma.move = min(mma.move, move_cap)
             elif beta >= beta_max and change < tol and worst < 0.01:
                 break
+            if guarded and beta_seen >= beta_max:
+                # its steps stay at the move floor, so change never falls
+                # under tol: deliver the lightest design inside every limit
+                # at full sharpness, and stop once that stops improving
+                if worst <= 0.0 and (best is None or vol < best[1]):
+                    best = (x_seen.copy(), vol)
+                trail.append(best[1] if best is not None else np.inf)
+                if best is not None and len(trail) > 15 and trail[-1] > (1.0 - 0.005) * trail[-16]:
+                    break
         # The design read and returned is the last one the constraints were
         # evaluated on: at the iteration cap the step after it has not been
         # checked, and with thin suspensions at full sharpening one step can
         # cut a member (the microphone body's capsule mount came loose so).
         x, beta = x_seen, beta_seen
+        if guarded and best is not None:
+            x = best[0]
         xt = (h @ x) / hs
         xp = _project(xt, beta, 0.5)
         xp[pres] = 1.0

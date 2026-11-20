@@ -134,10 +134,13 @@ the standard error of the mean is inside 1%.
   two thirds); a streamlined section's attached turbulent boundary layer;
   gusts; fluid-structure coupling. A wing section at a wing's Reynolds
   number wants `propeller.py`'s section polars, not this.
-- **Run time** on four cores at about 15 million cell updates a second:
-  a sphere or a bracket at the defaults (24 cells, Re to 324) 5 minutes;
-  with the one layer a faster stream brings in, 7 to 35 minutes; a slice of
-  a strut 10 to 40. The time goes as the cells across to the fourth power
+- **Run time** on four cores at about 25 million cell updates a second
+  (the step kernel is generated straight-line source, twice the speed of
+  the loop over lattice directions it replaced, with the same numbers out):
+  a sphere or a bracket at the defaults (24 cells, Re to 324) about 3
+  minutes; with the one layer a faster stream brings in, 4 to 20 minutes; a
+  slice of a strut 6 to 25. The first run on a machine spends up to a
+  minute compiling the kernels, which are then kept on disk. The time goes as the cells across to the fourth power
   (the cells, and the steps to pass the body), which is why layers, not a
   finer box, are how a higher Reynolds number is bought.
 

@@ -55,7 +55,7 @@ jobs:
               tests/test_aero.py tests/test_ribs.py tests/test_patterns.py tests/test_vdb.py
               tests/test_reconstruct_fragments.py tests/test_pinch_memory.py tests/test_study_limits.py tests/test_passes_but_wrong.py tests/test_rotor_blockage.py
               tests/test_face_bridge.py tests/test_reconstruct_slits.py tests/test_bundle.py
-              tests/test_stress_read.py tests/test_checkpoint.py tests/test_submodel_size.py
+              tests/test_stress_read.py tests/test_checkpoint.py tests/test_stresslimit.py tests/test_submodel_size.py
           # the groups below (2026-11-12) hold files that were in no group,
           # so CI never ran them; tests/test_ci_groups.py now fails on any
           # tests/ file left out. Times from a 4-core cloud box, 3 at once.
@@ -83,7 +83,7 @@ jobs:
               tests/test_manufacture.py tests/test_thermal.py tests/test_mg.py tests/test_mesh_block.py
               tests/test_slicer.py tests/test_crease.py
             pytest: >-
-              tests/test_flow.py tests/test_heatx_rating.py tests/test_printsetup.py tests/test_metal.py
+              tests/test_flow.py tests/test_airflow.py tests/test_heatx_rating.py tests/test_printsetup.py tests/test_metal.py
               tests/test_amgfast.py tests/test_selfsupport.py tests/test_cutcell.py tests/test_explore.py
               tests/test_porous.py tests/test_meshops.py tests/test_massfill.py tests/test_femops.py
               tests/test_stability.py tests/test_fieldtorch.py
@@ -103,7 +103,9 @@ jobs:
           # paths without it
           - group: exterior
             extras: ",exterior,scan"
-            files: tests/test_exterior.py tests/test_scan.py tests/test_surfacecheck.py tests/test_envelope.py
+            files: >-
+              tests/test_exterior.py tests/test_scan.py tests/test_surfacecheck.py tests/test_envelope.py
+              tests/test_reference_sketch.py
             pytest: >-
               tests/test_materials.py tests/test_preview.py tests/test_interfaces.py tests/test_multimat.py
               tests/test_interlock.py tests/test_threemf_multi.py tests/test_voxelprint.py

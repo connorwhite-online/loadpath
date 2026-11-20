@@ -588,6 +588,30 @@ def test_a_cradle_follows_a_round_cell():
     assert not m.contains([[0, 9.6, -8.0], [0, 0, -8.5], [40.0, 0, -9.6]]).any()
 
 
+def test_design_steps_run_in_a_fresh_process_and_pass_back_results():
+    # design_and_check runs a designed study and its delivered check each in
+    # a process of its own (the speaker's check was killed beside its
+    # design's leftovers): results, progress and ValueErrors come back
+    import json
+    import tempfile
+
+    from loadpath.enclosure import _fresh
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sp = os.path.join(tmp, "s.json")
+        with open(sp, "w") as fh:
+            json.dump({"name": "s"}, fh)
+        seen = []
+        out = _fresh("check", sp, os.path.join(tmp, "design"), quick=True, on_progress=lambda e, _x: seen.append(e))
+        assert out["ok"] is False and "no delivered part" in out["error"], out
+        try:
+            _fresh("design", sp, os.path.join(tmp, "design"))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a study the design cannot read raises here too")
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

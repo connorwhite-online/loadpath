@@ -194,6 +194,9 @@ Where it is strongest:
   as-built size checked on the delivered mesh.
 - **Heat exchangers**: lattice-Boltzmann flow and conjugate heat transfer
   for gyroid cores and cold plates.
+- **Natural convection, solved**: buoyant laminar air flow with conjugate
+  heat for fins behind a grate, chimneys and vents, where plate
+  correlations guess ([docs/AIRFLOW.md](docs/AIRFLOW.md)).
 
 There is no GUI on purpose; it's a library.
 

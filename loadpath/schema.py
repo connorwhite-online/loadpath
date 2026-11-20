@@ -1781,6 +1781,12 @@ _BUILD_REFERENCE = {
                                   "exterior's outline once, and reports it so it can be fixed in the spec"},
         "start": _CAMERA,
         "mask": {"type": "string", "description": "the subject's silhouette as an image (white on black)"},
+        "kind": {"enum": ["render", "sketch"],
+                 "description": "sketch: read the image as pencil on paper (ink strokes, dot grid and shading "
+                                "dropped, the drawn outline filled for an overlap score); default render"},
+        "turn": {"type": "boolean",
+                 "description": "a fitted camera may turn from its start (default true; false for a sketch, "
+                                "whose views are orthographic: only zoom and pan are fitted)"},
         "gate": {"type": "boolean", "description": "false: scored and drawn side by side, but never fails the "
                                                    "build (the default for a fitted camera: a sketch is not "
                                                    "to scale, so its score is for a reviewer's eye)"},
@@ -2373,6 +2379,11 @@ def _op(name, desc, props, required=(), require_one=None):
     return d
 
 
+_REDISTANCE = {"type": "boolean",
+               "description": "divide the input by its gradient's length first, so the wall or offset is "
+                              "measured in true mm where a blended boolean has slowed the field (default: "
+                              "only when the input has a blended union, intersect or subtract under it)"}
+
 _FIELD_OPS = {
     "constant": _op("constant", "A number everywhere.", {"value": {"type": "number"}}, ["value"]),
     "coordinate": _op("coordinate", "Position along an axis (mm): 'x', 'y', 'z', or a direction from "
@@ -2471,10 +2482,11 @@ _FIELD_OPS = {
                     {"inputs": {"type": "array", "items": _FIELD, "minItems": 2}, "blend": _FIELD}, ["inputs"]),
     "shell": _op("shell", "A wall of `thickness` (mm, or a field: a variable wall) on a solid's surface.",
                  {"input": _FIELD, "thickness": _FIELD,
-                  "side": {"enum": ["inside", "outside", "center"], "description": "default inside"}},
+                  "side": {"enum": ["inside", "outside", "center"], "description": "default inside"},
+                  "redistance": _REDISTANCE},
                  ["input", "thickness"]),
     "offset": _op("offset", "Grow (positive) or shrink a solid by `distance` (mm, or a field).",
-                  {"input": _FIELD, "distance": _FIELD}, ["input", "distance"]),
+                  {"input": _FIELD, "distance": _FIELD, "redistance": _REDISTANCE}, ["input", "distance"]),
     "lattice": _op("lattice", "A lattice filling all of space (intersect it with a solid): a TPMS sheet "
                               "(gyroid, diamond, schwarz-p) or a strut cell (cubic, bcc, bccz, fcc, fccz, octet, "
                               "kelvin, diamond-strut, or a custom cell from cellGraph), or a stochastic voronoi "
