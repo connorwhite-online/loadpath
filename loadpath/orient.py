@@ -310,7 +310,8 @@ def choose_build_direction(study, candidates=None, max_elements: int = _COMPARE_
 
     def variant(c, coarse=True, overhangs=None):
         oh = proc.overhangs if overhangs is None else overhangs
-        p = dataclasses.replace(proc, build=c, overhangs=oh)
+        # decided here, so run_study does not open the question again
+        p = dataclasses.replace(proc, build=c, overhangs=oh, overhangs_declared=True)
         kw = dict(process=p, print_direction=c if oh else study.print_direction)
         if coarse:
             kw.update(goal=Goal(volume_fraction=vf), materials=[study.material],
@@ -437,8 +438,9 @@ def _delivered_cost(study, o, proc) -> float:
     return _make_cost(r, study, proc, 1.0)
 
 
-def settle_supports(study, result, rerun, on_progress=None):
-    """run_study's second pass for a study whose build direction is "auto":
+def settle_supports(study, result, rerun, on_progress=None, candidates=None):
+    """run_study's second pass for a study whose build direction is "auto",
+    or named without a word on supports (`candidates`: that one direction):
     `result` is the search for the free design printed on supports, in the
     direction choose_build_direction(self_supporting=False) picked. Whether
     growing it under an overhang rule instead is cheaper depends on how thin
@@ -448,7 +450,7 @@ def settle_supports(study, result, rerun, on_progress=None):
     7.7. When a self-supporting direction wins there, `rerun(study)` runs
     the search for it and the cheaper of the two delivered parts is kept.
     The comparison is recorded in the delivered study's raw
-    ("orientation", "supports")."""
+    ("orientation", "supportDecision") and so in the report."""
     import dataclasses
 
     proc = study.process
@@ -458,8 +460,8 @@ def settle_supports(study, result, rerun, on_progress=None):
     vf = float(o.volume_fraction)
     if on_progress is not None:
         on_progress({"stage": "orient", "settle": "supports or self-supporting", "volumeFraction": vf}, None)
-    cmp = choose_build_direction(study, max_elements=study.max_elements, on_progress=on_progress,
-                                 volume_fraction=vf, free_mesh=o.mesh)
+    cmp = choose_build_direction(study, candidates=candidates, max_elements=study.max_elements,
+                                 on_progress=on_progress, volume_fraction=vf, free_mesh=o.mesh)
     best = cmp["candidates"][0]
     free_proc = result.study.process
     note = {"volumeFraction": vf, "ranking": [
@@ -475,8 +477,9 @@ def settle_supports(study, result, rerun, on_progress=None):
             if c_self < c_free:
                 keep = other
     note["chosen"] = "self-supporting" if keep.study.process.overhangs else "on supports"
+    # (under its own key: "supports" is the study's own list of where it is held)
     raw = dict(keep.study.raw)
-    raw["supports"] = note
+    raw["supportDecision"] = note
     keep.study = dataclasses.replace(keep.study, raw=raw)
     if on_progress is not None:
         on_progress({"stage": "orient", "supports": note["chosen"],

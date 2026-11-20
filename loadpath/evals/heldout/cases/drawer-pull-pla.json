@@ -1,0 +1,164 @@
+{
+ "id": "drawer-pull-pla",
+ "brief": "A drawer pull in PLA (FDM, printed on its side so the layers stack along Y). It sits on the drawer front (the plane z = 0) and is held by two M4 screws that come through the drawer from behind and thread into the handle at x = -48 and x = +48 (y = 0), 8 mm deep. The hand grips a 10 mm round bar along X at z = 30, 60 mm long (x = -30 to 30), with clear finger room between the bar and the drawer front. Keep it inside x = -58 to 58, y = -8 to 8, z = 0 to 36. A hard yank is 150 N on the bar in any direction. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "handle",
+  "fdm",
+  "fasteners",
+  "any-direction"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -58,
+     -8,
+     0
+    ],
+    "max": [
+     58,
+     8,
+     36
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "grip",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      30
+     ],
+     "axis": "x",
+     "length": 60,
+     "r": 5
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "fingers",
+    "shape": {
+     "type": "box",
+     "min": [
+      -30,
+      -9,
+      -1
+     ],
+     "max": [
+      30,
+      9,
+      23
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "l",
+    "size": "M4",
+    "seat": [
+     -48,
+     0,
+     0
+    ],
+    "direction": "+z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 8
+   },
+   {
+    "id": "r",
+    "size": "M4",
+    "seat": [
+     48,
+     0,
+     0
+    ],
+    "direction": "+z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 8
+   }
+  ],
+  "supports": [
+   {
+    "region": "l-thread"
+   },
+   {
+    "region": "r-thread"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -58,
+      -8,
+      -0.5
+     ],
+     "max": [
+      -38,
+      8,
+      0.3
+     ]
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      38,
+      -8,
+      -0.5
+     ],
+     "max": [
+      58,
+      8,
+      0.3
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "yank",
+    "loads": [
+     {
+      "region": "grip",
+      "force": [
+       0,
+       0,
+       150
+      ],
+      "direction": "any"
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+y"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "drawer-pull-pla",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

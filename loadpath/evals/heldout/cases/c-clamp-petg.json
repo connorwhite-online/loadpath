@@ -1,0 +1,122 @@
+{
+ "id": "c-clamp-petg",
+ "brief": "The body of a small C-clamp in PETG (FDM, printed flat on its side, layers along Y), 16 mm thick (y = -8 to 8), inside x = 0 to 70, z = 0 to 90. The work goes in a throat open toward +X: nothing may be in x = 25 to 70 between z = 18 and z = 68. An M8 clamping screw runs down along Z at x = 50 through the upper jaw, in a threaded insert (10 mm outside) the full 22 mm depth of the jaw; it presses the work against an anvil pad on the lower jaw (x = 40 to 60, top at z = 18, 3 mm thick). Clamping force 400 N. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "clamp",
+  "fdm",
+  "self-balanced",
+  "insert"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0,
+     -8,
+     0
+    ],
+    "max": [
+     70,
+     8,
+     90
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "anvil",
+    "shape": {
+     "type": "box",
+     "min": [
+      40,
+      -8,
+      15
+     ],
+     "max": [
+      60,
+      8,
+      18
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "throat",
+    "shape": {
+     "type": "box",
+     "min": [
+      25,
+      -9,
+      18
+     ],
+     "max": [
+      71,
+      9,
+      68
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "screw",
+    "size": "M8",
+    "seat": [
+     50,
+     0,
+     90
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 10,
+    "threadLength": 22
+   }
+  ],
+  "supports": [],
+  "inertiaRelief": true,
+  "loadCases": [
+   {
+    "name": "clamp",
+    "loads": [
+     {
+      "region": "screw-thread",
+      "force": [
+       0,
+       0,
+       400
+      ]
+     },
+     {
+      "region": "anvil",
+      "force": [
+       0,
+       0,
+       -400
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+y"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "c-clamp-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

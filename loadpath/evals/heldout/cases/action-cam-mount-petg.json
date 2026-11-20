@@ -1,0 +1,315 @@
+{
+ "id": "action-cam-mount-petg",
+ "brief": "An action-camera mount base in PETG on an FDM printer (choose the print orientation): the three-finger side of the usual two-and-three finger joint. The joint's M5 bolt runs along Y through the origin. The three fingers are 3 mm thick, 15 mm round about the bolt, at y = -7.6 to -4.6, -1.5 to 1.5 and 4.6 to 7.6, and the two slots between them must stay clear out to 9.5 mm from the bolt so the mating fingers can swing. The base is a 32 mm square plate, z = -20 to -16, held down by four M3 screws at (+-12, +-12) into the surface under it. Everything stays inside the plate's footprint between z = -20 and z = -8, plus the fingers above. The camera on its pole puts up to 50 N on the joint 60 mm above the bolt, along X or along Y. Safety factor 2.5.",
+ "attachments": [],
+ "tags": [
+  "mount",
+  "fdm",
+  "thin-features",
+  "fasteners",
+  "auto-orientation"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "union",
+    "shapes": [
+     {
+      "type": "box",
+      "min": [
+       -16,
+       -16,
+       -20
+      ],
+      "max": [
+       16,
+       16,
+       -8
+      ]
+     },
+     {
+      "type": "box",
+      "min": [
+       -7.5,
+       -7.6,
+       -10
+      ],
+      "max": [
+       7.5,
+       7.6,
+       7.5
+      ]
+     }
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "fingers",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        -6.1,
+        0
+       ],
+       "axis": "y",
+       "length": 3.0,
+       "r": 7.5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "axis": "y",
+       "length": 3.0,
+       "r": 7.5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        6.1,
+        0
+       ],
+       "axis": "y",
+       "length": 3.0,
+       "r": 7.5
+      }
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "bolt",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "axis": "y",
+     "length": 24,
+     "r": 2.6
+    },
+    "fit": "clearance"
+   },
+   {
+    "id": "slots",
+    "bore": false,
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        -3.05,
+        0
+       ],
+       "axis": "y",
+       "length": 3.1,
+       "r": 9.5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        3.05,
+        0
+       ],
+       "axis": "y",
+       "length": 3.1,
+       "r": 9.5
+      }
+     ]
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "s1",
+    "size": "M3",
+    "seat": [
+     -12,
+     -12,
+     -16
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face"
+   },
+   {
+    "id": "s2",
+    "size": "M3",
+    "seat": [
+     12,
+     -12,
+     -16
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face"
+   },
+   {
+    "id": "s3",
+    "size": "M3",
+    "seat": [
+     -12,
+     12,
+     -16
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face"
+   },
+   {
+    "id": "s4",
+    "size": "M3",
+    "seat": [
+     12,
+     12,
+     -16
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "s1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "s2-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "s3-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "s4-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -12,
+      -12,
+      -20.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 3.5
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -12,
+      12,
+      -20.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 3.5
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      12,
+      -12,
+      -20.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 3.5
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      12,
+      12,
+      -20.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 3.5
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "fore-aft",
+    "loads": [
+     {
+      "region": "bolt",
+      "force": [
+       50,
+       0,
+       0
+      ],
+      "at": [
+       0,
+       0,
+       60
+      ]
+     }
+    ]
+   },
+   {
+    "name": "sideways",
+    "loads": [
+     {
+      "region": "bolt",
+      "force": [
+       0,
+       50,
+       0
+      ],
+      "at": [
+       0,
+       0,
+       60
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "auto"
+  },
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "action-cam-mount-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5
+ }
+}

@@ -272,7 +272,14 @@ buckling, printability) you can report to the user.
    the build direction so the main loads run along the layers, or set
    `"buildDirection": "auto"` to let it compare all six (slower: every
    direction half-designed on a coarse grid, the best three finished; with
-   no overhang control, one design checked per axis). `report.json` → `print` says whether it needs
+   no overhang control, one design checked per axis). A named direction
+   says which way the layers lie, not that supports are forbidden: the
+   part is designed free and printed on supports unless growing it
+   self-supporting is cheaper to make at the delivered fraction
+   (`report.json` → `supportDecision` says which and why).
+   `"overhangs": true` in the process asks for a part that prints with no
+   supports outright (and gives no part where the drawn interfaces cannot
+   stand on the bed by themselves), `false` for supports outright. `report.json` → `print` says whether it needs
    support (a warning says so when it does), its bridges, and whether the
    first layer holds; spans past `process.bridgeSpan` (mm; default 15 FDM)
    count as needing support, so set it for your printer. `run` writes a
@@ -426,9 +433,23 @@ buckling, printability) you can report to the user.
    reads a few percent off the run's fine re-check; quote `deliver` for a
    delivered part). `deliver.tetCrossCheck` says why the body-fitted check
    did not run when it did not. Then:
-   - `safetyFactor` below target, or `passes: false` → raise the goal's
-     volume fraction, the material, or check the loads are right;
-   - `bodies` > 1 → something is not connected to a support;
+   - `safetyFactor` below target, or `passes: false` → read the warning
+     that starts "the whole design space as one solid block": when a
+     search fails twice with nothing passing, the envelope itself is read
+     as a solid part. If the block misses the goal, no shape inside it
+     meets it and the warning says by how much and what would (a
+     deflection limit needs that many times the stiffness; a safety factor
+     says what share of the load the envelope carries and where its peak
+     sits): change the envelope, the material or the load, not the volume
+     fraction. If the block passes and nothing lighter did, the block is
+     delivered and the envelope is what sets the mass;
+   - `check` warns "the space the part may take is in N separate pieces" →
+     the design space is cut right through (an envelope that stops short
+     of going over a pipe, a keep-out across it): no run can join them;
+   - `bodies` > 1 → something is not connected to a support, or each
+     piece has its own supports and loads and nothing in the loads needs
+     them joined (a plate on four bolts carrying four more comes out as
+     two straps): preserve a link between them;
    - a "mesh lost N% of the optimized solid cells" warning (`meshFidelity`)
      → the mesh came out thinner than the optimized design, so the part
      reads softer than it should and the search picks a heavier outcome.

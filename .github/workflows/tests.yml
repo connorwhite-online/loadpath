@@ -28,7 +28,7 @@ jobs:
           - group: solvers         # ~9 min
             files: >-
               tests/test_nonlinear.py tests/test_interface.py tests/test_dfm.py tests/test_voxels.py
-              tests/test_pressure.py tests/test_durability.py tests/test_physics.py tests/test_calibration.py
+              tests/test_pressure.py tests/test_durability.py tests/test_physics.py tests/test_first_try.py tests/test_calibration.py
               tests/test_impact.py tests/test_switch.py tests/test_switch_lattice.py
           - group: products        # ~13 min (handoff 3.5, kicad 3.3)
             files: >-

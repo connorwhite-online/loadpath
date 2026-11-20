@@ -1,0 +1,157 @@
+{
+ "id": "pipe-saddle-clamp-short-envelope-petg",
+ "brief": "A saddle clamp that holds a 25 mm pipe against a wall, PETG on FDM, printed on its side so the layers stack along the pipe (Y). The wall is the plane z = 0 and the pipe lies on it along Y (its centre at x = 0, z = 12.5). The clamp is 16 mm wide (y = -8 to 8) and stays inside x = -32 to 32, z = 0 to 18. Two M4 screws go into the wall at x = -24 and x = +24 through 5 mm thick feet. The pipe can pull 200 N straight off the wall or push 150 N sideways along X. Safety factor 2.5.",
+ "attachments": [],
+ "tags": [
+  "clamp",
+  "fdm",
+  "fasteners",
+  "bearing-load",
+  "impossible-setup"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -32,
+     -8,
+     0
+    ],
+    "max": [
+     32,
+     8,
+     18
+    ]
+   }
+  ],
+  "preserve": [],
+  "keepOut": [
+   {
+    "id": "pipe",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      12.5
+     ],
+     "axis": "y",
+     "length": 20,
+     "r": 12.5
+    },
+    "bore": false
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "l",
+    "size": "M4",
+    "seat": [
+     -24,
+     0,
+     5
+    ],
+    "direction": "-z",
+    "grip": 5,
+    "end": "face"
+   },
+   {
+    "id": "r",
+    "size": "M4",
+    "seat": [
+     24,
+     0,
+     5
+    ],
+    "direction": "-z",
+    "grip": 5,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "l-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "r-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -24,
+      0,
+      -0.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 4.5
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      24,
+      0,
+      -0.1
+     ],
+     "axis": "z",
+     "length": 0.8,
+     "r": 4.5
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "pull-off",
+    "loads": [
+     {
+      "region": "pipe",
+      "force": [
+       0,
+       0,
+       200
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "sideways",
+    "loads": [
+     {
+      "region": "pipe",
+      "force": [
+       150,
+       0,
+       0
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+y"
+  },
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "pipe-saddle-clamp-short-envelope-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "diagnosis": "design space split in two by the pipe"
+ },
+ "note": "The envelope stops at z = 18 but the pipe's top is at z = 25, so nothing can pass over the pipe: the brief cannot be met. Kept as written (the author's slip) as a probe: a pass here is the tool saying the design space is in two pieces, not a part."
+}
