@@ -121,6 +121,30 @@ def test_nested_levels_only_read_cells_that_hold_data():
     assert distance_transform_edt(~body_p)[par.ntype == FLUID].min() >= 2.0
 
 
+def test_every_level_spans_its_boundary_index():
+    """The step kernels read each fluid cell's boundary index (bid) on every
+    level; a level with a (1, 1, 1) stand-in was read far out of bounds,
+    which crashed the process now and then (CI segfaults in this file)."""
+    from loadpath.cutcell import scan_voxelize
+    from loadpath.windtunnel import Tunnel, layout, wall_links
+
+    m = trimesh.creation.icosphere(subdivisions=2, radius=D / 2)
+    h = D / 8
+
+    def vox(hh, corner, dims):
+        return scan_voxelize(m, hh, np.asarray(corner, float), np.asarray(dims))
+
+    lev = layout(*m.bounds, h * 2, D, shells=1, voxelize=vox)
+    origin = lev[-1]["origin"] - 0.5 * h
+    solid = vox(h, origin, lev[-1]["shape"])
+    bid, q, _, _ = wall_links(solid, np.ascontiguousarray(m.triangles), lev[-1]["origin"], h)
+    for kw in ({"q": q, "bid": bid}, {}):
+        t = Tunnel(lev, solid, 0.004, 0.1, **kw)
+        assert len(t.levels) > 1
+        for L in t.levels:
+            assert L.bid.shape == L.ntype.shape
+
+
 def test_row_step_kernel_matches_the_cell_by_cell_one():
     """The generated step kernel (straight-line source, a row at a time) and
     the cell-by-cell kernel it replaced are the same arithmetic: the same
