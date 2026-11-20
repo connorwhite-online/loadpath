@@ -394,13 +394,50 @@ class PolylineField:
         return dm - self.r, g
 
 
-def body_field(shape, pitch: float = 0.4, inside: bool = False, skin: float = 0.0, pad: float = 4.0):
+def body_field(shape, pitch: float = 0.4, inside: bool = False, skin: float = 0.0, pad: float = 4.0,
+               exact: float = 0.0):
     """A rigid body as an obstacle field (rods.GridField). inside=True: the
-    shape is a cavity the cable must stay in (an exterior, less its skin)."""
+    shape is a cavity the cable must stay in (an exterior, less its skin).
+    exact: mm from a mesh's surface within which its distances are made
+    exact first. A mesh's own sdf is a voxel grid of 160 cells across its
+    largest size, good to about a cell: on a 200 mm shell that is 1.25 mm,
+    and a 6 mm wire channel read as 4.3 mm, shut to a 4 mm bundle. With
+    exact, the grid is refined too (see below)."""
+    if exact > 0 and hasattr(shape, "exact_band"):
+        # exact nodes are not enough on their own: between them the grid is
+        # linear, and on the axis of a channel (a ridge in the distance) it
+        # reads low by up to half a cell. So the grid is refined too, to a
+        # tenth of the band (0.5 mm at least): a 6 mm channel in a 200 mm
+        # shell read 4.3 mm on the default grid, 4.9 exact on it, 5.3 here
+        ext = float(np.max(shape.mesh.extents)) if hasattr(shape, "mesh") else 0.0
+        if ext > 0:
+            shape._GRID_CELLS = int(min(600, max(shape._GRID_CELLS, np.ceil(ext / max(0.5, exact / 10.0)))))
+            shape._grid = None
+        shape.exact_band(float(exact))
     lo, hi = shape.bounds()
+    sdf = _near_exact(shape, pad) if hasattr(shape, "exact_sdf") else shape.sdf
     if inside:
-        return GridField.sample(lambda p: -(shape.sdf(p) + skin), lo, hi, pitch, pad=pad)
-    return GridField.sample(shape.sdf, lo, hi, pitch, pad=pad)
+        return GridField.sample(lambda p: -(sdf(p) + skin), lo, hi, pitch, pad=pad)
+    return GridField.sample(sdf, lo, hi, pitch, pad=pad)
+
+
+def _near_exact(shape, reach: float):
+    """A mesh's sdf with its points outside its own voxel grid (a few cells
+    round its box) but within `reach` made exact. There the mesh gives the
+    distance to its bounding box, a lower bound that can be far too low: a
+    cell lying at 15 degrees read 1.6 mm from a channel 5.4 mm off it, and
+    the channel was shut."""
+    def f(p):
+        p = np.asarray(p, float).reshape(-1, 3)
+        d = np.asarray(shape.sdf(p), float).copy()
+        dist, origin, h = shape._grid
+        c = (p - origin) / h - 0.5
+        out = ~np.all((c >= 0) & (c <= np.asarray(dist.shape) - 1), axis=1)
+        sel = out & (d < reach + h)
+        if sel.any():
+            d[sel] = shape.exact_sdf(p[sel], grid_sign=np.abs(d[sel]) + 1.0)
+        return d
+    return f
 
 
 class _Room:
@@ -512,6 +549,29 @@ def route(room: _Room, a, a_dir, b, b_dir, radius: float, launch: float, avoid=N
         keep.append(j)
         i = j
     return pts[keep]
+
+
+def via_route(room: _Room, a: dict, b: dict, stops: list, radius: float, launch: float, avoid=None,
+              prefer: float | None = None) -> np.ndarray | None:
+    """The way from port a through each clip in `stops` ({at, direction?},
+    in order) to port b: one `route` per leg. A clip's direction (the way
+    the cable runs through it) is its own, or the line from the point
+    before it to the point after. None when a leg has no way through."""
+    pts = [np.asarray(a["at"], float)] + [np.asarray(v["at"], float) for v in stops] + [np.asarray(b["at"], float)]
+    dirs = [np.asarray(a["direction"], float)]
+    for k, v in enumerate(stops, 1):
+        d = _vec(v["direction"]) if v.get("direction") is not None else pts[k + 1] - pts[k - 1]
+        dirs.append(d / max(np.linalg.norm(d), 1e-9))
+    dirs.append(-np.asarray(b["direction"], float))
+    out = []
+    short = max(1.5 * room.h, radius)
+    for k in range(len(pts) - 1):
+        leg = route(room, pts[k], dirs[k], pts[k + 1], -dirs[k + 1], radius,
+                    launch if k in (0, len(pts) - 2) else short, avoid=avoid, prefer=prefer)
+        if leg is None:
+            return None
+        out.append(leg if k == 0 else leg[1:])
+    return np.vstack(out)
 
 
 def _resample(pts, n):
@@ -691,8 +751,16 @@ def lay(cab, a: dict, b: dict, fields=(), *, room: _Room | None = None, length: 
             padv = max(15.0, 0.6 * float(np.linalg.norm(b["at"] - a["at"])), (length or 0.0) * 0.5)
             room = _Room.of(fields, lo - padv, hi + padv, float(np.clip(cab.radius, 0.6, 1.2)))
         launch = max(1.5 * room.h, cab.rmin_static * 0.8, a["relief"], b["relief"])
-        path = route(room, a["at"], a["direction"], b["at"], b["direction"], r, launch, avoid=avoid,
-                     prefer=cab.half_width + clearance)
+        stops = [v for v in (via or []) if v.get("at") is not None and v.get("along") is None]
+        if stops:
+            # clips placed by point: the way is found leg by leg through each,
+            # in the order given, so the rod starts threaded through its clips
+            # (a way found end to end and then snapped onto the clips kinks
+            # wherever the clips are off the shortest way)
+            path = via_route(room, a, b, stops, r, launch, avoid=avoid, prefer=cab.half_width + clearance)
+        else:
+            path = route(room, a["at"], a["direction"], b["at"], b["direction"], r, launch, avoid=avoid,
+                         prefer=cab.half_width + clearance)
         if path is None:
             return None
         fine, _ = _resample(path, max(8, int(_resample(path, 4)[1] / max(0.5 * room.h, 0.3))))
@@ -1111,8 +1179,10 @@ def harness(brief: dict, base_dir=None, on_progress=None, fields: dict | None = 
         if f is None:
             if on_progress:
                 on_progress({"stage": "wires", "message": f"sampling {bid}"})
+            rmax = max(cable(w["cable"]).radius for w in brief.get("wires") or [{}])
             f = body_field(sh, pitch, inside=bool(b.get("inside")), skin=float(b.get("skin", 0.0)),
-                           pad=4.0 + clearance + max(cable(w["cable"]).radius for w in brief.get("wires") or [{}]))
+                           pad=4.0 + clearance + rmax,
+                           exact=float(b.get("exact", brief.get("exact", 2.0 * rmax + clearance + 1.0))))
         moves = bool(b.get("moves")) and motion is not None
         bodies[bid] = {"field": MovingField(f) if moves else f, "moves": moves, "inside": bool(b.get("inside")),
                        "shape": sh, "spec": b}
@@ -1146,7 +1216,11 @@ def harness(brief: dict, base_dir=None, on_progress=None, fields: dict | None = 
             blo, bhi = b["shape"].bounds()
             lo, hi = np.maximum(lo, np.asarray(blo) - 1.0), np.minimum(hi, np.asarray(bhi) + 1.0)
     rmin = min(cable(w["cable"]).radius for w in wires)
-    room = _Room.of(static, lo, hi, float(np.clip(rmin, 0.5, 1.0)))
+    # the grid the ways are found on: at most the thinnest cable's radius,
+    # and fine enough over the whole room. Capped at 250k cells, a handheld's
+    # room came out on a 3 mm grid, and a clip or channel a few mm wide read
+    # as shut, so the way went round the outside (`roomCells` sets the cap)
+    room = _Room.of(static, lo, hi, float(np.clip(rmin, 0.5, 1.0)), cells=float(brief.get("roomCells", 3e6)))
     out, laid, problems = {}, [], []
     extra = []
     for w, (a, b) in zip(wires, ends):
@@ -1185,7 +1259,7 @@ def harness(brief: dict, base_dir=None, on_progress=None, fields: dict | None = 
             if f"{wid}: {p}" not in problems:
                 problems.append(f"{wid}: {p}")
     res = {"name": brief.get("name", "harness"), "wires": out, "ok": not problems, "problems": problems,
-           "seconds": round(time.time() - t0, 1), "laid": laid, "bodies": bodies}
+           "seconds": round(time.time() - t0, 1), "roomPitch": round(room.h, 3), "laid": laid, "bodies": bodies}
     if motion is not None and laid:
         res["motion"] = out_motion
     return res

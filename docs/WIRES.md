@@ -86,7 +86,20 @@ the cable leaves it (`at`, `direction`, and for a flat cable `up`, its
 face normal). `bodies` are what it may touch and not enter.
 
 1. A way through the free space is found on a grid (a shortest path that
-   pays for running close to walls and leaves each port straight).
+   pays for running close to walls and leaves each port straight). With
+   clips (`via`, each `at` a point and optionally the `direction` the cable
+   runs through it), the way is found leg by leg, from the port through
+   each clip in the order given to the other port, so the cable starts
+   threaded through its clips. (Found end to end and then snapped onto
+   clips that sit off the shortest way, it kinked at each one and never
+   settled: a grip harness up three clips on a wall came out "pinched,
+   bent to 0.6 mm", and threaded, it lays clean.)
+   The grid is as fine as the thinnest cable's radius (1 mm at most), up
+   to `roomCells` cells (3 million by default). A mesh body's distances
+   are made exact within `exact` mm of its surface (by default the
+   thickest cable's diameter plus 1 mm): its own voxel grid is good to
+   about a cell, and a channel or clip a few millimetres wide in a
+   200 mm shell reads shut on it.
 2. The rod is started on that way, at its length, and then driven to the
    cable's own length: its cut `length`, or the route plus `slack`.
 3. It settles, in contact with whatever it touches. Cables already laid
