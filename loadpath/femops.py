@@ -16,6 +16,12 @@ expression it replaces bit for bit:
   starts, two eval cases at once) the 64 barriers made an arm-link
   assembly 0.6 s against 0.05 s on one thread.
 
+- `stiffness_layout(...)`: fem.Stiffness's CSR layout (indptr, indices,
+  the 64 corner pairs' slots, the kept and fixed-diagonal entries), the
+  integers its numpy code makes, in loops: 77k cells 1.66 -> ~0.2 s. A new
+  live-cell system every few optimizer iterations (simp._Analysis) and
+  each check's grid make one.
+
 `available()` is False without numba or with LOADPATH_FEMOPS=numpy.
 """
 from __future__ import annotations
@@ -31,7 +37,7 @@ try:
 except ImportError:  # pragma: no cover - numba is a dependency
     nb = None
 
-__all__ = ["available", "element_energy", "scatter", "gather_plan", "scatter_gather"]
+__all__ = ["available", "element_energy", "scatter", "gather_plan", "scatter_gather", "stiffness_layout"]
 
 
 def available():
@@ -102,6 +108,74 @@ if nb is not None:
                 data[s] = acc
 
 
+    @nb.njit(cache=True)
+    def _adjacency(enode, pair_off, nn):
+        adj = np.zeros((nn, 27), np.bool_)
+        for e in range(enode.shape[0]):
+            for a in range(8):
+                na = enode[e, a]
+                for b in range(8):
+                    adj[na, pair_off[a, b]] = True
+        cnt = np.zeros(nn, np.int64)
+        rank = np.empty((nn, 27), np.int64)
+        for n in range(nn):
+            c = 0
+            for o in range(27):
+                if adj[n, o]:
+                    c += 1
+                rank[n, o] = c - 1
+            cnt[n] = c
+        return adj, cnt, rank
+
+    @nb.njit(cache=True, parallel=True)
+    def _layout_indices(adj, rank, indptr, node_ijk, offsets, node_dims, lookup, indices):
+        nn = adj.shape[0]
+        d1, d2 = node_dims[1], node_dims[2]
+        for n in nb.prange(nn):
+            for o in range(27):
+                if not adj[n, o]:
+                    continue
+                flat = ((node_ijk[n, 0] + offsets[o, 0]) * d1 + node_ijk[n, 1] + offsets[o, 1]) * d2 \
+                    + node_ijk[n, 2] + offsets[o, 2]
+                nbr = lookup[flat]
+                for i in range(3):
+                    base = indptr[3 * n + i] + 3 * rank[n, o]
+                    for j in range(3):
+                        indices[base + j] = 3 * nbr + j
+
+    @nb.njit(cache=True, parallel=True)
+    def _layout_slots(enode, cnt, rank, indptr, pair_off, slots):
+        ne = enode.shape[0]
+        for e in nb.prange(ne):
+            for a in range(8):
+                na = enode[e, a]
+                row = 3 * cnt[na]
+                for b in range(8):
+                    base = indptr[3 * na] + 3 * rank[na, pair_off[a, b]]
+                    p = 8 * a + b
+                    for i in range(3):
+                        for j in range(3):
+                            slots[p, e, 3 * i + j] = base + i * row + j
+
+    @nb.njit(cache=True)
+    def _layout_fixed(indptr, indices, fixed, keep):
+        n = 0
+        for r in range(fixed.size):
+            for s in range(indptr[r], indptr[r + 1]):
+                keep[s] = not (fixed[r] or fixed[indices[s]])
+                if fixed[r] and indices[s] == r:
+                    n += 1
+        diag = np.empty(n, np.int64)
+        n = 0
+        for r in range(fixed.size):
+            if fixed[r]:
+                for s in range(indptr[r], indptr[r + 1]):
+                    if indices[s] == r:
+                        diag[n] = s
+                        n += 1
+        return diag
+
+
 # below this many elements a parallel region per corner pair costs more than
 # it saves (64 thread launches; on a busy machine each can stall)
 _SERIAL_BELOW = 20_000
@@ -138,3 +212,25 @@ def scatter(data, slots, blks, scale):
     run = _scatter_serial if slots.shape[1] < _SERIAL_BELOW else _scatter
     run(data, slots, np.ascontiguousarray(blks, np.float64), np.ascontiguousarray(scale, np.float64))
     return data
+
+
+def stiffness_layout(mesh, pair_off, offsets, fixed):
+    """fem.Stiffness's layout of `mesh`, the integers its numpy code makes:
+    (indptr int64, indices int64, slots (64, elements, 9) int32 or int64,
+    keep, diag)."""
+    enode = np.ascontiguousarray(mesh.enode, np.int64)
+    nn = int(mesh.n_nodes)
+    adj, cnt, rank = _adjacency(enode, np.ascontiguousarray(pair_off, np.int64), nn)
+    indptr = np.zeros(3 * nn + 1, np.int64)
+    np.cumsum(np.repeat(3 * cnt, 3), out=indptr[1:])
+    nnz = int(indptr[-1])
+    indices = np.empty(nnz, np.int64)
+    _layout_indices(adj, rank, indptr, np.ascontiguousarray(mesh.node_ijk, np.int64),
+                    np.ascontiguousarray(offsets, np.int64), np.ascontiguousarray(mesh.node_dims, np.int64),
+                    mesh._lookup, indices)
+    del adj
+    slots = np.empty((64, len(enode), 9), np.int32 if nnz < 2 ** 31 - 1 else np.int64)
+    _layout_slots(enode, cnt, rank, indptr, np.ascontiguousarray(pair_off, np.int64), slots)
+    keep = np.empty(nnz, np.bool_)
+    diag = _layout_fixed(indptr, indices, np.ascontiguousarray(fixed, np.bool_), keep)
+    return indptr, indices, slots, keep, diag

@@ -528,7 +528,7 @@ class _Pardiso:
         threads = mkl_threads(s)
         over = None
         for mtype in ((2, -2) if symmetric else (11,)):
-            a = sp.triu(k, format="csr") if mtype != 11 else k.tocsr()
+            a = self._upper(k) if mtype != 11 else k.tocsr()
             a.sort_indices()
             s.set_matrix_type(mtype)
             _reproducible(s, mtype, threads)
@@ -586,8 +586,37 @@ class _Pardiso:
             self.close()
         return done
 
+    def _upper(self, k):
+        """K's upper triangle, as sp.triu(k, format="csr") with sorted
+        indices: the same entries, in the same order, the same bits. Read
+        straight off a CSR K with sorted indices, and for a K on the layout
+        the last one had (an optimizer's next design, simp._Analysis), the
+        numbers alone taken through the kept selection: a tenth of
+        sp.triu's time (100k dofs 0.18 s against 0.012 s), which ran on the
+        one MKL thread (on_mkl_thread), so every other caller waited on it
+        (8.5 s of the arm link's 350 s full-tier run, 2026-11-20)."""
+        if not (sp.isspmatrix_csr(k) or isinstance(k, sp.csr_array)) or not k.has_sorted_indices:
+            return sp.triu(k, format="csr")
+        lay = getattr(self, "_layout", None)
+        if lay is not None and (lay[0] is k.indptr or np.array_equal(lay[0], k.indptr)) \
+                and (lay[1] is k.indices or np.array_equal(lay[1], k.indices)):
+            _, _, sel, indptr, indices = lay
+        else:
+            ip = k.indptr
+            rows = np.repeat(np.arange(k.shape[0], dtype=ip.dtype), np.diff(ip))
+            keep = k.indices >= rows
+            sel = np.flatnonzero(keep)
+            if k.nnz < 2 ** 31 - 1:
+                sel = sel.astype(np.int32)
+            indptr = np.concatenate([[0], np.cumsum(keep)])[ip.astype(np.int64)].astype(ip.dtype)
+            indices = k.indices[sel]
+            self._layout = (k.indptr, k.indices, sel, indptr, indices)
+        a = sp.csr_matrix((k.data[sel], indices, indptr), shape=k.shape)
+        a.has_sorted_indices = True
+        return a
+
     def _refactor(self, k, budget):
-        a = sp.triu(k, format="csr")
+        a = self._upper(k)
         a.sort_indices()
         old = self._a
         if a.shape != old.shape or a.nnz != old.nnz or not np.array_equal(a.indptr, old.indptr) \

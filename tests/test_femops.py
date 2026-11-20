@@ -49,3 +49,20 @@ def test_gather_assembly_matches_scatter(monkeypatch):
         ref[st._diag_fixed] = 1.0
         np.testing.assert_array_equal(k.data, ref)
     assert st._plan is not None
+
+
+def test_layout_matches_numpy(monkeypatch):
+    # fem.Stiffness's CSR layout from femops.stiffness_layout: the numpy
+    # code's integers, dtypes and all (a sparse grid, fixed dofs scattered)
+    rng = np.random.default_rng(5)
+    g = rng.random((13, 8, 6)) < 0.55
+    mesh = HexMesh(np.argwhere(g), 0.8, np.zeros(3))
+    fixed = rng.random(mesh.n_dof) < 0.07
+    a = Stiffness(mesh, 0.3, fixed)
+    monkeypatch.setenv("LOADPATH_FEMOPS", "numpy")
+    b = Stiffness(mesh, 0.3, fixed)
+    for k in ("indptr", "indices", "_slots", "_blks", "_keep", "_diag_fixed", "free", "fixed"):
+        x, y = getattr(a, k), getattr(b, k)
+        assert x.dtype == y.dtype, k
+        np.testing.assert_array_equal(x, y, err_msg=k)
+    assert a.nnz == b.nnz
