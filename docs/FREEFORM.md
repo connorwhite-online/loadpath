@@ -117,6 +117,6 @@ fields. Same pitch, same checks, designed grooves left out:
 
 | | fields | surfaced |
 |---|---|---|
-| Wobble area (lumps, dips, ridges) | 16,100 mm² | 5,400 mm² |
-| Curvature off its smoothed self, RMS | 43 /m | 15 /m |
-| Spots tighter than R 2.5 | 529 mm² | 14 mm² |
+| Wobble area (lumps, dips, ridges) | 16,100 mm² | 5,600 mm² |
+| Curvature off its smoothed self, RMS | 43 /m | 18 /m |
+| Spots tighter than R 2.5 | 529 mm² | 45 mm² |
