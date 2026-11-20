@@ -90,6 +90,13 @@ buckling, printability) you can report to the user.
    Anything inserted (a shaft, pin, bearing, cable) needs its keep-out to
    run past the design space on the side it goes in from, or the part may
    close over it; `check` warns about a bore with no open end.
+   A clearance the part wraps round (a clamp's throat, a hook's opening, a
+   slot) drawn as a plain box gives the part a sharp inside corner at each
+   edge, and the stress there is set by that corner, not by the design: a
+   C-clamp's solid block read safety factor 1.4 with a square throat and
+   2.4 with an 8 mm radius. Round those edges as far as what goes in
+   allows: a union of the box stopped a radius short of the corner, a
+   cylinder of that radius along the edge, and the boxes beside it.
    Give every hole something goes into a `fit` on its keep-out, drawn at
    the mating part's diameter: `press` (a bearing's outer ring, a dowel
    pin), `transition`, `slip` (a locating pin, a shaft you take out),
@@ -443,6 +450,9 @@ buckling, printability) you can report to the user.
      sits): change the envelope, the material or the load, not the volume
      fraction. If the block passes and nothing lighter did, the block is
      delivered and the envelope is what sets the mass;
+   - the bound says "the peak sits on a square edge of keep-out ..." →
+     round that edge in the study (above) before changing the load or
+     the material;
    - `check` warns "the space the part may take is in N separate pieces" →
      the design space is cut right through (an envelope that stops short
      of going over a pipe, a keep-out across it): no run can join them;

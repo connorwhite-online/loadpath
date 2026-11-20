@@ -452,7 +452,7 @@ def _nearest_region(study: Study, at) -> str | None:
     return f"{best[1]!r}" + (f" ({best[0]:.1f} mm away)" if best[0] >= 0.5 else "")
 
 
-def bound_note(study: Study, report: dict) -> tuple[str, bool]:
+def bound_note(study: Study, report: dict, pitch: float | None = None) -> tuple[str, bool]:
     """What the whole design space reads as one solid block, in words, and
     whether the goal is out of reach inside it.
 
@@ -463,7 +463,11 @@ def bound_note(study: Study, report: dict) -> tuple[str, bool]:
     tends to the block's stress field as it fills, and where the block's
     peak sits at something drawn (a keep-out's corner, a support, a ring)
     no design moves it. Under 0.9 of the goal it is called out of reach;
-    between 0.9 and 1 it is inside what two readings of one part differ by."""
+    between 0.9 and 1 it is inside what two readings of one part differ by.
+
+    `pitch` (the grid's) lets a strength peak be held against the keep-outs'
+    square edges (domain._sharp_inside_edges): a peak on one is a notch the
+    study drew, and the note says which edge to round."""
     g = study.goal
     n = report.get("bodies", 1) or 1
     if n > 1:
@@ -501,10 +505,11 @@ def bound_note(study: Study, report: dict) -> tuple[str, bool]:
                 f"reads safety factor {sf:.2f} in case {w['name']!r} against the {g.safety_factor:g} asked"
                 f"{where}: as drawn, this envelope and material carry {sf / g.safety_factor:.0%} of that "
                 "load at the factor asked"
-                + (". More material cannot help, there is none left to add: lower the load or the factor, "
-                   "use a stronger material, or give the part more room where the peak is (a thicker "
-                   "section, a larger radius at a keep-out's corner, a wider ring)" if hard else
-                   ", inside what two readings of one part differ by"))
+                + ((". More material cannot help, there is none left to add: "
+                    + (_square_edge_note(study, at, pitch) or "")
+                    + "lower the load or the factor, use a stronger material, or give the part more room where "
+                      "the peak is (a thicker section, a larger radius at a keep-out's corner, a wider ring)")
+                   if hard else ", inside what two readings of one part differ by"))
     if not parts:
         m = report.get("margin")
         if m is not None and m < 1.0:
@@ -515,6 +520,36 @@ def bound_note(study: Study, report: dict) -> tuple[str, bool]:
             return (head + " meets the goal: the envelope has room for this part, and the lightest shape "
                     "in it is what is left to find"), False
     return head + " " + "; and it ".join(parts), out
+
+
+def _square_edge_note(study: Study, at, pitch: float | None) -> str | None:
+    """What to say when the solid block's peak `at` sits on a keep-out
+    box's square edge that the part is formed round: the notch is the
+    study's, and the first thing to change. A C-clamp's block read 1.37 at
+    its throat's square corner, 1.73 with a 4 mm radius drawn there and
+    2.36 with 8 mm (a third of its 25 mm spine)."""
+    if at is None or not pitch:
+        return None
+    from .domain import _sharp_inside_edges
+
+    p = np.asarray(at, float)
+    best = None
+    for rid, ax, p0, p1 in _sharp_inside_edges(study, float(pitch)):
+        seg = p1 - p0
+        t = float(np.clip(np.dot(p - p0, seg) / max(float(np.dot(seg, seg)), 1e-12), 0.0, 1.0))
+        dist = float(np.linalg.norm(p - (p0 + t * seg)))
+        if dist <= 1.5 * float(pitch) and (best is None or dist < best[0]):
+            best = (dist, rid, ax, p0 + t * seg)
+    if best is None:
+        return None
+    _, rid, ax, q = best
+    i = "xyz".index(ax)
+    where = ", ".join(f"{'xyz'[k]} {q[k]:.4g}" for k in range(3) if k != i)
+    return (f"the peak sits on a square edge of keep-out {rid!r} (the edge along {ax} at {where}), a sharp inside "
+            "corner the part is formed round, and the stress there goes with how sharp it is drawn, not with "
+            "the shape of the rest. If what goes in the keep-out allows, round that edge with the largest "
+            "radius it does (the box stopped a radius short of the corner, a cylinder of that radius along the "
+            "edge and the boxes that fill in beside it, as one union); otherwise ")
 
 
 def _whole(report: dict) -> bool:
@@ -3473,7 +3508,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 emit({"stage": "bound", "error": str(exc)})
                 return
             q.report["start"] = "bound: the whole design space, solid"
-            note, out = bound_note(study, q.report)
+            note, out = bound_note(study, q.report, domain.pitch)
             q.report["bound"] = {"note": note, "outOfReach": out}
             solid.update(o=q, out=out)
             emit({"stage": "bound", "outOfReach": out, **q.summary()})

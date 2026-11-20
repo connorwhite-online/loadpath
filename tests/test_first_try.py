@@ -189,6 +189,34 @@ def test_an_impossible_limit_is_found_on_the_block_before_any_search():
     assert _envelope_first(study_from_dict({**arm, "goal": {"safetyFactor": 2, "maxDeflection": 5.0}}), None, None) is None
 
 
+def test_a_peak_on_a_keep_outs_square_edge_is_named_as_the_notch_to_round():
+    """A hook: a bar with a square bite out of one side for what hangs in
+    it. The block's peak at the bite's inside corner is the study's own
+    notch; the note names the edge. A peak elsewhere, or a pocket's edge
+    with no material round it, is not blamed on one."""
+    from loadpath.domain import _sharp_inside_edges
+
+    hook = {"designSpace": [_box([0, -6, 0], [40, 6, 80])],
+            "keepOut": [{"id": "bite", "shape": _box([15, -7, 20], [41, 7, 50]), "bore": False},
+                        # through the whole bar, its edges on the design space's faces: nothing is formed round them
+                        {"id": "slot", "shape": _box([-1, -7, 70], [41, 7, 74]), "bore": False}],
+            "supports": [{"shape": _box([0, -6, 79], [40, 6, 81])}],
+            "loadCases": [{"name": "hang", "loads": [{"shape": _box([15, -6, 17], [40, 6, 20.5]), "force": [0, 0, -300]}]}],
+            "material": "petg", "goal": {"safetyFactor": 2}}
+    s = study_from_dict(hook)
+    edges = _sharp_inside_edges(s, 1.0)
+    assert {e[0] for e in edges} == {"bite"} and {e[1] for e in edges} == {"y"}, edges
+    assert sorted(round(float(e[2][2])) for e in edges) == [20, 50], edges      # the bite's two inside corners
+    case = {"name": "hang", "safetyFactor": 1.2, "deflection": 0.1, "peakAt": [15.2, 1.0, 20.3]}
+    note, out = bound_note(s, {"mass": 30.0, "cases": [case], "margin": 0.6}, 1.0)
+    assert out and "square edge of keep-out 'bite'" in note and "x 15, z 20" in note and "round that edge" in note, note
+    case["peakAt"] = [5.0, 0.0, 60.0]
+    note, out = bound_note(s, {"mass": 30.0, "cases": [case], "margin": 0.6}, 1.0)
+    assert out and "square edge" not in note, note
+    note, out = bound_note(s, {"mass": 30.0, "cases": [dict(case, peakAt=[15.2, 1.0, 20.3])], "margin": 0.6})
+    assert "square edge" not in note, "no grid given: nothing to hold the peak against"
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 
