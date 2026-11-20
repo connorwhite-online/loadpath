@@ -104,16 +104,20 @@ def savoldi_medium(phi, area_density, dh, cell):
 
 
 def lbm_medium(phi, area_density, dh, cell):
-    """The same form refitted to periodic gyroid-sheet cells run with LBM
-    (an intercooler project's 39 BGK
-    points, loadpath.flow's TRT re-runs and its creeping-flow limit, f Re
-    183 on the a10 air cell): K = 0.00932 phi^2.257 a^2, C_F = 0.0569
-    phi^-2.283. Median ratio 0.99, 90% of points within 13% (the rest is the
-    ~20% scatter between flow states past Re ~200), against Savoldi's 1.08
-    and 18%; the gain is at phi 0.17-0.26, below Savoldi's range, where
-    Savoldi reads 10-29% high."""
-    return Medium(float(phi), float(area_density), float(dh), 0.00932 * phi ** 2.257 * cell ** 2,
-                  0.0569 * phi ** -2.283, 2.257, -2.283)
+    """The same form refitted to periodic gyroid-sheet cells run with LBM:
+    loadpath.flow's TRT runs of eight air cells at Re 200-1,300 (phi
+    0.34-0.47), each drive disturbed once so the flow leaves a symmetric
+    state that is unstable (flow.cell_flow), an intercooler project's BGK
+    water cells and loadpath's (Re 10-120, steady, phi 0.17-0.26), and the
+    creeping-flow limit, f Re 183 on the a10 air cell: K = 0.00977
+    phi^2.306 a^2, C_F = 0.0921 phi^-1.909. Median ratio 0.99, 96% of the 49
+    points within 13%, air cells 0.86-1.09. An earlier fit (K 0.00932
+    phi^2.257 a^2, C_F 0.0569 phi^-2.283) took air cells run from rest with
+    exactly symmetric rounding, many of them held on the symmetric state:
+    it reads the disturbed air cells 12% low (4-19%). Savoldi's law reads
+    low-porosity cells (phi 0.17-0.26, below its range) 10-29% high."""
+    return Medium(float(phi), float(area_density), float(dh), 0.00977 * phi ** 2.306 * cell ** 2,
+                  0.0921 * phi ** -1.909, 2.306, -1.909)
 
 
 # dead edge band beyond the seal, in cells (box_domain, sizing.py): where the
