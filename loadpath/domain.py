@@ -770,6 +770,33 @@ def drawn_joints(pres_grid, elem_ijk):
     return n >= 2
 
 
+def _overlap_share(shape, cutters, pitch: float, cap: int = 40_000):
+    """(share, wall): the share of `shape`'s volume that lies inside any of
+    `cutters`, and the thickest wall of what they leave (mm), read on the
+    shapes themselves at points a quarter cell apart ((None, 0) when a shape
+    gives no distance)."""
+    try:
+        lo, hi = (np.asarray(v, float) for v in shape.bounds())
+        ext = np.maximum(hi - lo, 1e-9)
+        step = max(0.25 * pitch, float(np.prod(ext) / cap) ** (1.0 / 3.0))
+        axes = [lo[a] + step * (np.arange(max(int(np.ceil(ext[a] / step)), 1)) + 0.5) for a in range(3)]
+        pts = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+        d_in = -shape.sdf(pts)
+        pts, d_in = pts[d_in > 0.0], d_in[d_in > 0.0]
+        if not len(pts):
+            return None, 0.0
+        d_out = np.full(len(pts), np.inf)
+        for c in cutters:
+            d_out = np.minimum(d_out, c.sdf(pts))
+        left = d_out > 0.0
+        # the thickest wall of what is left: twice the deepest point's
+        # distance to the nearer of the shape's own surface and a cutter's
+        wall = 2.0 * float(np.minimum(d_in[left], d_out[left]).max()) + step if left.any() else 0.0
+        return float(1.0 - left.mean()), wall
+    except Exception:  # noqa: BLE001 - a shape with no distance field: fall back to the cells
+        return None, 0.0
+
+
 def _build_domain(study: Study, pitch: float) -> Domain:
     lo, hi = study.bounds()
     center = 0.5 * (lo + hi)
@@ -852,9 +879,28 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                           and _fraction([k.shape], centers[gone], pitch).mean() >= 0.25]
                 if cut_by and all(getattr(k, "cuts_declared", False) for k in cut_by):
                     continue   # the study says these keep-outs cut what is drawn
+                # Counted on the shapes, not the cells. A cell the two share
+                # goes to the keep-out, so on a coarse grid a ring that only
+                # touches a clearance loses a layer of cells to it: every
+                # fastener's own seat ring read "43% inside" its own head
+                # path, which starts at the face the ring ends on, and a
+                # hinge knuckle with its pin through it "31%" (20% by
+                # volume). The warning is for a keep-out that really takes
+                # the drawn part away.
+                # And a hole through a boss is the bore doing its job (the
+                # packaged arm link's bearing takes 48% of its shoulder boss
+                # and warned): what matters is what the cut leaves. Warned
+                # when under a tenth of the part is left, or when the
+                # thickest wall left is under what the process can make.
+                share, wall = _overlap_share(r.shape, [k.shape for k in cut_by], pitch)
+                if share is not None:
+                    floor = study.process.min_feature if study.process is not None else 0.0
+                    if share <= 0.25 or (share < 0.9 and wall >= floor):
+                        continue
+                pct = 100 * (share if share is not None else len(gone) / len(mine))
                 by = [k.id for k in cut_by]
                 warnings.append(
-                    f"preserve {r.id!r}: {100 * len(gone) / len(mine):.0f}% of it is inside keep-out "
+                    f"preserve {r.id!r}: {pct:.0f}% of it is inside keep-out "
                     f"{', '.join(map(repr, by)) or 'regions'} and is left out of the part; a clear zone drawn round "
                     "a preserved part takes the part away with it. Subtract the preserve from the keep-out "
                     "({\"type\": \"subtract\", \"shapes\": [keep-out, preserve]}), or give a clearance keep-out "
@@ -914,6 +960,29 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         sizes = np.bincount(el_lbl)
         sizes[0] = 0
         keep = el_lbl == int(np.argmax(sizes))
+    else:
+        # Space that is in pieces gives a part in pieces, whatever is asked of
+        # it: a saddle clamp whose envelope stopped below the top of its pipe
+        # was two feet with nothing over the pipe, each on its own screw, and
+        # read a safety factor of 5 against the pipe pulling off. Said here,
+        # before an optimization is spent on it.
+        if len(keep_lbls) > 1:
+            cen = mesh.elem_centers()
+            sizes = [(int((el_lbl == k).sum()), k) for k in keep_lbls]
+            sizes.sort(reverse=True)
+            boxes = []
+            for n_k, k in sizes[:4]:
+                c = cen[el_lbl == k]
+                blo, bhi = c.min(axis=0) - 0.5 * pitch, c.max(axis=0) + 0.5 * pitch
+                boxes.append(f"{n_k} cells in [{', '.join(f'{v:.4g}' for v in blo)}] to "
+                             f"[{', '.join(f'{v:.4g}' for v in bhi)}]")
+            warnings.append(
+                f"the space the part may take is in {len(keep_lbls)} separate pieces on this {pitch:.2f} mm grid, "
+                f"each with its own support ({'; '.join(boxes)}{'; ...' if len(sizes) > 4 else ''}): nothing can "
+                "join them, so the part will come out in pieces and no load passes from one to the other. If "
+                "it is one part, the design space is missing the way between them (an envelope that stops "
+                "short of going over or round a keep-out, a keep-out drawn right across it); a wall thinner "
+                "than a cell also reads as a gap, which resolution.pitch or maxElements closes.")
     if (~keep).any():
         dropped = int((~keep).sum())
         if preserve[active][~keep].any():

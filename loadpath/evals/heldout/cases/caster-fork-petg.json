@@ -1,0 +1,213 @@
+{
+ "id": "caster-fork-petg",
+ "brief": "The fork of a small cart caster in PETG on an FDM printer (choose the print orientation). Its top face (z = 0) sits under the cart and is held by four M4 screws that come down from the cart into heat-set inserts (5.6 mm) in the fork at (x +-18, y +-12), 6 mm deep. The wheel is 44 mm in diameter and 16 mm wide on an 8 mm axle along Y, centred at z = -50; the axle slips into the fork from the side. Keep the fork inside x = -25 to 25, y = -18 to 18, z = -62 to 0. Each caster carries up to 30 kg and the cart gets dropped off kerbs (factor 2); in a turn the wheel also sees 150 N along the axle, and when it hits a lip 150 N along X, each with half the vertical load. Safety factor 2.5.",
+ "attachments": [],
+ "tags": [
+  "mount",
+  "fdm",
+  "inserts",
+  "bore",
+  "auto-orientation"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -25,
+     -18,
+     -62
+    ],
+    "max": [
+     25,
+     18,
+     0
+    ]
+   }
+  ],
+  "preserve": [],
+  "keepOut": [
+   {
+    "id": "axle",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      -50
+     ],
+     "axis": "y",
+     "length": 40,
+     "r": 4.0
+    },
+    "fit": "slip"
+   },
+   {
+    "id": "wheel",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      -50
+     ],
+     "axis": "y",
+     "length": 18,
+     "r": 24.0
+    },
+    "bore": false
+   },
+   {
+    "id": "wheel-way-out",
+    "shape": {
+     "type": "box",
+     "min": [
+      -24,
+      -9,
+      -75
+     ],
+     "max": [
+      24,
+      9,
+      -50
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "s1",
+    "size": "M4",
+    "seat": [
+     -18,
+     -12,
+     0
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 5.6,
+    "threadLength": 6
+   },
+   {
+    "id": "s2",
+    "size": "M4",
+    "seat": [
+     18,
+     -12,
+     0
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 5.6,
+    "threadLength": 6
+   },
+   {
+    "id": "s3",
+    "size": "M4",
+    "seat": [
+     -18,
+     12,
+     0
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 5.6,
+    "threadLength": 6
+   },
+   {
+    "id": "s4",
+    "size": "M4",
+    "seat": [
+     18,
+     12,
+     0
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 5.6,
+    "threadLength": 6
+   }
+  ],
+  "supports": [
+   {
+    "region": "s1-thread"
+   },
+   {
+    "region": "s2-thread"
+   },
+   {
+    "region": "s3-thread"
+   },
+   {
+    "region": "s4-thread"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "kerb",
+    "loads": [
+     {
+      "region": "axle",
+      "force": [
+       0,
+       0,
+       589
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "turn",
+    "loads": [
+     {
+      "region": "axle",
+      "force": [
+       0,
+       150,
+       294
+      ]
+     }
+    ]
+   },
+   {
+    "name": "lip",
+    "loads": [
+     {
+      "region": "axle",
+      "force": [
+       150,
+       0,
+       294
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "auto"
+  },
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "caster-fork-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5
+ }
+}

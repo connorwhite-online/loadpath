@@ -1,0 +1,147 @@
+{
+ "id": "corner-bracket-2020-petg",
+ "brief": "An inside corner bracket joining two 2020 aluminium extrusions at a right angle, PETG on an FDM printer, printed flat so the layers stack along Z. One extrusion runs along X under the bracket (its face is the plane y = 0), the other runs up along Y beside it (its face is the plane x = 0). The bracket lives in x = 0 to 45, y = 0 to 45, z = -10 to 10. One M5 screw goes down (-Y) into a T-nut in the first extrusion at x = 30, z = 0, through a 6 mm thick foot; one M5 screw goes sideways (-X) into a T-nut in the second at y = 30, z = 0, through a 6 mm thick foot. The upright extrusion can be pushed 250 N along its own length, pulled 250 N straight off the bracket, or pushed 150 N sideways (along Z). Safety factor 2.5.",
+ "attachments": [],
+ "tags": [
+  "bracket",
+  "fdm",
+  "fasteners"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0,
+     0,
+     -10
+    ],
+    "max": [
+     45,
+     45,
+     10
+    ]
+   }
+  ],
+  "preserve": [],
+  "keepOut": [],
+  "fasteners": [
+   {
+    "id": "a",
+    "size": "M5",
+    "seat": [
+     30,
+     6,
+     0
+    ],
+    "direction": "-y",
+    "grip": 6,
+    "end": "face"
+   },
+   {
+    "id": "b",
+    "size": "M5",
+    "seat": [
+     6,
+     30,
+     0
+    ],
+    "direction": "-x",
+    "grip": 6,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "a-bore",
+    "fix": "xz"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      30,
+      -0.1,
+      0
+     ],
+     "axis": "y",
+     "length": 0.8,
+     "r": 5.5
+    },
+    "fix": "y"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      0,
+      -0.5,
+      -10
+     ],
+     "max": [
+      45,
+      0.3,
+      10
+     ]
+    },
+    "fix": "y"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "along",
+    "loads": [
+     {
+      "region": "b-bore",
+      "force": [
+       0,
+       -250,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "pull-off",
+    "loads": [
+     {
+      "region": "b-bore",
+      "force": [
+       250,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "sideways",
+    "loads": [
+     {
+      "region": "b-bore",
+      "force": [
+       0,
+       0,
+       150
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "corner-bracket-2020-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5
+ }
+}

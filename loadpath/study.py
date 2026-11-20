@@ -347,6 +347,8 @@ class StudyResult:
             "warnings": self.warnings,
             **({"methodChoice": self.choice} if self.choice else {}),
             **({"orientation": self.study.raw["orientation"]} if "orientation" in self.study.raw else {}),
+            **({"supportDecision": self.study.raw["supportDecision"]}
+               if "supportDecision" in self.study.raw else {}),
         }
 
 
@@ -423,6 +425,81 @@ def _margin(study: Study, report: dict) -> float | None:
             if lims.get(lim) and got.get(key) is not None:
                 ms.append(lims[lim] / max(got[key], 1e-12))
     return min(ms) if ms else None
+
+
+def _nearest_region(study: Study, at) -> str | None:
+    """The drawn region (preserve, keep-out, fastener ring) nearest a point,
+    as "'id' (d mm away)": what a peak stress sits against."""
+    p = np.asarray(at, float)[None, :]
+    best = None
+    for r in list(study.preserve) + list(study.keep_out):
+        try:
+            d = abs(float(r.shape.sdf(p)[0]))
+        except Exception:  # noqa: BLE001 - a shape with no distance is skipped
+            continue
+        if best is None or d < best[0]:
+            best = (d, r.id)
+    if best is None or not best[1]:
+        return None
+    return f"{best[1]!r}" + (f" ({best[0]:.1f} mm away)" if best[0] >= 0.5 else "")
+
+
+def bound_note(study: Study, report: dict) -> tuple[str, bool]:
+    """What the whole design space reads as one solid block, in words, and
+    whether the goal is out of reach inside it.
+
+    The solid block is the stiffest thing the envelope holds: taking
+    material away only adds deflection, so a deflection limit the block
+    misses is missed by every shape in it. Its stress is not a strict bound
+    (a design can leave a relief round a notch), but a compliance design
+    tends to the block's stress field as it fills, and where the block's
+    peak sits at something drawn (a keep-out's corner, a support, a ring)
+    no design moves it. Under 0.9 of the goal it is called out of reach;
+    between 0.9 and 1 it is inside what two readings of one part differ by."""
+    g = study.goal
+    mat = study.material
+    cases = report.get("cases") or []
+    parts, out = [], False
+    head = f"the whole design space as one solid block ({report['mass']:.1f} g of {mat.name})"
+    if g.max_deflection is not None and cases:
+        w = max(cases, key=lambda c: c.get("deflection") or 0.0)
+        if (w.get("deflection") or 0.0) > g.max_deflection:
+            k = w["deflection"] / g.max_deflection
+            out = True
+            parts.append(
+                f"deflects {w['deflection']:.3g} mm in case {w['name']!r} against the {g.max_deflection:g} mm "
+                f"asked. Nothing in this envelope is stiffer than the block, so no shape in it meets the "
+                f"limit: it needs {k:.2g}x the stiffness (a material {k:.2g}x stiffer than {mat.E:.0f} MPa, or "
+                f"more depth along the load where it bends: bending stiffness goes with the cube of the "
+                f"depth, so {k ** (1 / 3):.2f}x the depth), or a limit of {w['deflection'] * 1.1:.2g} mm")
+    if g.safety_factor is not None and cases:
+        w = min(cases, key=lambda c: c.get("safetyFactor") if c.get("safetyFactor") is not None else np.inf)
+        sf = w.get("safetyFactor")
+        if sf is not None and sf < g.safety_factor:
+            at = w.get("peakAt")
+            near = _nearest_region(study, at) if at is not None else None
+            where = (f", its peak at {[round(float(v), 1) for v in at]}" + (f" by {near}" if near else "")) if at \
+                else ""
+            hard = sf < 0.9 * g.safety_factor
+            out = out or hard
+            parts.append(
+                f"reads safety factor {sf:.2f} in case {w['name']!r} against the {g.safety_factor:g} asked"
+                f"{where}: as drawn, this envelope and material carry {sf / g.safety_factor:.0%} of that "
+                "load at the factor asked"
+                + (". More material cannot help, there is none left to add: lower the load or the factor, "
+                   "use a stronger material, or give the part more room where the peak is (a thicker "
+                   "section, a larger radius at a keep-out's corner, a wider ring)" if hard else
+                   ", inside what two readings of one part differ by"))
+    if not parts:
+        m = report.get("margin")
+        if m is not None and m < 1.0:
+            out = m < 0.9
+            parts.append(f"meets {m:.0%} of the goal (a limit other than strength or deflection: buckling, "
+                         "durability, a support's rating or a travel limit)")
+        else:
+            return (head + " meets the goal: the envelope has room for this part, and the lightest shape "
+                    "in it is what is left to find"), False
+    return head + " " + "; and it ".join(parts), out
 
 
 def _whole(report: dict) -> bool:
@@ -1166,6 +1243,28 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         free = choose_build_direction(study, on_progress=on_progress, self_supporting=False)["study"]
         return settle_supports(study, run_study(free, on_progress, should_stop),
                                lambda st: run_study(st, on_progress, should_stop), on_progress)
+    proc = study.process
+    if proc is not None and proc.overhangs and not proc.overhangs_declared and proc.build is not None:
+        # A named build direction says which way the layers lie. It does not
+        # say "no supports": supports cost material, time and a scarred face,
+        # and an FDM or LPBF part is printed on them every day. Held as a law
+        # instead, the overhang rule gave nothing at all wherever the drawn
+        # interfaces cannot stand on the bed by themselves: a hinge leaf
+        # printed flat, its knuckle hanging 3 mm under the leaf, came out as
+        # a knuckle and two screw rings with no leaf between them, safety
+        # factor 0 at every fraction. So the same decision "auto" makes, in
+        # the one direction named: the free design on supports first, then
+        # self-supporting where that is cheaper to make at the delivered
+        # fraction. `"overhangs": true` in the process asks for the rule
+        # outright, false for supports outright.
+        from .orient import settle_supports
+
+        base = dataclasses.replace(study, print_direction=None)
+        free = dataclasses.replace(base, process=dataclasses.replace(proc, overhangs=False,
+                                                                     overhangs_declared=True))
+        return settle_supports(base, run_study(free, on_progress, should_stop),
+                               lambda st: run_study(st, on_progress, should_stop), on_progress,
+                               candidates=[proc.build])
     mats = study.materials or [study.material]
     if len(mats) == 1:
         if study.goal.method == "auto":
@@ -3310,17 +3409,57 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             if why:
                 emit({"stage": "recall", "volumeFraction": vf, "reason": why})
         lo_fail, hi_pass = None, None   # (vf, margin) brackets
+        # The envelope's own limit (bound_note): asked once a search is
+        # failing its way up, by meshing and verifying the whole design
+        # space as a solid block, a minute where another optimization is
+        # several. A crank lever asked to flex under 1 mm where its solid
+        # envelope flexes 2.2 ran to the 70% ceiling and was told to "raise
+        # the volume fraction or the material"; a corner bracket whose solid
+        # block passes (SF 2.78 for 2.5) stopped at the same ceiling with
+        # "more material is not allowed" and no part.
+        solid = {"o": None, "tried": os.environ.get("LOADPATH_BOUND") == "0", "out": False}
+
+        def envelope_bound():
+            solid["tried"] = True
+            emit({"stage": "bound", "what": "the whole design space, solid"})
+            try:
+                ones = np.ones(domain.n_elem)
+                q = attempt(1.0, None, 1.0, replay=(ones, ones))
+            except Exception as exc:  # noqa: BLE001 - a bound that cannot be read is no bound; the search goes on
+                emit({"stage": "bound", "error": str(exc)})
+                return
+            q.report["start"] = "bound: the whole design space, solid"
+            note, out = bound_note(study, q.report)
+            q.report["bound"] = {"note": note, "outOfReach": out}
+            solid.update(o=q, out=out)
+            emit({"stage": "bound", "outOfReach": out, **q.summary()})
+
+        pieces: list[float] = []
         for _ in range(_MAX_SEARCH_RUNS):
             if should_stop is not None and should_stop():
                 break
             o = run_one(vf)
             outcomes.append(o)
             m = o.report["margin"]
+            if m < 1.0 and hi_pass is None and not solid["tried"] and (lo_fail is not None or vf >= _VF_MAX - 1e-9):
+                # the second part in a row to fail with none passing yet
+                envelope_bound()
+                if solid["out"]:
+                    break
             if m >= 1.0 and o.report.get("bodies", 1) > 1:
                 # strong enough but in pieces (a fastener's rings or an
                 # unloaded pad left floating) is a failed outcome: step up
                 # about a third, more material reconnects it. It used to
                 # count as passing and end the search with no passing part.
+                if pieces and vf > pieces[-1] and hi_pass is None:
+                    # More material came back in pieces again: each piece
+                    # carries its own load to its own support and nothing in
+                    # the load cases asks them to hold each other, so no
+                    # fraction joins them (a VESA plate came out as two
+                    # straps at 30%, 39%, 52% and 70%). Stop adding.
+                    pieces.append(vf)
+                    break
+                pieces.append(vf)
                 m = 0.8
             if m >= 1.0:
                 hi_pass = (vf, m) if hi_pass is None or vf < hi_pass[0] else hi_pass
@@ -3362,6 +3501,36 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             if abs(nxt - vf) < 0.005 and not (hi_pass and lo_fail):
                 break
             vf = nxt
+        if not any(q.passes for q in outcomes) and outcomes and not solid["tried"] \
+                and not (should_stop is not None and should_stop()):
+            envelope_bound()
+        if solid["o"] is not None and not any(q.passes for q in outcomes):
+            # Nothing lighter passes. Out of reach: the block goes in as the
+            # strongest part there is, with what it reads. Within reach: the
+            # block is a part that meets the goal, and the lightest one found;
+            # a search that stops at 70% full and hands back nothing has
+            # thrown away the answer (unless the study asks for a
+            # self-supporting print, which a solid envelope need not be).
+            q = solid["o"]
+            run_notes.append(q.report["bound"]["note"])
+            if len(pieces) > 1:
+                run_notes.append(
+                    f"every lighter design was strong enough but in pieces, at {100 * pieces[0]:.0f}% and again at "
+                    f"{100 * pieces[-1]:.0f}% of the design space: each piece carries its own load to its own "
+                    "support, and no load case asks the pieces to hold each other, so material alone never joins "
+                    "them. A lighter one-piece part needs the load that makes it one part in service: a case that "
+                    "runs between the pieces (a twist, a side load, how it is carried before it is fastened), or "
+                    "a preserved link between them")
+            strict = study.print_direction is not None or bool(_making(study).get("access"))
+            if q.passes and strict:
+                q.passes = False
+                run_notes.append("that block is not delivered as the part: it is not shaped by the overhang, "
+                                 "casting or milling rule the study sets")
+            elif q.passes:
+                run_notes.append("no lighter design passed, so the solid block is delivered: the envelope, "
+                                 "not the search, sets this part's mass. Give it more room for a lighter one")
+            outcomes.append(q)
+            emit({"stage": "outcome", **q.summary()})
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: _weigh(outcomes[i].report)) if passing else None
         voxel_confirm = True
