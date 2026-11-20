@@ -114,3 +114,61 @@ def test_smoothing_operator_is_trimeshs_on_a_clean_mesh_and_averages_on_a_degene
     # a face with a repeated vertex, as marching cubes leaves one on the level
     bad = trimesh.Trimesh(m.vertices, np.vstack([m.faces, [[0, 0, 1]]]), process=False)
     assert np.allclose(np.asarray(R._umbrella(bad).sum(axis=1)).ravel(), 1.0)
+
+
+def _sheet(n=41, edge=0.4):
+    """A flat triangulated sheet, edges `edge` long, and its umbrella."""
+    from loadpath.reconstruct import _umbrella
+
+    g = np.arange(n) * edge
+    X, Y = np.meshgrid(g, g, indexing="ij")
+    v = np.column_stack([X.ravel(), Y.ravel(), np.zeros(n * n)])
+    q = (np.arange(n - 1)[:, None] * n + np.arange(n - 1)[None, :]).ravel()
+    f = np.concatenate([np.column_stack([q, q + n, q + n + 1]), np.column_stack([q, q + n + 1, q + 1])])
+    return v, f, _umbrella(trimesh.Trimesh(v, f, process=False))
+
+
+def _inverted(v, f):
+    a, b, c = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
+    return int((np.cross(b - a, c - a)[:, 2] <= 0).sum())
+
+
+def test_a_blend_back_to_the_unsmoothed_surface_eases_over_the_shift_it_undoes():
+    # What _smooth_surface does next to a keep-out, in the flat: the surface
+    # the smoothing left (a) and the one it started from (b), which here is
+    # the same sheet drawn 1.5 mm along itself: four edges, as the cap of a
+    # blind tapped hole's pocket is drawn along the hole. A disc of it goes
+    # back to where it started, eased two rings: the weight steps from 1 to
+    # nothing over 0.8 mm, the vertices at 1 land past their neighbours, and
+    # the sheet folds (the drawer pull's tap holes: 2 to 12 crossing faces,
+    # 8 of 12 designs not delivered). Eased over the shift, it does not.
+    from loadpath.reconstruct import _ease_over_shift
+
+    a, f, lap = _sheet()
+    b = a + np.array([1.5, 0.0, 0.0])
+    w = (np.linalg.norm(a[:, :2] - a[:, :2].mean(axis=0), axis=1) < 1.5).astype(float)
+    for _ in range(2):
+        w = np.maximum(w, lap @ w)
+    assert _inverted(a, f) == 0 and _inverted(b, f) == 0
+    assert _inverted((1 - w[:, None]) * a + w[:, None] * b, f) > 0, "the two-ring easing no longer folds: test the fold"
+    e = _ease_over_shift(w, lap, a, b)
+    assert (e >= w).all() and e.max() <= 1.0
+    assert _inverted((1 - e[:, None]) * a + e[:, None] * b, f) == 0
+    # no further than the shift needs: back to nothing within 1 / EASE_SHARE
+    # shifts (3 mm) and a few edges of the disc and its two rings
+    far = np.linalg.norm(a[:, :2] - a[:, :2].mean(axis=0), axis=1) > 1.5 + 2 * 0.4 * np.sqrt(2) + 3.0 + 0.8
+    assert far.any() and not e[far].any()
+
+
+def test_a_blend_over_a_shift_shorter_than_its_edges_is_left_as_it_was():
+    # the usual case (smoothing moves a vertex a fraction of an edge): the
+    # weight comes back entry for entry, so parts that never folded mesh
+    # exactly as before
+    from loadpath.reconstruct import _ease_over_shift
+
+    a, f, lap = _sheet()
+    b = a + np.array([0.05, 0.0, 0.08])
+    w = (np.linalg.norm(a[:, :2] - a[:, :2].mean(axis=0), axis=1) < 1.5).astype(float)
+    for _ in range(2):
+        w = np.maximum(w, lap @ w)
+    assert np.array_equal(_ease_over_shift(w, lap, a, b), w)
