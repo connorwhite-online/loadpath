@@ -770,6 +770,72 @@ def drawn_joints(pres_grid, elem_ijk):
     return n >= 2
 
 
+def _sharp_inside_edges(study, pitch: float) -> list:
+    """The edges of keep-out boxes the part is formed round: (keep-out id,
+    axis the edge runs along, its two ends), each stretch of an edge with
+    material round it.
+
+    A box drawn for a clearance (a clamp's throat, a slot for a mating
+    part, a pocket for a board) has square edges, and where the design
+    space wraps one (material against both faces that meet at it and in
+    the quarter between them) the part gets a sharp inside corner. Stress
+    concentrates there whatever the part's shape is elsewhere: a C-clamp's
+    solid envelope read a safety factor of 1.37 at its throat's corner,
+    1.73 with a 4 mm radius there and 2.36 with 8 mm on a 25 mm spine,
+    and no search inside the envelope could do better than the block.
+    Read on the shapes; the grid only sets how much material counts as
+    being there (a cell either side).
+
+    Not a warning of `check`: a pocket for a square motor has such edges
+    and carries nothing round them (14 of 55 packaged studies have one, and
+    their parts pass). It is what the solid block's reading is held against
+    when its peak sits on one (study.bound_note)."""
+    from .shapes import Box, Union
+
+    def boxes(shape):
+        if isinstance(shape, Box):
+            return [shape]
+        if isinstance(shape, Union):
+            return [b for sh in shape.shapes for b in boxes(sh)]
+        return []
+
+    design = list(study.design_space) + [r.shape for r in study.preserve]
+    keep = [r.shape for r in study.keep_out]
+    if not design or not keep:
+        return []
+
+    def solid(pts):
+        inside = np.min([sh.sdf(pts) for sh in design], axis=0) < 0
+        return inside & (np.min([sh.sdf(pts) for sh in keep], axis=0) > 0)
+
+    d = float(pitch)
+    out = []
+    for r in study.keep_out:
+        for b in boxes(r.shape):
+            for ax in range(3):
+                u, v = [a for a in range(3) if a != ax]
+                n = max(int(np.ceil((b.hi[ax] - b.lo[ax]) / (0.5 * d))), 2)
+                step = (b.hi[ax] - b.lo[ax]) / n
+                t = b.lo[ax] + (np.arange(n) + 0.5) * step
+                for su in (-1, 1):
+                    for sv in (-1, 1):
+                        e = np.zeros((n, 3))
+                        e[:, ax] = t
+                        e[:, u] = b.hi[u] if su > 0 else b.lo[u]
+                        e[:, v] = b.hi[v] if sv > 0 else b.lo[v]
+                        nu, nv = np.zeros(3), np.zeros(3)
+                        nu[u], nv[v] = su * d, sv * d
+                        on = solid(e + nu) & solid(e + nv) & solid(e + nu + nv)
+                        if on.sum() * step < 2.0 * d:
+                            continue
+                        i = np.flatnonzero(on)
+                        p0, p1 = e[i[0]].copy(), e[i[-1]].copy()
+                        p0[ax] -= 0.5 * step
+                        p1[ax] += 0.5 * step
+                        out.append((r.id, "xyz"[ax], p0, p1))
+    return out
+
+
 def _overlap_share(shape, cutters, pitch: float, cap: int = 40_000):
     """(share, wall, shrink): the share of `shape`'s volume that lies inside
     any of `cutters`, the thickest wall of what they leave (mm), and how far
