@@ -41,7 +41,8 @@ python -m loadpath.evals.heldout table runs/NAME
 | Date | Code | First try | Passing part | Clean check | Notes |
 |---|---|---|---|---|---|
 | 2026-11-20 | main a2881fa (cold, pristine checkout) | 3 of 11 | 4 of 11 | 7 of 11 | The baseline. Per-part results in docs/GENERAL-DESIGN.md |
-| 2026-11-20 | first fixes (pull request 14) | partial: 7 of 11 re-run | 2 of those 7 (0 cold) | 6 of those 7 | Corner bracket and VESA plate now pass; hinge, crank, C-clamp, action-cam mount told what their envelope carries in 3 to 6 min; short pipe clamp flagged at check. Drawer pull, tablet stand, caster fork, pipe clamp not yet re-run |
+| 2026-11-20 | first fixes (pull request 14, main ceaa9f7) | 6 of 11 | 5 of 11 | 10 of 11 | Corner bracket, VESA plate pass; caster fork check clean; hinge, crank, C-clamp, action-cam mount told what their envelope carries in 3 to 6 min; short pipe clamp flagged at check. Drawer pull regressed to 17.8 g (folded meshes refused); tablet stand's run was cut off by the machine |
+| 2026-11-20 | second fixes (pull request 16, main d4eed7e): the three not settled above re-run | 7 of 11 | 6 of 11 | 10 of 11 | Drawer pull 10.5 g, tablet stand 29.3 g, pipe clamp 5.9 g; the other eight carried from the row above |
 
 The scorer leaves a warning about this machine's free memory out of the
 "clean check" count: it is about the machine, not the study. A diagnosis
