@@ -771,10 +771,11 @@ def drawn_joints(pres_grid, elem_ijk):
 
 
 def _overlap_share(shape, cutters, pitch: float, cap: int = 40_000):
-    """(share, wall): the share of `shape`'s volume that lies inside any of
-    `cutters`, and the thickest wall of what they leave (mm), read on the
-    shapes themselves at points a quarter cell apart ((None, 0) when a shape
-    gives no distance)."""
+    """(share, wall, shrink): the share of `shape`'s volume that lies inside
+    any of `cutters`, the thickest wall of what they leave (mm), and how far
+    what is left falls short of the shape's own extent along its worst axis
+    (mm), read on the shapes themselves at points a quarter cell apart
+    ((None, 0, 0) when a shape gives no distance)."""
     try:
         lo, hi = (np.asarray(v, float) for v in shape.bounds())
         ext = np.maximum(hi - lo, 1e-9)
@@ -784,7 +785,7 @@ def _overlap_share(shape, cutters, pitch: float, cap: int = 40_000):
         d_in = -shape.sdf(pts)
         pts, d_in = pts[d_in > 0.0], d_in[d_in > 0.0]
         if not len(pts):
-            return None, 0.0
+            return None, 0.0, 0.0
         d_out = np.full(len(pts), np.inf)
         for c in cutters:
             d_out = np.minimum(d_out, c.sdf(pts))
@@ -792,9 +793,14 @@ def _overlap_share(shape, cutters, pitch: float, cap: int = 40_000):
         # the thickest wall of what is left: twice the deepest point's
         # distance to the nearer of the shape's own surface and a cutter's
         wall = 2.0 * float(np.minimum(d_in[left], d_out[left]).max()) + step if left.any() else 0.0
-        return float(1.0 - left.mean()), wall
+        if left.any():
+            shrink = float(((pts.max(axis=0) - pts.min(axis=0))
+                            - (pts[left].max(axis=0) - pts[left].min(axis=0))).max())
+        else:
+            shrink = float(ext.max())
+        return float(1.0 - left.mean()), wall, shrink
     except Exception:  # noqa: BLE001 - a shape with no distance field: fall back to the cells
-        return None, 0.0
+        return None, 0.0, 0.0
 
 
 def _build_domain(study: Study, pitch: float) -> Domain:
@@ -889,13 +895,19 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                 # the drawn part away.
                 # And a hole through a boss is the bore doing its job (the
                 # packaged arm link's bearing takes 48% of its shoulder boss
-                # and warned): what matters is what the cut leaves. Warned
-                # when under a tenth of the part is left, or when the
-                # thickest wall left is under what the process can make.
-                share, wall = _overlap_share(r.shape, [k.shape for k in cut_by], pitch)
+                # and warned): what matters is what the cut leaves. A hole
+                # through a part leaves it reaching as far as it was drawn,
+                # with a wall round the hole; a clear zone over one end of a
+                # rail leaves a stub. Not warned when what is left still
+                # spans the drawn part (to within a cell, which is all the
+                # grid can tell) and its thickest wall is one the process
+                # can make. No share of the volume decides it: a bearing
+                # takes half its boss and a clearance box that takes half a
+                # rail is the mistake this warning is for.
+                share, wall, shrink = _overlap_share(r.shape, [k.shape for k in cut_by], pitch)
                 if share is not None:
                     floor = study.process.min_feature if study.process is not None else 0.0
-                    if share <= 0.25 or (share < 0.9 and wall >= floor):
+                    if share < 1.0 and shrink <= pitch and wall >= floor:
                         continue
                 pct = 100 * (share if share is not None else len(gone) / len(mine))
                 by = [k.id for k in cut_by]
