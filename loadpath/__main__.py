@@ -45,6 +45,9 @@ def _load(path):
         sys.exit(2)
 
 
+_T0 = time.time()
+
+
 def _progress(event, _field=None):
     if event.get("stage") == "optimize" and "iteration" in event and event["iteration"] % 5:
         return
@@ -60,6 +63,9 @@ def _progress(event, _field=None):
         if dfl:
             w = max(dfl, key=lambda c: c["deflection"])
             ev["maxDeflection"] = {"name": w.get("name"), "deflection": w["deflection"]}
+    # seconds since the command started: where a run's minutes go is the
+    # first thing asked of a slow one, and the events did not say
+    ev["t"] = round(time.time() - _T0, 1)
     print(json.dumps(_jsonable(ev)), file=sys.stderr, flush=True)
 
 
