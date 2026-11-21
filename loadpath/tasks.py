@@ -458,15 +458,17 @@ def _glued_faces(s, warnings_=None) -> list[str]:
                 warnings_.append(f"supports: a slab over the whole {axis} face holds it in {axis} everywhere, "
                                  f"so load case {lifts[0]!r}, which pulls the part off that face, is reacted by "
                                  "the face as if it were glued down: far too strong and stiff. A bolted part "
-                                 f"is held only under its bolts (the plate pushes, it cannot pull): hold {axis} "
-                                 "on a washer-sized disc under each bolt, or on the bolt bores alone")
+                                 f"is held only under its bolts (the plate pushes, it cannot pull): give this "
+                                 f"support \"push\": \"{'+' if sign > 0 else '-'}{axis}\" in place of fix (it then "
+                                 "carries pressure only) and hold the bolt bores with their own supports")
                 continue
             if not fastened:
                 continue
             out.append(f"supports: a slab over the whole {axis} face holds it in {axis} everywhere, as if glued "
                        f"to what it sits on. A part bolted down is held only under its bolts (the plate pushes, "
-                       f"it cannot pull), so a load that lifts or tips it reads too strong: hold {axis} on a "
-                       "washer-sized disc under each bolt instead, unless the face really is bonded")
+                       f"it cannot pull), so a load that lifts or tips it reads too strong: give this support "
+                       f"\"push\": \"{'+' if sign > 0 else '-'}{axis}\" in place of fix and hold the bolt bores "
+                       "with their own supports, unless the face really is bonded")
     except Exception:  # noqa: BLE001 - a lint
         return out
     return out

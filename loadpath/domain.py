@@ -52,6 +52,8 @@ class Domain:
     warnings: list = field(default_factory=list)
     # Pin supports as penalty springs at unit modulus (scale by E), or None.
     springs: object = None
+    # supports that only push (BoundaryConditions.seats, pushseat.py)
+    seats: list = field(default_factory=list)
     # Self-weight: N per mm^3 of solid, or None (see BoundaryConditions).
     gravity: np.ndarray | None = None
     # per case, directions.Spread or None (see BoundaryConditions)
@@ -1212,7 +1214,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     dom = Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
-                  springs=bc.springs, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
+                  springs=bc.springs, seats=bc.seats, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
                   volume_weights=_volume_weights(study, mesh, pres_el),
                   center_of_mass=(None if getattr(getattr(study, "mass_properties", None), "com_target", None) is None
                                   else (study.mass_properties.com_target, study.mass_properties.com_tolerance)),

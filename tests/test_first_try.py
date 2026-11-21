@@ -329,6 +329,37 @@ def test_a_push_support_is_refused_with_fix_or_a_force_of_unknown_direction():
         assert "push" in str(exc)
 
 
+def test_the_optimizer_solves_a_push_support_as_contact():
+    """The optimizer's own solve of a domain with a seat: the answer is in
+    equilibrium with seat forces that push only where the part bears, on a
+    fresh reading of the seat's compliance and on the solves between."""
+    from loadpath import pushseat
+    from loadpath.domain import build_domain
+    from loadpath.simp import _Analysis
+
+    st = study_from_dict({
+        "designSpace": [_box([0, -10, 0], [30, 10, 20])],
+        "supports": [{"shape": _box([-0.5, -8, 13], [0.6, -4, 17])}, {"shape": _box([-0.5, 4, 13], [0.6, 8, 17])},
+                     {"shape": _box([-0.5, -10, 0], [0.2, 10, 20]), "push": "+x"}],
+        "loads": [{"shape": _box([26, -8, 19], [30, 8, 20.5]), "force": [0, 0, -60]}],
+        "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 2.0}})
+    d = build_domain(st)
+    assert d.seats and not d.fixed[3 * d.seats[0][0]].all()
+    fe = _Analysis(d, st.elastic(st.material), 1e-8)
+    ps = pushseat.patches(d.seats, d.mesh.node_xyz, d.mesh.n_dof)
+    x = np.ones(d.mesh.n_elem)
+    us = [None] * len(d.loads)
+    for k in range(3):                       # a fresh reading, then two solves on it as the design moves
+        e = x * (1.0 - 0.1 * k * (d.mesh.node_xyz[d.mesh.enode[:, 0], 0] > 15))
+        us = fe.solve(e, x, us)
+        gap = np.array([p @ us[0] for p in ps])
+        lam = fe._seat["lam"][0]
+        z = np.array([np.abs(p[0::3]) @ d.mesh.node_xyz[:, 2] / np.abs(p[0::3]).sum() for p in ps])
+        assert lam.min() >= 0 and lam.sum() > 0
+        assert gap.min() > -0.03 * np.abs(us[0]).max(), (k, gap.min())
+        assert lam[z > 15].sum() < 0.02 * lam.sum()       # the load tips the top off the wall: the heel bears
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 
