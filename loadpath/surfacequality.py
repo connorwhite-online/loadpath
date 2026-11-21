@@ -98,7 +98,9 @@ def edge_continuity(shape, samples=24, skip_seams=True):
     tangent planes), "G2" (1/mm, the largest jump in normal curvature
     across the edge, square to it), "G2share" (that jump over the larger
     curvature, 0 = curvature continuous), "point" (where the worst G1 is)}]
-    plus a summary {"edges", "worstG0", "worstG1", "worstG2share"}."""
+    plus a summary {"edges", "worstG0", "worstG1", "worstG2", "worstG2share"}.
+    (Read G2share beside G2: across an edge where both faces are nearly
+    flat square to it, a jump no eye sees is still a large share.)"""
     from OCP.BRep import BRep_Tool
     from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
     from OCP.BRepLProp import BRepLProp_SLProps
@@ -162,6 +164,7 @@ def edge_continuity(shape, samples=24, skip_seams=True):
     summ = {"edges": len(out),
             "worstG0": max((x["G0"] for x in out), default=0.0),
             "worstG1": max((x["G1"] for x in out), default=0.0),
+            "worstG2": max((x["G2"] for x in out), default=0.0),
             "worstG2share": max((x["G2share"] for x in out), default=0.0)}
     return out, summ
 

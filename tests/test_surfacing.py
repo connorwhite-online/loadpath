@@ -37,10 +37,24 @@ def test_basis_matches_opencascade():
     """The fast clamped basis is the one OpenCascade evaluates, values and slopes."""
     t = np.linspace(0, 1, 41)
     for n in (4, 9, 15):
-        assert np.abs(S.basis(n, 3, False, t) - S._basis_fast(n, 3, t)).max() < 1e-12
-        assert np.abs(S.basis(n, 3, False, t, 1) - S._basis_fast(n, 3, t, 1)).max() < 1e-9
+        assert np.abs(S.basis(n, 3, False, t) - S._basis_occ(n, 3, False, t)).max() < 1e-12
+        assert np.abs(S.basis(n, 3, False, t, 1) - S._basis_occ(n, 3, False, t, 1)).max() < 1e-9
     P = S.basis(8, 3, True, t)
     assert np.allclose(P.sum(1), 1.0)
+    for per in (False, True):
+        tt = t[:-1] if per else t
+        for deg in (3, 5):
+            for d in (0, 1, 2, 3):
+                ref = S._basis_occ(11, deg, per, tt, d)
+                assert np.abs(S.basis(11, deg, per, tt, d) - ref).max() < 1e-9 * max(1.0, np.abs(ref).max()), (per, deg, d)
+    # the energy's exact integrals: x(u, v) = u^2 has x_uu = 2 over the unit
+    # square (bending energy 4) and no third derivative (jerk 0)
+    nu = 9
+    w = np.linspace(0, 1, 30)
+    X = np.stack([w[:, None] ** 2 + 0 * w[None, :], 0 * w[:, None] + w[None, :], np.zeros((30, 30))], -1)
+    z = S.fit_surface(X, (nu, nu), fair=0.0).poles[..., 0].ravel()
+    assert abs(z @ (S._energy(nu, nu, 3, 3, False, False, "bending") @ z) - 4.0) < 1e-6
+    assert abs(z @ (S._energy(nu, nu, 3, 3, False, False, "jerk") @ z)) < 1e-6
     print("basis ok")
 
 
@@ -116,11 +130,14 @@ def test_fill_solid_continuity_sdf():
     assert top0["G1"] > 45.0, top0          # a flat-ish cap on a tube: a corner
     assert top1["G1"] < 0.5, top1           # held tangent
     assert e1["G1"] < 0.01
-    try:
-        S.fill([(e, f, "G2") for e in tops])
-        raise AssertionError("a G2 boundary should be refused, not built G1")
-    except ValueError:
-        pass
+    # a G2 boundary is built G2 (the variational cap), not quietly G1
+    dome, e2 = S.fill([(e, f, "G2") for e in tops])
+    assert e2["G0"] < 5e-4 and e2["G1"] < np.radians(0.1) and e2["G2"] < 5e-4, e2
+    r2, _ = Q.edge_continuity(S.sew_solid([f, dome, base]))
+    top2 = [r for r in r2 if r["point"][2] > 50]
+    assert max(r["G1"] for r in top2) < 0.1 and max(r["G2"] for r in top2) < 1e-3, top2
+    md = S.mesh(dome, 0.05)
+    assert 110.0 < md.bounds[1][2] < 125.0, "the tube's end closes as a dome, not a flat lid"
     sol = S.sew_solid([f, sharp, base])
     m = S.mesh(sol, 0.05)
     assert m.is_watertight
@@ -133,6 +150,129 @@ def test_fill_solid_continuity_sdf():
     sc = Q.surface_curvature(s, (16, 16))
     assert 5.0 < sc["minRadius"] < 25.0
     print("fill, solid, continuity, sdf ok")
+
+
+def _sphere_patch(R=50.0):
+    x = np.linspace(-30, 30, 61)
+    X, Y = np.meshgrid(x, x, indexing="ij")
+    return S.fit_surface(np.stack([X, Y, np.sqrt(R * R - X * X - Y * Y)], -1), (24, 24), fair=1e-9)
+
+
+def _on_sphere(xy, R=50.0):
+    return np.c_[xy, np.sqrt(R * R - (xy ** 2).sum(1))]
+
+
+def test_jerk_plateau():
+    """Least change of curvature: the sweep leaves a plateau with its
+    curvature growing from zero, a fifth as fast as the thin plate's."""
+    g = np.linspace(-30, 30, 41)
+    X, Z = np.meshgrid(g, g, indexing="ij")
+    r = np.hypot(X, Z)
+    pins = np.c_[X[r <= 8], np.full((r <= 8).sum(), 4.0), Z[r <= 8]]
+    soft = np.c_[X[r >= 22], np.zeros((r >= 22).sum()), Z[r >= 22], np.full((r >= 22).sum(), 10.0)]
+    x = np.linspace(0, 30, 601)
+    out = {}
+    for en, fair in (("bending", 1e-2), ("jerk", 1.0)):
+        p = S.fair_patch((-30, 30), (-30, 30), pins, poles=(36, 36), soft=soft, energy=en, fair=fair)
+        h = p.height(x, 0 * x)
+        k = np.gradient(np.gradient(h, x), x)
+        out[en] = (np.abs(k).max(), np.abs(np.gradient(k, x)).max(), h)
+        assert abs(h[0] - 4.0) < 1e-3 and abs(h[-1]) < 0.1 and h.min() > -0.1
+    assert out["jerk"][0] < 0.8 * out["bending"][0], "a lower peak curvature"
+    assert out["jerk"][1] < 0.35 * out["bending"][1], "and curvature that changes far more slowly"
+    print("jerk plateau ok", out["bending"][:2], out["jerk"][:2])
+
+
+def test_cut_and_g2_cap_follow_a_sphere():
+    """An opening cut into a sphere and capped: the G2 cap carries the
+    sphere's curvature across the edge and so follows the sphere; the G1
+    cap leaves a flat spot."""
+    R = 50.0
+    s = _sphere_patch(R)
+    th = np.linspace(0, 2 * np.pi, 96, endpoint=False)
+    loop = _on_sphere(np.c_[12 * np.cos(th), 9 * np.sin(th) + 2], R)
+    outer, inner = S.cut(s, loop, keep="both")
+    holes = S.hole_edges(outer)
+    assert len(holes) == 1 and len(holes[0]) == 1
+    area_cut = S.mesh(inner, 0.02).area
+    assert abs(S.mesh(outer, 0.02).area + area_cut - S.mesh(s, 0.02).area) < 0.05
+    dev = {}
+    for c in ("G1", "G2"):
+        fc, err = S.cap([(e, outer, c) for e in holes[0]], poles=(16, 16))
+        assert err["G0"] < 1e-4 and err["G1"] < 0.01, err
+        m = S.mesh(fc, 0.02)
+        assert abs(m.area - area_cut) < 0.5
+        dev[c] = float(np.abs(np.linalg.norm(m.vertices, axis=1) - R).max())
+        if c == "G2":
+            assert err["G2"] < 2e-4, err
+            rows, summ = Q.edge_continuity(S.sew([outer, fc]))
+            assert summ["edges"] >= 1 and summ["worstG1"] < 0.01 and summ["worstG2"] < 5e-4, summ
+    assert dev["G2"] < 0.005 and dev["G1"] > 5 * dev["G2"], dev
+    print("cut and cap ok", dev)
+
+
+def test_blend_g2():
+    """A boss blended into an opening: curvature carried across both joins."""
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    s = _sphere_patch()
+    th = np.linspace(0, 2 * np.pi, 96, endpoint=False)
+    outer = S.cut(s, _on_sphere(np.c_[14 * np.cos(th) + 3, 11 * np.sin(th) + 2]))
+    hole = S.hole_edges(outer)[0][0]
+    u, v = np.linspace(0, 1, 48, endpoint=False), np.linspace(0, 1, 8)
+    T = np.stack([np.c_[3 + 6 * np.cos(2 * np.pi * u) + 0.8 * vv, 2 + 6 * np.sin(2 * np.pi * u), np.full(48, 56 + 8 * vv)]
+                  for vv in v], 1)
+    tube = S.fit_surface(T, (16, 5), uperiodic=True, fair=1e-9).face()
+    bot = min(S.boundary_edges(tube), key=lambda e: BRepAdaptor_Curve(e).Value(0.3).Z())
+    worst = {}
+    for c in ("G1", "G2"):
+        b = S.blend((outer, hole), (tube, bot), c)
+        assert b.fit["G0"] < 5e-4, b.fit
+        rows, summ = Q.edge_continuity(S.sew([outer, b, tube]))
+        assert summ["edges"] >= 2 and summ["worstG1"] < 0.01, summ
+        worst[c] = summ["worstG2"]
+    assert worst["G2"] < 2e-4 and worst["G1"] > 0.01, worst       # the sphere's curvature is 0.02 /mm
+    # the lead: how far each face's shape carries into the blend
+    near, far = S.blend((outer, hole), (tube, bot), lead=0.6), S.blend((outer, hole), (tube, bot), lead=(1.0, 1.5))
+    assert near.fit["lead"][0] < 0.7 * b.fit["lead"][0] and far.fit["lead"][1] > 1.4 * b.fit["lead"][1]
+    mid = lambda q: q(np.array([0.25]), np.array([0.5]))[0, 0]      # noqa: E731
+    assert np.linalg.norm(mid(near) - mid(far)) > 0.3
+    print("blend ok", worst)
+
+
+def test_fillet_two_crossing_faces():
+    """A post standing through a sphere: both cut back 3 mm from the other
+    and joined G2, in place of the sharp intersection."""
+    s = _sphere_patch()
+    u, v = np.linspace(0, 1, 48, endpoint=False), np.linspace(0, 1, 8)
+    T = np.stack([np.c_[3 + 6 * np.cos(2 * np.pi * u), 2 + 6 * np.sin(2 * np.pi * u), np.full(48, 44 + 16 * vv)]
+                  for vv in v], 1)
+    post = S.fit_surface(T, (16, 5), uperiodic=True, fair=1e-9)
+    a, b, c = S.fillet(s, post, 3.0, keep=(None, (3.0, 2.0, 60.0)))
+    assert b.fit["G0"] < 5e-4, b.fit
+    assert S._area(a) < S._area(s.face()) - 150 and S.mesh(c, 0.05).bounds[0][2] > 51.0     # a hole in a; c above the skin
+    rows, summ = Q.edge_continuity(S.sew([a, b, c]))
+    assert summ["edges"] >= 2 and summ["worstG0"] < 1e-3 and summ["worstG1"] < 0.1 and summ["worstG2"] < 5e-4, summ
+    # the new edge of the sphere lies 3 mm from the post's surface (a cylinder of radius 6 about (3, 2))
+    kept, edges = S.setback(s, post, 3.0)
+    fr = S._edge_frames(kept, edges, np.linspace(0, 1, 40, endpoint=False))
+    assert np.abs(np.hypot(fr["P"][:, 0] - 3, fr["P"][:, 1] - 2) - 9.0).max() < 0.01
+    print("fillet ok", summ)
+
+
+def test_edit_stays_fair():
+    g = np.linspace(-30, 30, 31)
+    X, Z = np.meshgrid(g, g, indexing="ij")
+    s = S.fit_surface(np.stack([X, 0.004 * (X ** 2 + Z ** 2), Z], -1), (20, 20))
+    e = S.edit(s, [(0.5, 0.5, (0, 3, 0))], hold=[(0.25, 0.25)], freeze=3)
+    at = lambda q, a, b: q(np.array([a]), np.array([b]))[0, 0]      # noqa: E731
+    assert np.allclose(at(e, 0.5, 0.5) - at(s, 0.5, 0.5), (0, 3, 0), atol=1e-9)
+    assert np.allclose(at(e, 0.25, 0.25), at(s, 0.25, 0.25), atol=1e-9)
+    assert np.abs(e.poles[:3] - s.poles[:3]).max() == 0 and np.abs(e.poles[:, -3:] - s.poles[:, -3:]).max() == 0
+    # a swell, no ripple: the change falls away steadily from the handle
+    d = (e(np.linspace(0.5, 1, 30), np.array([0.5])) - s(np.linspace(0.5, 1, 30), np.array([0.5])))[:, 0, 1]
+    assert np.all(np.diff(d) < 1e-9) and d[-1] == 0.0 and d.min() > -1e-9
+    assert Q.surface_curvature(e, (30, 30))["minRadius"] > 15.0
+    print("edit ok")
 
 
 def test_mesh_fairness():
