@@ -334,6 +334,18 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    Edges and sheets at the opening's cut came back in patches: 594 stray
    surface cells on a 40k-cell part, a row along every edge. The blueprint
    now comes back round the whole analysed design, one surface.
+5. **Torn rims round screw bosses.** Three causes at one place, the wall of
+   a screw head's clearance beside a boss on a small part. Between the
+   clearance and the part's wall there was less room than any member, and
+   the material there was delivered as a wall tapering to a feather edge:
+   material now stays only where a ball of the minimum member's diameter
+   fits outside the keep-outs (`reconstruct._member_room`). Beside drawn
+   shapes the material is cut exactly on a keep-out's face, but no design
+   cell touches a keep-out, so the field's surface wandered across the face:
+   the field at the clearance is now carried through the face, so the cut
+   is square. And smoothing was undone wherever the surface came near a
+   keep-out, which along such a cut left the mesher's own facets: not where
+   the surface runs through the keep-out.
 
 ## Rule for work under this document
 

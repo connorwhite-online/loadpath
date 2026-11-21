@@ -132,3 +132,39 @@ def test_boundary_field_leaves_pinned_cells_full():
     xp = np.array([1.0, 1.0, 0.0])                     # second cell: a boss, pinned over a void design
     lev = boundary_field(xp, [(xt, 0.5)], 2.0, None, np.array([False, True, False]))
     assert lev[1] == 1.0, "a drawn solid's cells are full: its surface is the drawn shape's"
+
+
+def test_beside_a_screw_head_clearance_the_part_ends_clean():
+    """A boss 0.25 mm inside a small part's wall, the screw head's clearance
+    standing on its seat. Between the clearance and the wall there is no
+    room for a member: nothing is left there (it was a wall tapering to a
+    feather edge, then chewed back as unformable). Where there is room the
+    material runs on through the clearance's wall and is cut on it, and the
+    surface beside the cut is smooth (smoothing was undone all along it,
+    which left the marching cubes' facets as a torn rim round the seat)."""
+    from loadpath.reconstruct import reconstruct
+
+    spec = {"name": "peg", "designSpace": [{"type": "box", "min": [-10, -5, 0], "max": [10, 5, 12]}],
+            "fasteners": [{"id": "a", "size": "M3", "seat": [6, 0, 3.5], "direction": "-z", "grip": 3.5,
+                           "end": "face", "driver": 12}],
+            "supports": [{"region": "a-bore", "fix": "xy"},
+                         {"shape": {"type": "cylinder", "center": [6, 0, -0.1], "axis": "z", "length": 0.8,
+                                    "r": 3.2}, "fix": "z"}],
+            "loadCases": [{"name": "pull", "loads": [{"shape": {"type": "box", "min": [-10, -5, 11],
+                                                                "max": [-6, 5, 12.5]}, "force": [0, 0, 50]}]}],
+            "material": "pa12", "process": "sls", "goal": {"volumeFraction": 0.5},
+            "resolution": {"pitch": 1.04}}
+    s = study_from_dict(spec)
+    d = build_domain(s)
+    m, _ = reconstruct(s, d, np.ones(d.mesh.n_elem))
+    # the crescent between the clearance (r 3.75 about x = 6) and the wall at x = 10
+    crescent = np.array([[9.87, 0.0, z] for z in (4.5, 6, 8)] + [[9.8, 1.0, z] for z in (4.5, 6, 8)])
+    assert not m.contains(crescent).any()
+    # and where a member fits, beside the clearance and away from it, the block is whole
+    assert m.contains(np.array([[8.8, 4.2, 6.0], [2.0, 4.0, 6.0]])).all()
+    # the organic surface within 0.6 mm of the clearance's wall has no torn edges
+    c = m.triangles_center
+    rad = np.hypot(c[:, 0] - 6, c[:, 1])
+    sel = (rad > 3.76) & (rad < 4.4) & (c[:, 2] > 2.5) & (c[:, 2] < 5.0) & (c[:, 0] < 9.9)
+    both = sel[m.face_adjacency].all(axis=1)
+    assert sel.sum() > 100 and not (np.degrees(m.face_adjacency_angles[both]) > 50).any()

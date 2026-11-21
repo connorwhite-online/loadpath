@@ -327,6 +327,80 @@ def _grid_min_sdf(shapes, grid_shape, step, pts):
 
 
 
+def _member_room(sdfs: "_GridSDF", design, preserve, keep_out, r: float, step: float):
+    """Where a keep-out leaves room for a member, as a 0..1 field (None:
+    everywhere).
+
+    The optimizer's material comes in members no thinner than the minimum
+    member; its cells are whole cells. Between a keep-out and the design
+    space's wall (or a second keep-out) the room can be thinner than any
+    member: a screw head's clearance 0.25 mm inside the wall of a small
+    part leaves a crescent that is whole cells to the analysis and, once
+    the clearance is cut exactly, a wall tapering to a feather edge round
+    the head (a snap hook's two bosses; the feather was then chewed back
+    raggedly as unformable). Material stays only where a ball of the
+    minimum member's diameter fits in the space outside the keep-outs
+    (with the drawn shapes, which it may thicken): the opening of that
+    space, whose boundary is the ball's own round, so the wall ends in a
+    round where the room runs out. Only what the keep-outs take: where
+    the design space is itself thinner than a member (a drawn thin wall
+    to fill), nothing changes."""
+    global _SDF_CACHE, _SDF_LOCK
+    key = ("room", tuple(id(s) for s in (*design, None, *preserve, None, *keep_out)), sdfs.shape,
+           tuple(np.asarray(sdfs.origin, float).tolist()), float(step), float(r))
+    if _SDF_CACHE is not None:
+        with _SDF_LOCK:
+            hit = _SDF_CACHE.get(key)
+            if hit is not None:
+                _SDF_CACHE.move_to_end(key)
+                return hit[1] if len(hit[1]) else None
+    body = sdfs.min(list(design) + list(preserve))
+    dk = sdfs.min(keep_out)
+    near = (dk < 2.0 * r + 2.0 * step) & (body < step) & (dk > -3.0 * step)
+    val = None
+    if near.any():
+        def opened(sd):
+            # Signed distance (about) to where a ball of radius r fits inside
+            # sd < 0: to the nearest cell q the ball's centre can sit at, plus
+            # that cell's own depth past r (|p - q| + sd(q); 0 on the ball's
+            # surface when q is on the core's, and sub-cell where the binary
+            # core's distance alone is a cell coarse: read that way, a cell of
+            # material went from beside every bore)
+            core = (sd < -r).reshape(sdfs.shape)
+            if not core.any():
+                return np.full(sd.shape, np.inf)
+            e, idx = ndimage.distance_transform_edt(~core, return_indices=True)
+            q = np.ravel_multi_index(tuple(i.ravel() for i in idx), sdfs.shape)
+            return e.ravel() * step + sd[q]
+
+        whole = opened(body)
+        free = opened(np.maximum(body, -dk))
+        # short of room by more than the design space itself is
+        short = free - np.maximum(whole, 0.0)
+        short[~np.isfinite(whole)] = 0.0
+        # (half a cell's grace: the cut is the 0.5 level of a ramp one cell wide)
+        val = np.where(near, np.clip(1.0 - short / step, 0.0, 1.0), 1.0)
+        # Inside a keep-out, what the material just outside it has: where
+        # there is room up to the keep-out's face the material runs on through
+        # it and the exact cut ends it on that face (ended here, a fraction
+        # of a cell off the face, it left a crumpled rim), and where there is
+        # none it is gone on both sides.
+        inside = (dk < 0.0).reshape(sdfs.shape)
+        if inside.any() and not inside.all():
+            idx = ndimage.distance_transform_edt(inside, return_distances=False, return_indices=True)
+            q = np.ravel_multi_index(tuple(i.ravel() for i in idx), sdfs.shape)
+            val = np.where(inside.ravel() & near, val[q], val)
+        val = np.clip(ndimage.gaussian_filter(val.reshape(sdfs.shape), 0.7).ravel(), 0.0, 1.0)
+        if val.min() >= 1.0:
+            val = None
+        else:
+            val.setflags(write=False)
+    if _SDF_CACHE is not None:
+        with _SDF_LOCK:
+            _SDF_CACHE[key] = ((*design, *preserve, *keep_out), val if val is not None else np.zeros(0))
+    return val
+
+
 def _fill_unmachinable(part, study, domain, envelope):
     """Fill the void a milled part's cutter cannot reach, on the design grid.
 
@@ -945,8 +1019,32 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             # end standing proud in a step all round (the motor mount's
             # pads and pilot ring). There the exact subtract does the cut.
             dp = sdfs.min(preserve)
-            fade = np.maximum(fade, np.clip(2.0 - dp / o.blend, 0.0, 1.0))
+            keep = np.clip(2.0 - dp / o.blend, 0.0, 1.0)
+            fade = np.maximum(fade, keep)
+            # For the exact subtract to cut cleanly the material has to run
+            # on through the keep-out's face, and the field does not: no
+            # design cell touches a keep-out, so within a cell of one the
+            # field is only what upsampling and the fillets carried there,
+            # and its surface wandered back and forth across the face (a
+            # torn rim round a screw head's clearance, flutes up a column
+            # beside it). Within the clearance, and on into the keep-out,
+            # the field is what stands at the clearance, carried along the
+            # keep-out's normal: solid there runs on through the face, void
+            # there leaves the gap, and a surface between them crosses the
+            # face square.
+            band = (d < clearance).reshape(fine.shape)
+            if band.any() and not band.all():
+                idx = ndimage.distance_transform_edt(band, return_distances=False, return_indices=True)
+                # (the nearest cell changes in steps: smoothed over a cell,
+                # or the carried surface is terraced)
+                through = ndimage.gaussian_filter(fine[tuple(idx)], 1.0)
+                w = (keep * (d > -3.0 * domain.pitch)).reshape(fine.shape) * band
+                fine = w * through + (1.0 - w) * fine
         fine = fine * fade.reshape(fine.shape)
+        if design and min_member and 0.5 * float(min_member) >= step:
+            room = _member_room(sdfs, design, preserve, keep_out, 0.5 * float(min_member), step)
+            if room is not None:
+                fine = fine * room.reshape(fine.shape)
     if fine.max() < o.level:
         raise ValueError("the optimized density never reaches solid; nothing to mesh")
     # One more layer of void all round: marching cubes leaves the surface open
@@ -1359,6 +1457,15 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
         d_new = np.min([sh.sdf(vv) for sh in keep_out], axis=0)
         d_old = np.min([sh.sdf(v0) for sh in keep_out], axis=0)
         w = ((d_new < 0.25 * domain.pitch) & (d_old > d_new)).astype(float)
+        # Not where the surface runs on through the keep-out (beside drawn
+        # shapes, _isosurface): there the exact cut ends it on the face, and
+        # going back left the marching cubes' own facets all along the cut
+        # (a torn rim round a screw head's clearance).
+        through = (d_old < 0.0).astype(float)
+        if w.any() and through.any():
+            for _ in range(3):
+                through = np.maximum(through, (lap @ through > 0).astype(float))
+            w[through > 0] = 0.0
         if w.any():
             for _ in range(2):
                 w = np.maximum(w, lap @ w)

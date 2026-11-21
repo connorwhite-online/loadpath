@@ -138,13 +138,30 @@ def test_feather_edges_at_a_bore_are_cut_to_what_prints():
                                                              "max": [21, 16, 13]}, "force": [0, 0, -100]}]}],
             "material": "pa12", "process": {"type": "mjf", "buildDirection": "+z"},
             "goal": {"volumeFraction": 0.9}, "resolution": {"pitch": 1.0}, "minMember": 2.0}
+    import loadpath.reconstruct as rc
     s = study_from_dict(spec)
     d = build_domain(s)
-    mesh, info = reconstruct(s, d, np.ones(d.mesh.n_elem))
+    # the cut itself, with the room for a member (below) not yet taken out
+    room = rc._member_room
+    rc._member_room = lambda *a, **k: None
+    try:
+        mesh, info = reconstruct(s, d, np.ones(d.mesh.n_elem))
+    finally:
+        rc._member_room = room
     assert info.get("unformedDropped"), info
     w = check_process(mesh, "mjf", build="+z", material="pa12")["walls"]
     assert w["ok"] is True and not w["unformed"], w
     assert mesh.volume > 13500, mesh.volume   # 13543 mm^3 before: a round, not a groove widened
+    from loadpath.verify import _creases
+    assert _creases(s, mesh)["creaseLength"] < 10.0
+    # As delivered: beside the bore there is no room for a 2 mm member where
+    # the edge was, so the material ends in that member's round before any
+    # feather forms, and nothing is left to cut (13459 mm^3, crease 0.2 mm).
+    mesh, info = reconstruct(s, d, np.ones(d.mesh.n_elem))
+    assert not info.get("unformedDropped"), info
+    w = check_process(mesh, "mjf", build="+z", material="pa12")["walls"]
+    assert w["ok"] is True and not w["unformed"], w
+    assert mesh.volume > 13400, mesh.volume
     # and the cut runs out into the surface: ending at a wall it left 41.6 mm
     # of crease along the bore (38 of the wrist yoke's 50 mm, for 40 allowed)
     from loadpath.verify import _creases
