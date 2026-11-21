@@ -235,7 +235,7 @@ def _thin_warnings(r):
     return [w for w in r["warnings"] if "cells thick" in w or "two cells" in w or "a cell thick" in w]
 
 
-def test_a_pinned_wall_sets_the_cell_when_the_study_did_not(monkeypatch):
+def test_a_pinned_wall_sets_the_cell_when_the_study_did_not():
     """On whole cells (LOADPATH_WALL_MODEL=cells, and the constrained
     method) a lid's 1.5 mm skin at a 20k budget sets the grid two cells
     across the skin and check has nothing to say about it; an explicit
@@ -243,8 +243,19 @@ def test_a_pinned_wall_sets_the_cell_when_the_study_did_not(monkeypatch):
     still warns."""
     from loadpath.domain import build_domain, wall_pitch
 
+    import os
+
     lid = _lid
-    monkeypatch.setenv("LOADPATH_WALL_MODEL", "cells")
+    os.environ["LOADPATH_WALL_MODEL"] = "cells"
+    try:
+        _whole_cell_walls(lid, build_domain, wall_pitch)
+    finally:
+        del os.environ["LOADPATH_WALL_MODEL"]
+    constrained = dict(lid(1.5), goal={"safetyFactor": 2, "method": "constrained"})
+    assert wall_pitch(study_from_dict(constrained)) <= 0.75 + 1e-9
+
+
+def _whole_cell_walls(lid, build_domain, wall_pitch):
     st = study_from_dict(lid(1.5))
     d = build_domain(st, wall_pitch(st))
     assert d.pitch <= 0.75 + 1e-9 and d.n_elem <= 84000, (d.pitch, d.n_elem)
@@ -253,9 +264,6 @@ def test_a_pinned_wall_sets_the_cell_when_the_study_did_not(monkeypatch):
     assert wall_pitch(study_from_dict({k: v for k, v in lid(1.5).items() if k != "skin"})) is None
     assert _thin_warnings(check_study(lid(1.5, pitch=1.2)))
     assert _thin_warnings(check_study(lid(0.6)))
-    monkeypatch.delenv("LOADPATH_WALL_MODEL")
-    constrained = dict(lid(1.5), goal={"safetyFactor": 2, "method": "constrained"})
-    assert wall_pitch(study_from_dict(constrained)) <= 0.75 + 1e-9
 
 
 def test_a_thin_wall_is_cut_cells_on_the_studys_own_grid():
