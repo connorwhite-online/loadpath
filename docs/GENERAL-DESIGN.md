@@ -206,9 +206,18 @@ study or the grid. What the batch showed:
   sized for the yank and not for the snap.
 - **Memory**: the fan duct's 1.2 mm wall took 6 to 7 GB in the delivered-part
   check on a 40k-cell study; three runs side by side were killed for it.
-- **Time**: 16 to 57 minutes. On the wall box the supports decision, the
-  results bundle and the viewer take 11 of 40 minutes after the part is
-  already chosen.
+- **Time**: 16 to 65 minutes, and on thin-walled parts it is the check of
+  each candidate, not the optimizer. The wall box (a 19k-cell study) spends
+  58% of its run in five delivered-part checks of about 280 s each: the
+  check's own grid goes to 0.52 mm to read a 2 mm skin, some 330k cells,
+  solved for three cases of which two are forces of unknown direction
+  (four solves each). The hose elbow spends 43% there, the optimizer 27%.
+  The supports decision, the results bundle and the viewer then take 7 to
+  11 minutes after the part is already chosen (wall box 436 s of 2385,
+  box cover 385 s of 2899). A candidate's check costing more than its
+  design is the first thing to change for this class of part: every
+  candidate has the same skin, and only the one delivered needs the
+  finest reading.
 
 ## Gaps, ranked by how many users they hit
 
