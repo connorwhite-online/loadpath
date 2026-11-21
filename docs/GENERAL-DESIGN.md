@@ -447,7 +447,11 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
      face and the fillet blended a member into a wall it could not see
      into. The field is now carried into the drawn shape from the cells
      round it (`reconstruct._drawn_carried`), so a member continues into
-     the boss and the smooth union blends where they cross.
+     the boss and the smooth union blends where they cross. Only a face no
+     generated material touches is cleared to come out exact: where the
+     field reaches the face (a skin wrapping a bearing ring thinner than a
+     cell, the arm link's shoulder boss) the cells keep what the analysis
+     had, or the skin breaks into patches on the exact face.
    - *One fillet size for every member.* The blend was a fixed 3 mm
      whatever met the boss. A shoulder's stress concentration is set by
      the radius over the member's thickness (Peterson: Kt about 1.4 at
@@ -469,7 +473,10 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    Motor mount, same field, old against new meshing: SF 7.43 at 29.45 g
    against 7.26 at 29.9 g; the pads' lips and slivers are gone and their
    circles read exactly. Quick search A/B: 30.2 g SF 3.75 old, 29.0 g
-   SF 3.75 new. `LOADPATH_DRAWN_CARRY=0` and `LOADPATH_DRAWN_BEARS=0`
+   SF 3.75 new. Bell crank quick search: 20.4 g SF 3.60 new against
+   21.9 g SF 3.58 old (and 6 minutes against 20). Fastener bracket, same
+   field: the same mass and shape; its reading moves 6.25 to 5.96 from the
+   pins bearing on the bosses only, a load placement, not a geometry change. `LOADPATH_DRAWN_CARRY=0` and `LOADPATH_DRAWN_BEARS=0`
    turn the meshing and domain halves off.
 
 ### Open: parts left heavier than they need to be

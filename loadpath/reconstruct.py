@@ -908,6 +908,7 @@ def _drop_unformed_once(part, study, cut_ko, min_wall):
 # DRAWN_INSET fine cells inside it so the mesh leaves the face at an angle.
 DRAWN_CARRY = os.environ.get("LOADPATH_DRAWN_CARRY", "1") != "0"
 DRAWN_INSET = 0.6
+DRAWN_TOUCH = float(os.environ.get('LOADPATH_DRAWN_TOUCH', '0.05'))
 DRAWN_CARRY_MAX = os.environ.get('LOADPATH_DRAWN_CARRY_MAX', '1') != '0'
 
 
@@ -989,6 +990,21 @@ def _drawn_carried(grid, domain: Domain, preserve):
                 break
             out[ready] = nb[ready]
             todo &= ~ready
+        # a cell whose centre lies outside the drawn face holds material the
+        # analysis counted beyond the drawn shape (a staircase cell pinned or
+        # filled round a thin boss): the delivered part keeps it, or a pin's
+        # ring comes out thinner than the one verified (bell crank: SF 2.7
+        # read on the analysed collar, 1.7 without it)
+        beyond = inside & (sd > 0.0)
+        out[beyond] = np.maximum(out[beyond], grid[beyond])
+        if DRAWN_TOUCH > 0:
+            # Only a drawn face no generated material touches is cleared to
+            # come out exact: where the field reaches the face (a member
+            # landing on it, or a skin wrapping it thinner than a cell) the
+            # cells keep what the analysis had, or the skin breaks into
+            # islands on the exact face (arm link shoulder boss)
+            touched = inside & (out > DRAWN_TOUCH)
+            out[touched] = np.maximum(out[touched], grid[touched])
         return out
     near = edt(inside, return_distances=False, return_indices=True)
     out = grid.copy()

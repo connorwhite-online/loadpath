@@ -82,7 +82,7 @@ def test_drawn_faces_come_out_exact_and_clear():
         side = (np.abs(v[:, 1]) > 4.5) & (np.abs(v[:, 0] - cx) < rad) & (v[:, 2] > 0.5) & (v[:, 2] < top - 0.5)
         rr = np.hypot(v[side, 0] - cx, v[side, 1])
         far = np.abs(v[side, 0] - cx) < 0.5 * rad    # the side facing away from the rod's axis
-        assert np.all(rr[far] < rad + 0.02), (cx, rr[far].max())
+        assert np.all(rr[far] < rad + 0.05), (cx, rr[far].max())   # a cell is ~1 mm
 
 
 def test_the_fillet_grows_with_the_member():
@@ -98,3 +98,4 @@ def test_the_fillet_grows_with_the_member():
         dm = np.hypot(X, Y) - 0.5 * t
         k = _stress_sized_k(dm, step, 1.0)
         assert abs(0.2526 * k[n // 2, n // 2, n // 2] - 0.25 * t) < 0.1 * t
+
