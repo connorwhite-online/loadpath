@@ -468,3 +468,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_supports_on_the_bed_hold_the_part_up():
+    # a post with a long arm off its top: its centre of mass is well outside
+    # the post's foot, and the supports under the arm stand on the bed
+    part = _union(_box((0, 0, 0), (2, 10, 20)), _box((0, 0, 20), (30, 10, 25)))
+    r = check_print(part, (2, 1), pitch=0.5)
+    assert not r["supportFree"]
+    assert r["bed"]["comMarginUnsupported"] < 0 < r["bed"]["comMargin"], r["bed"]
+    assert not any("tips over" in w for w in r["warnings"]), r["warnings"]

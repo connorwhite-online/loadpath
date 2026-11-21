@@ -405,6 +405,15 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    bores came out open under the axle while the analysis had a full
    ring. The lining is pinned a minimum member thick all round, as the
    larger loaded regions of item 1 already were.
+9. **A supported part counted as falling over.** The print check read
+   tipping from the part's own feet on the bed; a part that needs
+   supports is printed with them, and the columns that reach the bed
+   carry it as its feet do. A fork laid on its side, the direction it
+   is strongest in, stood on a 5 mm^2 foot beside its supports, counted
+   as falling over, and was ranked last: the search then designed it in
+   a weaker direction, 2 g heavier and webbed. The centre of mass is
+   read against the part's feet and its supports together
+   (`comMarginUnsupported` keeps the bare reading).
 
 ## Rule for work under this document
 

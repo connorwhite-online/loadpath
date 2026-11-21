@@ -187,6 +187,8 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
     for k in range(nz - 1, 0, -1):
         run = (run | need[:, :, k]) & ~solid[:, :, k - 1]
         sup_cells += int(run.sum())
+    # (what is left of `run` is the columns that come down to the bed)
+    on_bed = run if nz > 1 else np.zeros((nx, ny), bool)
     out["supportArea"] = float(need.sum() * a_cell)
     out["supportVolume"] = float(sup_cells * a_cell * pitch)
     out["islands"] = n_islands
@@ -218,7 +220,14 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
         com = m.center_mass if m.is_volume else m.centroid
     except Exception:  # noqa: BLE001 - a bad mass property is not worth failing a check
         com = m.centroid
-    margin = _hull_margin(xy, np.asarray(com[:2])) if len(xy) else -np.inf
+    bare = _hull_margin(xy, np.asarray(com[:2])) if len(xy) else -np.inf
+    # A part that needs supports is printed with them, and the columns that
+    # reach the bed stand on it as the part's own feet do: what tips is the
+    # part and its supports together. Read from the part's feet alone, a
+    # fork laid on its side (most of it carried on supports) counted as
+    # falling over and the direction it is strongest in was ranked last.
+    xy_all = (np.argwhere(first | on_bed) + 0.5) * pitch + origin[:2]
+    margin = _hull_margin(xy_all, np.asarray(com[:2])) if len(xy_all) else -np.inf
     if len(xy) >= 3:
         # narrowest width of the contact (minimum over directions of its extent)
         th = np.radians(np.arange(0, 180, 5))
@@ -232,6 +241,7 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
         "feet": int(n),
         "smallestFoot": float(feet.min()) if n else 0.0,
         "comMargin": margin,
+        "comMarginUnsupported": bare,
         "baseWidth": base_w,
         "aspect": float(ext[2] / base_w) if base_w > 0 else np.inf,
         "footprint": [float(ext[0]), float(ext[1])],
