@@ -156,6 +156,55 @@ What the re-run itself showed:
   Checked by hand since (gap 7), the limits are real for the studies as
   written.
 
+### A second batch: snap fits, ducts, enclosure parts
+
+Six parts of kinds the first batch did not have, written cold the same
+way and run on main c9b09b4: a spring clip for a broom handle and a
+cantilever latch hook (snap fits), a pressurized hose elbow and a
+part-cooling fan duct (ducts), a junction-box cover and a wall box that
+carries a board (enclosure parts, both with a closed skin).
+
+| Part | Cold | After this round's fixes |
+|---|---|---|
+| tool clip (PETG) | **first try**: 3.1 g, SF 2.71, 18 min | |
+| latch hook (PA12, SLS) | passes, 1.2 g, SF 2.14, 16 min; check warns that the foot is held as if glued | |
+| hose elbow (PETG, 2 bar) | passes, 16.2 g, SF 5.4, 20 min; two check warnings (wall under two cells; flange held as if glued) | passes, 16.4 g, SF 5.1, 22 min; the wall warning is gone |
+| fan duct (PLA) | refused at check, twice: gravity written as a number, then two forces of unknown direction in one case. Third writing passes: 14.1 g, 46 min, with 4 of its 5 designs thrown away (below) | not re-run yet |
+| box cover (PETG, 1.6 mm skin) | passes, 31.3 g, SF 2.36, 46 min; check warns the skin is 1.2 cells | **first try**: 28.5 g, SF 2.75, 48 min, check clean |
+| wall box (PLA, 2 mm skin) | passes, 56.0 g, SF 3.65, 40 min; check warns the skin is 1.2 cells | passes, 53.3 g, 57 min, stopped at its time limit before the tet check; the skin is 1.9 cells at four times the budget and check still says so |
+
+Every kind delivered a part that passes, so the pipeline carries over to
+parts it was not built on. First try is 1 of 6 cold and 2 of 6 after: what
+stands between is the check warnings, each a true statement about the
+study or the grid. What the batch showed:
+
+- **A blind tapped hole's floor was read as a blocked hole** (fixed).
+  The delivered-part check fails a bore the part closes over, and it
+  counted the far end of a thread a screw comes into from the mating part.
+  The fan duct lost four of five designs to it and was handed the lightest
+  only because its hole's end happened to come out open; the first batch's
+  caster fork lost one the same way.
+- **A wall the study pins was left under two cells** (fixed). A skin or a
+  duct's wall that thin bends too stiffly on the grid; check said so and
+  the run went ahead on it. The wall now sets the cell, up to four times
+  the cell budget. It costs time on the larger skinned parts.
+- **Held as if glued** (open). Two of six studies held a bolted face over
+  its whole area against a load that pulls it off, the mistake check
+  already names. The physical statement is a face that pushes and cannot
+  pull; a support that does that would make the natural way of writing it
+  the right one.
+- **A shake in any direction on a mass held by two screws** (open) cannot
+  be said as one load on two fastener regions; a case takes one force of
+  unknown direction.
+- **A snap fit's own load is a deflection** (open, gap 12): the jaw is
+  opened 2.5 mm by the handle. A study has forces only, so the clip is
+  sized for the yank and not for the snap.
+- **Memory**: the fan duct's 1.2 mm wall took 6 to 7 GB in the delivered-part
+  check on a 40k-cell study; three runs side by side were killed for it.
+- **Time**: 16 to 57 minutes. On the wall box the supports decision, the
+  results bundle and the viewer take 11 of 40 minutes after the part is
+  already chosen.
+
 ## Gaps, ranked by how many users they hit
 
 "Hits" is the share of the held-out parts where the gap decided the
@@ -176,7 +225,10 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 9 | Joint capacity is not checked: bolt slip, thread strip, insert pull-out, clamp force on a tube | 2 | most bolted parts | **Open** |
 | 10 | The governing limit is not named up front (stiffness, strength, minimum wall) | 3 | 2 of 11 | **Partly**: the bound note names it after two failed tries; should be in `check` |
 | 11 | Enclosure for a common board from a sentence: placement fails with an error naming the wrong component, and is slow | 1, 7 | every enclosure user | **Open** |
-| 12 | Function parts with no route today: snap fits and living hinges by strain, ducts from two ports, threads, gears | 7 | very common requests | **Open**: no held-out cases yet; write them cold first |
+| 12 | Function parts with no route today: snap fits and living hinges by strain, ducts from two ports, threads, gears | 7 | very common requests | **Partly**: six held-out cases written cold (second batch above): snap fits, ducts and skinned enclosure parts pass as force-loaded parts. Open: a prescribed deflection as a load (the snap itself), a duct designed from its ports and flow |
+| 12a | A sound design failed because the floor of a blind tapped hole is read as a blocked hole | 5 | 2 of 17, any thread in a thick part | **Fixed** |
+| 12b | A skin or duct wall under two cells: warned about, then designed on anyway | 4 | 4 of 6 in the second batch, every skinned part given a cell budget | **Fixed**: the wall sets the cell, up to four times the budget |
+| 12c | A bolted face held over its whole area against a load that lifts it | 2 | 2 of 6 in the second batch | **Open**: named by `check`; a support that only pushes would remove the mistake |
 | 13 | Physical ground truth | 9 | all | **Open**: calibration prints (calibration/) |
 
 

@@ -724,6 +724,25 @@ def test_closed_bore_is_flagged():
     assert _closed_bores(st, trimesh.boolean.difference([block, bore], engine="manifold")) == []
 
 
+def test_a_blind_tapped_hole_is_not_a_closed_bore():
+    """A screw from the mating part threads into a blind hole: material past
+    the hole's far end is its floor."""
+    from loadpath.verify import _closed_bores
+
+    block = trimesh.creation.box(extents=(20, 20, 20))
+    st = study_from_dict({**BEAM, "designSpace": {"type": "box", "min": [-10, -10, -10], "max": [10, 10, 10]},
+                          "fasteners": [{"id": "s", "size": "M4", "seat": [0, 0, -10], "direction": "+z", "grip": 0,
+                                         "end": "thread", "headOn": "mating", "threadLength": 8}]})
+    tap = next(k.shape for k in st.keep_out if k.id == "s-tap")
+    hole = trimesh.creation.cylinder(radius=tap.r, segment=[tap.p0 - [0, 0, 2], tap.p1])
+    assert _closed_bores(st, trimesh.boolean.difference([block, hole], engine="manifold")) == []
+    # ...and an ordinary bore of the same shape, closed at that end, still is one
+    plain = study_from_dict({**BEAM, "designSpace": {"type": "box", "min": [-10, -10, -10], "max": [10, 10, 10]},
+                             "keepOut": [{"id": "bore", "shape": {"type": "cylinder", "p0": list(tap.p0),
+                                                                  "p1": list(tap.p1), "r": tap.r}}]})
+    assert _closed_bores(plain, trimesh.boolean.difference([block, hole], engine="manifold"))
+
+
 
 def test_closed_bore_names_a_drawn_shape_filling_its_clearance():
     """A bore running into a bearing pocket marked "bore": false is closed when

@@ -1,0 +1,183 @@
+{
+ "id": "junction-box-cover-petg",
+ "batch": 2,
+ "brief": "A cover in PETG (FDM, printed outside face down, layers along Z) for an outdoor junction box. It is 90 x 70 mm and 10 mm deep (x = -45 to 45, y = -35 to 35, z = 0 to 10); the outside is the top (z = 10) and the sides, the underside is open and sits on the box rim (the plane z = 0, a 3 mm wide band round the edge). Four M3 screws go down through the corners at x = +-39, y = +-29. The outside must stay a closed 1.6 mm skin. Someone leaning on it presses 150 N on a thumb-sized patch at the middle of the top; it must not sag more than 1.5 mm there, where a terminal block sits under it. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "enclosure",
+  "cover",
+  "skin",
+  "fdm",
+  "fasteners"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -45,
+     -35,
+     0
+    ],
+    "max": [
+     45,
+     35,
+     10
+    ]
+   }
+  ],
+  "skin": {
+   "thickness": 1.6,
+   "open": [
+    "-z"
+   ]
+  },
+  "fasteners": [
+   {
+    "id": "c0",
+    "size": "M3",
+    "seat": [
+     -39,
+     -29,
+     4
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face",
+    "driver": 8
+   },
+   {
+    "id": "c1",
+    "size": "M3",
+    "seat": [
+     39,
+     -29,
+     4
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face",
+    "driver": 8
+   },
+   {
+    "id": "c2",
+    "size": "M3",
+    "seat": [
+     -39,
+     29,
+     4
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face",
+    "driver": 8
+   },
+   {
+    "id": "c3",
+    "size": "M3",
+    "seat": [
+     39,
+     29,
+     4
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face",
+    "driver": 8
+   }
+  ],
+  "supports": [
+   {
+    "region": "c0-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "c1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "c2-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "c3-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "subtract",
+     "shapes": [
+      {
+       "type": "box",
+       "min": [
+        -45,
+        -35,
+        -0.5
+       ],
+       "max": [
+        45,
+        35,
+        0.3
+       ]
+      },
+      {
+       "type": "box",
+       "min": [
+        -42,
+        -32,
+        -1
+       ],
+       "max": [
+        42,
+        32,
+        1
+       ]
+      }
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "lean",
+    "loads": [
+     {
+      "shape": {
+       "type": "cylinder",
+       "center": [
+        0,
+        0,
+        9.8
+       ],
+       "axis": "z",
+       "length": 0.8,
+       "r": 9
+      },
+      "force": [
+       0,
+       0,
+       -150
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "-z"
+  },
+  "goal": {
+   "safetyFactor": 2,
+   "maxDeflection": 1.5
+  },
+  "name": "junction-box-cover-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

@@ -484,7 +484,7 @@
       },
       "minItems": 3,
       "maxItems": 3,
-      "description": "m/s\u00b2, the part's own weight in every load case"
+      "description": "[x, y, z] in m/s\u00b2 (down at 1 g is [0, 0, -9.81]): the part's own weight in every load case"
     },
     "vibration": {
       "type": "object",

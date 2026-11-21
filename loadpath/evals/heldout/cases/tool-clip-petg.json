@@ -1,0 +1,182 @@
+{
+ "id": "tool-clip-petg",
+ "batch": 2,
+ "brief": "A spring clip in PETG (FDM, printed flat so the layers stack along Z) that holds a 25 mm broom handle on a wall. The wall is the plane y = 0. One M4 screw goes through the back of the clip into the wall at x = 0, z = 0. The handle runs along Z with its centre at y = 18 and snaps in through a 20 mm mouth facing away from the wall. The clip is 16 mm tall (z = -8 to 8) and stays inside x = -19 to 19, y = 0 to 33. A handle yanked sideways out of the clip pushes each jaw tip outward with up to 40 N. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "snap-fit",
+  "clip",
+  "fdm",
+  "fasteners"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -19,
+     0,
+     -8
+    ],
+    "max": [
+     19,
+     33,
+     8
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "handle",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      18,
+      0
+     ],
+     "axis": "z",
+     "length": 18,
+     "r": 12.5
+    },
+    "bore": false
+   },
+   {
+    "id": "mouth",
+    "shape": {
+     "type": "box",
+     "min": [
+      -10,
+      18,
+      -9
+     ],
+     "max": [
+      10,
+      34,
+      9
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "s",
+    "size": "M4",
+    "seat": [
+     0,
+     5.5,
+     0
+    ],
+    "direction": "-y",
+    "grip": 5.5,
+    "end": "face",
+    "driver": 30
+   }
+  ],
+  "supports": [
+   {
+    "region": "s-bore",
+    "fix": "xz"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      -0.1,
+      0
+     ],
+     "axis": "y",
+     "length": 0.8,
+     "r": 5
+    },
+    "fix": "y"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -19,
+      -0.5,
+      -8
+     ],
+     "max": [
+      19,
+      0.3,
+      8
+     ]
+    },
+    "fix": "y"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "yank-left",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -14,
+        28,
+        -8
+       ],
+       "max": [
+        -10,
+        33,
+        8
+       ]
+      },
+      "force": [
+       -40,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "yank-right",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        10,
+        28,
+        -8
+       ],
+       "max": [
+        14,
+        33,
+        8
+       ]
+      },
+      "force": [
+       40,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "tool-clip-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ },
+ "note": "The snap-in itself (each jaw opened 2.5 mm by the handle) is a prescribed deflection, which a study has no load for; the brief gives the yank as a force."
+}

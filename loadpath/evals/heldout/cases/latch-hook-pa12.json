@@ -1,0 +1,160 @@
+{
+ "id": "latch-hook-pa12",
+ "batch": 2,
+ "brief": "A cantilever latch hook in PA12 (SLS) that holds a lid shut. Its foot is a pad on the plane z = 0 (x = -8 to 8, y = -6 to 6) held by two M3 screws that go down through the pad into the housing at y = 0, x = -4.5 and 4.5. The arm stands up along Z to a catch at z = 32 to 36 that hooks over the lid's edge toward +y (the catch reaches to y = 5). Keep it inside x = -8 to 8, y = -6 to 6, z = 0 to 36. The lid pulls up on the underside of the catch with 60 N; to release, a thumb pushes the top of the arm toward -y with 8 N. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "snap-fit",
+  "latch",
+  "sls",
+  "fasteners"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -8,
+     -6,
+     0
+    ],
+    "max": [
+     8,
+     6,
+     36
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "catch",
+    "shape": {
+     "type": "box",
+     "min": [
+      -5,
+      1,
+      32
+     ],
+     "max": [
+      5,
+      5,
+      36
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "lid",
+    "shape": {
+     "type": "box",
+     "min": [
+      -9,
+      1,
+      20
+     ],
+     "max": [
+      9,
+      7,
+      32
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "a",
+    "size": "M3",
+    "seat": [
+     -4.5,
+     0,
+     4
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face",
+    "driver": 12
+   },
+   {
+    "id": "b",
+    "size": "M3",
+    "seat": [
+     4.5,
+     0,
+     4
+    ],
+    "direction": "-z",
+    "grip": 4,
+    "end": "face",
+    "driver": 12
+   }
+  ],
+  "supports": [
+   {
+    "region": "a-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "b-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -8,
+      -6,
+      -0.5
+     ],
+     "max": [
+      8,
+      6,
+      0.3
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "lid-pull",
+    "loads": [
+     {
+      "region": "catch",
+      "force": [
+       0,
+       0,
+       60
+      ]
+     }
+    ]
+   },
+   {
+    "name": "release",
+    "loads": [
+     {
+      "region": "catch",
+      "force": [
+       0,
+       -8,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "latch-hook-pa12",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

@@ -163,6 +163,29 @@ def choose_pitch(study: Study) -> float:
     return pitch
 
 
+def wall_pitch(study: Study) -> float | None:
+    """The cell a pinned wall asks of a plain run, or None when the study's
+    own grid already has it (or sets its pitch itself).
+
+    A wall the study pins (a skin, a duct's or plenum's wall) carries by
+    bending, and under two cells across it bends too stiffly on the grid
+    (the check warning below). The wall the study drew sets the cell, as
+    the member does for the constrained method, up to the same 4x
+    maxElements cells. Every packaged study with such a wall set its pitch
+    by hand to get this. For `loadpath run` and `check` only: the switch,
+    feel and cooling solves model a thin skin as cut cells on their own
+    grids (switch._thin_skin)."""
+    if study.pitch or not study.shells:
+        return None
+    d = build_domain(study)
+    thin = min(float(t) for _, t in study.shells)
+    # (cells counted on the study's own grid, not estimated: the estimate
+    # runs a few percent over and left a 1.6 mm skin at 1.95 cells)
+    most = d.pitch * (d.n_elem / (4.0 * study.max_elements)) ** (1.0 / 3.0)
+    want = max(thin / 2.0, most)
+    return want if want < d.pitch - 1e-9 else None
+
+
 def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape | None, label: str,
                   tol_floor: float = 0.0):
     if shape is None:
