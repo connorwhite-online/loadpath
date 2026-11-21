@@ -50,6 +50,7 @@ from __future__ import annotations
 import numpy as np
 
 _BASIS_CACHE: dict = {}
+_BASIS_CACHE_MAX_ENTRY = 2 << 20     # bytes: a matrix larger than this is not kept
 
 
 def _occ():
@@ -154,9 +155,14 @@ def basis(n, degree, periodic, t, deriv=0):
             B[:, i % n] += N[:, i]
     else:
         B = _coxdeboor(T, degree, np.clip(t, 0.0, 1.0), deriv)[:, :n]
-    if len(_BASIS_CACHE) > 256:
-        _BASIS_CACHE.clear()
-    _BASIS_CACHE[key] = B
+    # only the fitting's own parameter sets are worth keeping (the same few
+    # evaluated every iteration); an evaluation at a field's query points is
+    # new every call and large (95k points x the poles: 70 MB), and 256 of
+    # them held 18 GB: the Pro's fine remesh ran out of memory on it
+    if B.nbytes <= _BASIS_CACHE_MAX_ENTRY:
+        if len(_BASIS_CACHE) > 256:
+            _BASIS_CACHE.clear()
+        _BASIS_CACHE[key] = B
     return B
 
 
@@ -933,12 +939,21 @@ def write_step(shapes, path, names=None):
     return str(path)
 
 
-def sdf(shape, pitch=0.5, bounds=None, band=3.0):
+def sdf(shape, pitch=0.5, bounds=None, band=3.0, interp="linear"):
     """A signed distance function (callable on (N, 3) points, mm, negative
     inside) of a closed solid or watertight mesh: exact within `band` mm of
     the skin (to the tessellation, 0.01 mm), sampled on a `pitch` grid and
     trilinear between nodes. For field pipelines that cut, shell and split
-    a skin drawn here."""
+    a skin drawn here.
+
+    Beyond `band` the grid holds a voxel distance transform, which steps.
+    A smooth blend (smin with radius k) reads the field up to k away, so
+    give it band >= k (and bounds that reach that far: outside the grid the
+    field is only the distance to the grid's box), or the blend inherits the
+    steps as ripples. And with
+    interp="cubic" the field between nodes is a cubic spline (C2), so a
+    blended surface has no kinks at the grid's planes either (trilinear
+    leaves its gradient stepping every `pitch`, which shows in reflections)."""
     import trimesh
     from scipy.interpolate import RegularGridInterpolator
     m = shape if isinstance(shape, trimesh.Trimesh) else mesh(shape, tolerance=min(0.01, 0.05 * pitch))
@@ -948,8 +963,17 @@ def sdf(shape, pitch=0.5, bounds=None, band=3.0):
         lo, hi = m.bounds
     F, org, p = _sdf_grid(m, lo - 4 * pitch, hi + 4 * pitch, pitch, band)
     axes = [org[i] + np.arange(F.shape[i]) * p for i in range(3)]
-    gi = RegularGridInterpolator(axes, F, bounds_error=False, fill_value=None)
     far = float(np.abs(F).max())
+    if interp == "cubic":
+        from scipy import ndimage
+        coef = ndimage.spline_filter(F.astype(np.float64), order=3, mode="nearest")
+
+        def gi(Q):
+            return ndimage.map_coordinates(coef, ((Q - org) / p).T, order=3, prefilter=False, mode="nearest")
+    elif interp == "linear":
+        gi = RegularGridInterpolator(axes, F, bounds_error=False, fill_value=None)
+    else:
+        raise ValueError(f"interp: 'linear' or 'cubic', not {interp!r}")
 
     def f(P):
         P = np.asarray(P, float)

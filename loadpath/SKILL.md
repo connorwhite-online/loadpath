@@ -745,7 +745,14 @@ laid as elastic rods: a pigtail that cannot reach, or would bend past its
 radius, rules the position out; the chosen layout's cables are followed
 along each part's way in (`wires.<id>.assembly.reach`: how far out the
 part can be with the plug mated) and their channels are kept clear.
-`watts` on one part and `maxTemp` on another keeps them apart. A board
+`watts` on one part and `maxTemp` on another keeps them apart. Every
+component must also stay put once the product is closed: `--run`'s check
+nudges each one 2 mm every way and turns it (retention.py), and one that
+moves freely fails the product unless its `held` names what holds it
+(`screw`, `glue`, `snap`, `press-fit`, ...; mount holes count as screws).
+Prefer geometry that blocks it (a lip under the skin, a rib behind it) to
+a declaration. For any other assembly, `retention.nudge_check(bodies,
+held=, groups=)` runs the same check on meshes or fields. A board
 with an antenna takes `"antenna": {band, board: {size, thickness, ground,
 top}, feed}` (its copper as drawn, `loadpath schema antenna`): the bare
 board's fields are solved once, each layout is priced by what the shell's
