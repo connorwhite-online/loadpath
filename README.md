@@ -1,571 +1,86 @@
 # loadpath
 
-Generative design for 3D printed parts (and cast or milled ones), built to be
-driven by coding agents. Tell your agent what you want to build. It works out
-the engineering from there: where the part mounts, what it has to carry, which
-bores, bolt patterns and clearances must survive, and how it will be made.
-loadpath grows the part with topology optimization, meshes it as a watertight
-solid with the interfaces cut exactly, and checks that mesh with a fresh finite
-element analysis. You get an STL, 3MF or STEP and a report: mass, safety
-factor, deflection, thinnest member, whether every interface and clearance
-came through, what each bearing seat, pin hole and bolt hole will measure as
-built and whether its fit holds, printability, pass or fail.
+**Generative design for 3D printed parts, driven by your coding agent.**
+Describe the part. loadpath grows it from the loads, cuts its mounts and holes
+exactly, checks it with a fresh analysis, and hands back a printable file with
+a pass/fail report.
 
 <table>
 <tr>
-<td align="center" width="50%"><img src="docs/images/cases/robot-wrist-link-mjf-part.png" height="420"></td>
-<td align="center" width="50%"><img src="docs/images/stress/robot-wrist-link-mjf.png" height="420"></td>
+<td align="center" width="50%"><img src="docs/images/cases/robot-wrist-link-mjf-part.png" height="380"></td>
+<td align="center" width="50%"><img src="docs/images/stress/robot-wrist-link-mjf.png" height="380"></td>
 </tr>
 <tr>
-<td align="center" width="50%"><img src="docs/images/cases/robot-wrist-yoke-part.png" width="380"></td>
-<td align="center" width="50%"><img src="docs/images/stress/robot-wrist-yoke.png" width="380"></td>
-</tr>
-<tr>
-<td align="center" colspan="2"><sub>Two robot-arm parts as loadpath delivered them (left) and their stress from a fresh
-analysis of that mesh (right), blue (none) to red (the part's 98th percentile), on the shape bent by the worst
-load case. Top: a wrist link between two servos, MJF nylon, 40.2 g, safety factor 5.8. Bottom: a servo cradle
-held only at its eight screw bosses, glass-filled SLS nylon, 17.3 g, safety factor 3.9. More in
-<a href="#examples">Examples</a>.</sub></td>
+<td align="center" colspan="2"><sub>A robot-arm wrist link as delivered (left) and its stress from a fresh analysis
+(right, blue low to red high). MJF nylon, 40.2 g, safety factor 5.8.</sub></td>
 </tr>
 </table>
 
-## Point your agent at it
+## Quick start
 
 ```bash
 pip install "loadpath[mcp]"
-claude mcp add loadpath -- loadpath mcp   # any MCP client: {"command": "loadpath", "args": ["mcp"]}
+claude mcp add loadpath -- loadpath mcp   # or any MCP client: {"command": "loadpath", "args": ["mcp"]}
 ```
 
-Then ask in plain words:
+Then ask your agent:
 
 > I need a PETG bracket to hold a 10 kg shelf off the wall.
 
-or hand it what you already have: a STEP of the part to lighten, a URDF of
-the arm the link goes in, a photo or sketch. The agent turns that into a
-study. It reads bores, bolt patterns and mounting faces out of CAD
-(`loadpath_import_cad`), derives joint loads from a URDF's masses and motor
-torques (`loadpath assembly`), sizes bolt clearance and driver paths from the
-fastener, picks the fit each hole needs (a bearing presses in, a locating pin
-slips, a shaft turns, a bolt passes) and draws the hole for the process so it
-prints to that fit, and fills the gaps you didn't mention (screw size,
-spacing, a safety factor for the use) with stated assumptions you can correct. `loadpath_check`
-lints the setup before anything runs: missing or misspelled fields, a
-keep-out cutting into a mounting boss, a bore with no open end, a part glued
-down where it should be bolted. Then the agent runs it in the background and
-reads the report back, including whether every interface survived, every
-keep-out stayed clear, and every hole will fit what goes in it (or needs a
-reamer). Its guide is [loadpath/SKILL.md](loadpath/SKILL.md) (the
-`loadpath_guide` tool returns it); the tools and the loop are in
-[docs/agents.md](docs/agents.md). The server runs locally and nothing
-leaves the machine. Units are millimetres, newtons and megapascals. MIT
-licensed.
+The agent works out the loads, mounts and clearances, runs loadpath, and reads
+the report. Everything runs on your machine.
+
+## What you get
+
+- **A part file**: STL, 3MF or STEP, watertight, with bores and bolt holes cut to fit.
+- **A report**: mass, safety factor, deflection, thinnest wall, and whether every hole, mount and clearance came through.
+- **A check you can trust**: the delivered mesh is analysed again, independently of the optimizer.
+- **Process rules**: FDM, SLS, MJF, resin, metal printing, casting and milling.
+
+## What it can do
+
+- **Lightweight structural parts**: brackets, links, mounts, hooks, cranks.
+- **Products inside a designer's exterior**: place the board, battery and ports, then design the interior for drops, feel and heat ([docs/ENCLOSURE.md](docs/ENCLOSURE.md)).
+- **Start from what you have**: a STEP file, a 3D scan, a KiCad board, a robot's URDF, or a generated mesh.
+- **Lattices and heat exchangers**: graded gyroids and strut lattices, with flow and heat solved.
+- **More physics**: buckling, fatigue, impact, flexures, print warp, casting, antennas.
 
 ## Where it fits
 
-A designed part needs a shape, the loads it carries, and a way to make it.
-The open tools each cover one of those:
-
-- **Topology optimization codes** (top88, top3d, ToPy, FEniCS scripts) are
-  research solvers. They stop at a density field on a grid: no printable
-  part, and nothing checks the result.
-- **Script CAD** (CadQuery, build123d, OpenSCAD), SDF libraries, AI CAD
-  tools and 3D generators draw the shape but don't know the loads.
-- **Commercial generative design** (Fusion, nTop) does the whole job, but
-  it's built around a GUI, not an agent.
-
-loadpath is the layer in between. The agent pulls the interfaces from CAD
-(or from your description), works out the loads, material and process, and
-loadpath returns a watertight
-part checked by an analysis independent of the optimizer, with a JSON report
-an agent can act on. Its STEP output goes back into CAD.
-
-Where it is strongest:
-
-- **The analysis behind the shape**: buckling, fatigue and creep,
-  large-deflection compliant mechanisms, loads of unknown direction, thermal
-  loads and print warp, all checked on the delivered mesh.
-- **A part in one run**: the requirements an agent usually loses between
-  edits are written down once and measured on every build. `loadpath
-  build` takes a spec: the exterior, the features that must be exact as
-  CAD solids (drawn in build123d, or STEP), the parts inside with their
-  clearances, a target mass, asserted features ("the port mouth's round
-  is at least 1 mm") and the concept images with their cameras. The body
-  between the features is filled, the features are cut and added with
-  exact booleans so their edges arrive as drawn, the walls move until the
-  mass is right, and the part is scored against each reference from a
-  fixed camera ([docs/BUILD.md](docs/BUILD.md)): a desk pod with a
-  board, a switch and a rounded USB-C mouth, 19 checks in 40 seconds.
-- **Inside an industrial design**: a designer can stop at the outside.
-  `loadpath enclosure` takes the exterior and a list of what goes in it (a
-  battery, a board and its connector, a motor, with masses), places each
-  part inside the shell by rules an agent can state (on the floor, out
-  through its port, under a press point, near the board), keeps only
-  places each part can actually be assembled into in order (tilting a
-  part in where no straight slide fits, a board longer than its door, and
-  writing the assembly out as numbered steps), and designs
-  everything invisible around them for drops, squeezes and presses, with
-  the exterior checked untouched on the delivered part
-  ([docs/ENCLOSURE.md](docs/ENCLOSURE.md)): a generic sensor puck's
-  four parts placed from one brief and the interior delivered at 30 g of
-  PA12, safety factor 1.9 on cut cells and 4.2 on tets (goal 1.5) in six
-  drops and a squeeze, the exterior 0.0 mm proud and all of it still
-  there. The designer's exterior is kept
-  as a thin cosmetic skin, every component's assembly path kept clear, and
-  the inside can be designed for how the product should feel too: a push pad that fires
-  its switch at a chosen force anywhere on the touch area, a grip that gives
-  just so much under a squeeze, a capsule or board cushioned for a fall,
-  and handling vibration kept off a microphone capsule, with the least
-  material ([docs/FEEL.md](docs/FEEL.md)), and around the heat the
-  electronics make: each chip under its temperature limit and the outside
-  under the touch limit for how it is held ([docs/COOLING.md](docs/COOLING.md)). Where the exterior itself rules a target out, the report says
-  where and by how much, and what skin or target change would fix it, for
-  the designer to decide; loadpath never edits the exterior
-  ([docs/SWITCH.md](docs/SWITCH.md)). `loadpath handoff` starts from what
-  a designer hands over, the exterior and the component CAD in assembly
-  order, and reads the study off the geometry: each part's way in (a board
-  that has to slide back before it drops out included), the plunger over
-  the switch, what the switch stands on, and a clearance per component.
-  `loadpath split` makes the product buildable in two parts. It finds a
-  parting line where every part can go in and the cover comes off cleanly
-  (flat, tilted, stepped over a part, or along a crease in the exterior),
-  then puts the joints inside the skin: an alignment lip, snap fits sized
-  to the material's strain limit, and screw posts if the designer allows
-  holes in one face ([docs/SHELLS.md](docs/SHELLS.md)).
-- **Or no exterior at all**: when nobody has drawn the outside, a
-  `shroud` grows one. loadpath wraps a smooth skin round the load paths
-  and round whatever has to stay hidden (a cable or tendon channel through
-  a robot arm, a board, an exchanger's passages), pulls it in wherever the
-  skin carries little load, and designs the interior with the skin in
-  every analysis, so the skin works as a monocoque instead of a cover
-  added afterwards ([docs/SHROUD.md](docs/SHROUD.md)). Bores and cable
-  ports still cut through, SLS parts get their drain holes, and the
-  result can go through `loadpath split` when it has to open. Topology
-  optimization codes stop at a skeleton, and CAD covers carry no load.
-  This is the layer between them, for the outside as well as the inside.
-- **Bought stock in a printed design**: a frame that spans a distance is
-  lighter as carbon tubes between printed nodes than printed whole, so a
-  study can hold `stock`: tubes, rods and plates (carbon laminates,
-  aluminium, steel) as bodies with their own orthotropic material in every
-  solve. The printed nodes and clamps are designed round them, and each
-  joint is checked from the forces the solved assembly puts on it: an
-  adhesive bond in shear and peel against its strength on that plastic, a
-  clamp against slipping, a pin in bearing, and the tube's wall against
-  crushing and buckling ([docs/STOCK.md](docs/STOCK.md)). Topology
-  optimization codes know one material and frame codes know nothing about
-  the lug. This is the layer between them.
-- **Parts designed to break first**: when a crash brings more energy than
-  a light part can hold intact, the honest design is a link that lets go
-  before the part behind it does. A study's `fuses` size a printed shear
-  pin or tension link to hold every service load on its weakest print,
-  and cap every crash through it at its strongest print's break force at
-  impact rate, so the rest is designed for a force it can survive
-  ([docs/FUSES.md](docs/FUSES.md)). Codes that design a part to hold its
-  loads have no way to say "break here, at this force, and nowhere else".
-- **Any exterior in**: you or your agent draw the shape, loadpath makes
-  everything inside it work. A designer's STEP, a mesh, an SDF function
-  (numpy, the `sdf` package, libfive style), a build123d part, or a mesh
-  from a 3D generator such as Tripo or Meshy (holes, double walls, flipped
-  patches, debris, unit scale) all go through one intake,
-  `loadpath exterior`, which wraps a broken mesh into one closed skin on the
-  generator's own triangles and says how much room is inside
-  ([docs/EXTERIOR.md](docs/EXTERIOR.md)). In the
-  [tutorial](docs/tutorials/generated-exterior/), an agent reads a
-  paragraph about a camera shutter remote, finds the button in a generated
-  pebble, lays out the board and battery, and gets the click it asked for
-  without touching the exterior. Interiors go back out as SDF grids
-  (`loadpath sdf`).
-- **Scans in, a part that fits out**: a lidar, structured-light or phone
-  scan, or a Gaussian splat, read as points (PLY, PCD, LAS, E57, XYZ,
-  3DGS `.ply` and `.splat`). Planes and cylinders are fitted with a +- band
-  that comes from the fit, the scanner's published accuracy and the scale,
-  and `loadpath scan` writes a study that builds the part round the scanned
-  object. Clearances and fits come from what the scan measured, not a fixed
-  margin: 0.45 mm round a light scanned at Artec-class accuracy for SLS. A
-  phone's +-1 cm says to measure the bar with calipers instead. The input
-  can be just the scan and a sentence: a bank card in the frame sets a
-  splat's scale, a bar snaps to its standard size when the band allows,
-  the mount and the loads come from the brief, and a split clamp gets
-  bolts sized by friction ([docs/SCAN.md](docs/SCAN.md)).
-- **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
-  strut, Voronoi), blends, and exact STEP of lattice parts.
-- **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,
-  plus casting and milling constraints, and hole fits: each bearing seat,
-  pin hole and bolt hole drawn for how that process prints holes, with its
-  as-built size checked on the delivered mesh.
-- **Heat exchangers**: lattice-Boltzmann flow and conjugate heat transfer
-  for gyroid cores and cold plates.
-- **Natural convection, solved**: buoyant laminar air flow with conjugate
-  heat for fins behind a grate, chimneys and vents, where plate
-  correlations guess ([docs/AIRFLOW.md](docs/AIRFLOW.md)).
-
-There is no GUI on purpose; it's a library.
-
-## What it does
-
-- **Topology optimization** on a voxel grid (SIMP with a density filter,
-  Heaviside projection and a robust minimum-member formulation), searching
-  for the lightest part that meets a safety factor and a deflection limit
-  across several load cases. A stress-constrained mode (MMA) is available.
-- **Verification of the delivered mesh**, not the optimizer's density
-  field: the STL is analysed again, on a tetrahedral mesh when the
-  `crosscheck` extra is installed and on a fine voxel grid otherwise. Keep-out
-  intrusion and lost interface geometry are measured with exact booleans.
-- **Process rules** for FDM (overhangs, bridges, layer bond), SLS and MJF
-  (trapped powder, escape holes, warp-prone panels), resin (supports, peel,
-  suction cups) and powder-bed metal (internal ceilings, powder
-  clean-outs), plus milling and casting constraints.
-- **Outcome exploration** (`loadpath explore`): one study solved once per
-  manufacturing method and material (FDM, SLS, MJF, resin, LPBF metal,
-  cast, 2.5/3/5-axis milled), each a full verified run, ranked by mass,
-  estimated cost and lead time with Pareto fronts and the cheapest method
-  at each order quantity.
-- **Field modelling**: a part as a graph of implicit fields, so skins,
-  lattices (TPMS and strut) and fillets can be graded by stress or by
-  distance ([docs/fields.md](docs/fields.md)).
-- **Other analyses**: large deflection and buckling, compliant mechanisms,
-  thermal loads, fatigue and creep estimates, lattice crush and impact,
-  vibration, lattice-Boltzmann flow and conjugate heat for heat exchangers
-  and cold plates, and layer-by-layer warp and residual stress
-  ([docs/BUILDSIM.md](docs/BUILDSIM.md)).
-- **CAD in and out**: a STEP or STL part becomes a draft study with its
-  bores and bolt patterns found ([docs/IMPORT.md](docs/IMPORT.md)); results
-  export as STL, 3MF, and STEP with exact planes and cylinders at the
-  interfaces; a lattice part (strut cells, TPMS, graded, skinned or open)
-  goes to STEP lattice and all, as smooth patches on its true surface ([docs/fields.md](docs/fields.md#the-lattice-itself-in-the-step-lattice-exact)),
-  and any closed STL, gyroid-cored and drained ones included, becomes one
-  valid STEP solid with every tunnel kept (`loadpath step part.stl`, a
-  minute for a 500k-triangle link).
-- **Wires and cables as physics** ([docs/WIRES.md](docs/WIRES.md)): each
-  wire, bundle, coax or flat cable is an elastic rod, laid between its
-  connectors among the parts round it and held to its bend radius, twist
-  and length; followed through a joint's travel for flex life; and inside
-  a product, part of the layout search, so components are only placed
-  where their cables can be laid and plugged in, hot parts apart, and the
-  harness's space is kept clear of the structure generated round it.
-- **Casting, poured before it is made** ([docs/CASTING.md](docs/CASTING.md)):
-  a part meant for sand, investment or die casting is poured in its mold:
-  the heat equation with latent heat finds what freezes last, conservation
-  of mass and gravity find the cavity that leaves, and risers are sized
-  by solving until the part is sound; porosity, the thinnest wall the
-  metal will fill and the pattern scale come from the alloy's own
-  numbers. A ceramic part is slip cast the same way: filtration through
-  the growing cake gives the minutes in the plaster mold and the wall the
-  real shape gets, conservation of solids gives the shrinkage, a creep
-  solve gives the kiln sag. Both write the pattern or mold to print. No
-  riser ratios, shrink rules or minimum-wall tables.
-- **Antennas inside the product** ([docs/ANTENNA.md](docs/ANTENNA.md)): a
-  board antenna solved with Maxwell's equations in the printed shell it
-  will live in, with the shell's measured permittivity and loss, the
-  battery and every placed part: how far the product moves its
-  resonance, what that costs in match and efficiency, and where the watts
-  go. The keep-out is a field read from the solution, not a rule of
-  thumb, and inside a product it is part of the layout search: a battery
-  is placed where it does not detune the radio, and the chosen layout is
-  solved in full. An inverted-F's own dimensions are solved in place.
-  Checked against exact cavity modes, NEC-2 and a measured patch.
-- **KiCad boards in** ([docs/KICAD.md](docs/KICAD.md)): a `.kicad_pcb`
-  read for its outline, stackup thickness, every part's body and height
-  (its 3D model, else the package's standard height), mass, mounting
-  holes, connectors and which edge each faces, and heat. Named in an
-  enclosure brief, the board is screwed down through its own holes, its
-  USB-C seated in its port with the plug's loads through those screws, and
-  its hot parts are heat sources where they sit; named in a stack, its
-  size, heights, ports and watts come off the file. An agent can design
-  the board; loadpath designs the part it lives in.
-- **Propellers and rotors** ([docs/PROPELLERS.md](docs/PROPELLERS.md)):
-  blade-element momentum on section polars from the section that's
-  printed (NeuralFoil at each station's Reynolds number), on the motor and
-  pack that turn it, with the spinning blade's own bending and untwisting
-  solved in. Designs the blade for the least watts at hover that still
-  reaches full-throttle thrust, strength, tip Mach and frequency margins,
-  and writes it in both hands. Within 14% RMS of published static tests of
-  3D-printed propellers.
-- **Mesh checks without a study** (`loadpath.checks`): wall thickness,
-  overhangs, trapped voids, fluid-network isolation, component fit.
-
-## How much to trust it
-
-Read [docs/VALIDATION.md](docs/VALIDATION.md) before relying on a number.
-In short:
-
-- **The solvers match analytic answers** in the test suite: beam
-  deflection within 3-5%, stress at a hole within about 13%, Lamé pressure
-  vessels within 5-11%, Poiseuille flow exactly.
-- **The structural check is cross-checked**: CalculiX and loadpath's own
-  tetrahedral solver agree within 0.1% on the same mesh. The voxel check
-  reads 24-49% higher stress than the tet check, so it errs safe.
-- **The optimizer is benchmarked**: 1-5% less stiff than top88 and top3d at
-  equal material on three of their textbook problems, stiffer on the fourth.
-- **Printed lattices match published tests**: against 33 published
-  compression tests of printed lattices, the stiffness check has a median
-  error of 1.23x (held out) and the strength check stays under the measured
-  value on all 33.
-- **Propellers match published tests**: thrust and power within 14% RMS
-  of static tests of 3D-printed propellers (2, 3 and 4 blades, 5 and 9 in).
-- **Warp prediction is fitted to measured data** (NIST AM-Bench 2018 for
-  LPBF IN625, a published ABS study for FDM) and misses other alloys and
-  materials by 30-60%.
-- **Everything else is simulation only**, including every part mass and
-  safety factor in the case studies. The analysis is linear elastic with
-  datasheet material values; printed parts vary with the printer.
-
-## How fast it is
-
-On a 4-core cloud box, a whole full-tier eval case (a search over several
-outcomes, each meshed and checked) takes a median of about 19 minutes; a motor
-mount and a bell crank finish in 2 and 7 minutes and the largest robot part (140 g) in 77.
-Fusion 360 users report 2-4 hours or more per generative study in Autodesk's
-cloud; nTop publishes no timings. The sources, caveats and the speed work
-behind these numbers are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md#wall-time-against-ntop-and-fusion-360).
-
-| Case (full tier, alone) | loadpath on Nov 6 | Now | Mass |
-| --- | --- | --- | --- |
-| Robot-arm wrist yoke | 4520 s | 1810 s | 15.8 g (runs spread 13.9-15.8 g) |
-| Robot turret | over 2 h (stopped) | 4718 s | 140.9 g |
-| Generated bracket (corpus 1) | over 2 h (stopped) | 1867 s | 46.5 g |
-
-## Case studies
-
-Each states the problem, the setup, the numbers against a named baseline,
-and the limitations ([docs/case-studies/](docs/case-studies/)).
-
-| Case study | Result | Baseline |
-| --- | --- | --- |
-| [Eval suite](docs/case-studies/evals.md) | 15 of 15 parts meet their requirements on a fresh analysis of the delivered mesh | Each part's own requirements |
-| [Robot arm](docs/case-studies/robot-arm.md) | A load sweep over the arm's URDF found 3 of 5 links below SF 1; the regrown set meets SF 2 and is 18% smaller | The robot arm's committed parts, made by an earlier loadpath with hand-written loads |
-| [Arm link cores](docs/case-studies/arm-link-cores.md) | 42.2 g box section for FDM, 36.8 g hollow link for SLS, both at 0.5 mm and SF 3 | 54.9 g solid web; 54.2 g free-form topology optimization |
-| [Liquid cold plate](docs/case-studies/cold-plate.md) | A die-graded gyroid ties streamline channels; channels filled with a graded gyroid run 7% cooler | Streamline channels and pin fins, equal metal and pressure drop |
-| [TPU finger](docs/case-studies/tpu-finger.md) | up to 8 mm of tip curl for a 5 mm pull; a tendon finger grips 8x harder | A linear-model design (2.5 mm, then the solve fails); a plain bar of equal volume |
-| [Benchmarks](docs/case-studies/benchmarks.md) | 1-5% less stiff than top88/top3d at equal material, in 57-60 iterations instead of 130-410 | Ports of top88 and top3d |
-
-## Command line and Python
-
-```bash
-loadpath examples shelf-bracket > bracket.json
-loadpath check bracket.json            # every problem at once, with suggestions
-loadpath run bracket.json --out out/   # optimize, mesh, verify, render
-```
-
-`out/` gets an STL and a render per outcome and `report.json`. Every command
-takes `--quick` for a first look in a minute or two. `out/bundle/` carries the
-simulation with the part, in files other software opens: a glTF coloured by
-its safety factor with the loads and keep-outs as named objects, the analysis
-as VTK for ParaView, a mass-against-margin CSV, and a manifest that says what
-every field means, its units, criterion and target
-([docs/BUNDLE.md](docs/BUNDLE.md)).
-
-Optional extras: `crosscheck` (tetrahedral verification; recommended),
-`render`, `step` (STEP in and out, OpenCascade), `flow` (lattice-Boltzmann,
-numba), `gpu` (PyTorch for large grids on CUDA, Apple Silicon or CPU
-threads).
-
-Threads: `LOADPATH_THREADS` caps the threads one run uses (numba kernels,
-field evaluation, load cases side by side; `1` runs everything on one
-thread), and `LOADPATH_WORKERS` caps the processes that verify outcomes in
-parallel. On macOS, pip's numba has no thread-safe threading layer until
-`brew install libomp` (or `pip install tbb`); without one it falls back to
-`workqueue`, and loadpath then solves load cases one after another instead
-of side by side. `loadpath check` reports the layer (`threadingLayer`).
-
-Studies are validated against a published JSON Schema
-([`schema/`](schema/)), and `loadpath check` returns every problem at once
-with its JSON path, so an agent can fix a study in one round trip. Long
-solves run as background jobs the agent polls. Each finished outcome has an
-`attention` list of numbers to look at before trusting it, and renders a
-vision model can inspect.
-
-From Python:
-
-```python
-from loadpath.spec import study_from_dict
-from loadpath.study import run_study
-
-result = run_study(study_from_dict(study))
-best = result.outcomes[result.best]
-best.mesh.export("part.stl")
-print(best.report["mass"], best.report["safetyFactor"])
-```
-
-## Documentation
-
-- [Quickstart](docs/quickstart.md): install to a checked part.
-- [Tutorials](docs/tutorials/): twelve end-to-end workflows, each run by CI
-  (an FDM bracket to 3MF, an SLS lattice with drain holes, a metal heat
-  exchanger, an impact bumper, a STEP part round trip, LPBF distortion
-  compensation, a working part inside a generated mesh, and more).
-- [Reference](loadpath/README.md): the method, every study field, the
-  report, the limits.
-- [Validation](docs/VALIDATION.md): what each model has been checked
-  against.
-- [Physics](docs/PHYSICS.md): the rule the library is built on (every
-  default, boundary condition and check is a claim about the real world),
-  what a full pass of it found, what was fixed with before-and-after
-  numbers, and what is still a convenience, ranked.
-- [loadpath against nTop](docs/NTOP-PARITY.md): nTop's block reference
-  row by row (implicit modelling, lattices, topology optimization,
-  simulation, print preparation, export), what loadpath has, what it has
-  beyond it, and what is left.
-- [Case studies](docs/case-studies/) and [benchmarks](docs/BENCHMARKS.md).
-- Topics: [fields](docs/fields.md), [materials](docs/materials.md),
-  [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
-  [CAD import](docs/IMPORT.md), [scans and splats](docs/SCAN.md), [slicer](docs/slicer.md), [freeform surfacing from curves](docs/FREEFORM.md),
-  [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md), [breakaway links](docs/FUSES.md),
-  [mechanisms](docs/MECHANISMS.md), [a part in one run from a spec](docs/BUILD.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
-  [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md), [a first exterior round the parts](docs/ENVELOPE.md),
-  [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md), [bought stock](docs/STOCK.md),
-  [KiCad boards](docs/KICAD.md), [antennas](docs/ANTENNA.md), [casting](docs/CASTING.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
-  [results bundle](docs/BUNDLE.md).
+Topology optimization codes stop at a density field. Script CAD and AI CAD
+tools draw shapes but don't know the loads. loadpath is the layer between:
+load-aware shapes, checked and ready to make.
 
 <!-- gallery:start -->
 
 ## Examples
 
-The eval suite (15/15 passing): robot-arm links, brackets, a bell crank and a hook, each optimized and then checked by a fresh analysis of the delivered mesh. "Under envelope" compares with the design space filled solid, not with a conventionally designed part. These are simulated results; see [docs/VALIDATION.md](docs/VALIDATION.md). Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
+Parts from the eval suite (15/15 pass on a fresh analysis of the delivered mesh). Blue arrows are loads, red is space to keep clear. Simulated results: every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
 
 <table>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>55.3 g · 56% under envelope · SF 8.92 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>67.8 g · 46% under envelope · SF 20.11 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>48.4 g · 61% under envelope · SF 11.17 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm link</b><br><sub>55.3 g · safety factor 8.9</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell crank</b><br><sub>23.4 g · safety factor 3.2</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed hook</b><br><sub>24.2 g · safety factor 2.7</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>23.4 g · 84% under envelope · SF 3.22 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/robot-turret.png" width="250"><br><b>robot-turret</b><br><sub>140.4 g · 91% under envelope · SF 2.85 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/robot-upper-arm.png" width="250"><br><b>robot-upper-arm</b><br><sub>207.7 g · 88% under envelope · SF 7.33 · pass</sub></td>
-</tr>
-<tr>
-<td align="center" valign="top"><img src="docs/images/cases/robot-wrist-link-mjf.png" width="250"><br><b>robot-wrist-link-mjf</b><br><sub>40.2 g · 95% under envelope · SF 5.83 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/robot-wrist-yoke.png" width="250"><br><b>robot-wrist-yoke</b><br><sub>17.3 g · 93% under envelope · SF 3.88 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>13.8 g · 79% under envelope · SF 1.51 · pass</sub></td>
-</tr>
-<tr>
-<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.6 g · 69% under envelope · SF 3.65 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>24.2 g · 84% under envelope · SF 2.73 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>26.9 g · 94% under envelope · SF 2.85 · pass</sub></td>
-</tr>
-<tr>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>26.5 g · 94% under envelope · SF 2.57 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/robot-upper-arm.png" width="250"><br><b>robot upper arm</b><br><sub>207.7 g · safety factor 7.3</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/robot-wrist-yoke.png" width="250"><br><b>robot wrist yoke</b><br><sub>17.3 g · safety factor 3.9</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb beam</b><br><sub>13.8 g · safety factor 1.5</sub></td>
 </tr>
 </table>
-
-**Inside a product's exterior.** A touch microphone's push pad: the
-designer's surfacing kept as a 1.0 mm SLS TPU skin, the board, switch and
-USB-C plug paths kept clear, and the interior designed so a press anywhere
-on the touch area clicks at 150 gf at the centre rising to 300 gf at the
-rim. Read back on the printable mesh itself (cut cells, 0.33-0.5 mm), the
-drawn interior hits none of 14 press windows (up to 1272 gf at a corner),
-and neither did loadpath's first 1 mm ribs, which had read 13 of 14 on
-their own grid, so
-loadpath now closes that loop: it reads each round's mesh back and
-corrects the targets by the error. With the skin read as cut cells inside the
-optimizer and offset exactly from the designer's surface, a 1.0 → 0.7 mm
-run hits 10 of 14 delivered in 7.06 cm^3 against the drawn 9.7, as many as
-the bare skin allows, with the squeeze held, every board part kept clear
-and nothing in the assembly paths. The four misses are the rim presses the
-1.0 mm skin alone puts over 300 gf: a call for the designer, which the
-report makes with numbers. The study is written by `loadpath handoff` from
-the product's CAD alone.
-It runs in the eval suite as `touch-mic-pad`. ([docs/SWITCH.md](docs/SWITCH.md))
-
-<img src="docs/images/switch/touch-mic-forces.png" width="760">
-
-**Designed for feel.** Beyond the click: how much a grip gives, how hard a
-fall hits what is inside, and how much handling noise reaches a microphone
-capsule are each a stiffness window between where the product is held and
-where the load comes in, and `loadpath feel` designs the interior for them
-together. A generic stick microphone in SLS TPU, designed on 1 mm then
-0.7 mm cells: short posts and one strut hang the 4 g capsule from the head
-so a 1 m fall on the head hits it at 1360 g (target 1500), handling noise
-from 500 Hz up reaches it at under a third, and a 20 N grip gives 0.37 mm,
-all read on the delivered mesh's own cut cells, modes included.
-([docs/FEEL.md](docs/FEEL.md))
-
-<img src="docs/images/feel/mic-body-sections.png" width="760">
-
-**Soft here, firm there.** A designer marks places on the surfacing and how
-each should feel under a fingertip, and how distinct they must be. On a
-generic soft-top controller in one piece of SLS TPU, the touch pad reads
-2.3-3.8 N/mm (pliable: 1-4), the rim and walls at least 17, every one of
-them 4.5x stiffer than any pad press (asked: 4x). loadpath got there by
-thinning only the inside of the pad's skin, 2 mm down to the 1.0 mm
-minimum wall, and growing posts and buttresses that hold the rim up
-without touching the pad. All 67 presses were read on the delivered
-mesh. ([docs/FEEL.md](docs/FEEL.md#touch-zones-pliable-here-firm-there))
-
-<img src="docs/images/feel/soft-top.png" width="760">
-
-**Designed around the heat.** A processor has a temperature it must stay
-under, a battery a lower one, and the surface a hand holds a touch limit
-(48 C held, after IEC 62368-1). `loadpath cooling` gives each component its
-watts and limit and designs the interior to meet all of them with the least
-material, together with any feel target. A generic 120 x 64 x 16 mm
-handheld in MJF PA 12 with a 1.5 W processor: bare, the processor reads
-93 C and the skin over it 51 C; designed on 0.7 mm cells, pads off the
-chips spread into a thin liner under the skin over the board, 43.5 g in
-all, and the delivered mesh reads 65 C and 48.0 C. A `cycle` designs for
-how it is used (an idle, a five-minute burst at twice the power) instead
-of a steady load.
-([docs/COOLING.md](docs/COOLING.md))
-
-<img src="docs/images/cooling/handheld-sections.png" width="760">
-
-Where the load goes: von Mises stress, blue (none) to red (the part's 98th percentile), on the part bent by its worst load case:
-
-<table>
-<tr>
-<td align="center" valign="top"><img src="docs/images/stress/bell-crank.png" width="250"><br><sub>bell-crank</sub></td>
-<td align="center" valign="top"><img src="docs/images/stress/robot-upper-arm.png" width="250"><br><sub>robot-upper-arm</sub></td>
-<td align="center" valign="top"><img src="docs/images/stress/printed-hook.png" width="250"><br><sub>printed-hook</sub></td>
-</tr>
-</table>
-
-Two-fluid heat exchangers: two isolated channel networks through one sheet gyroid, with round-vaulted headers and round ports, shaped for the build only where the process needs it.
-
-![box-crossflow](docs/images/heatx/box-crossflow.png)
-
-Printed in metal, nothing inside can be supported: the channels end in peaked roofs instead of flat ceilings (red).
-
-![metal ceilings](docs/images/heatx/lpbf-ceilings.png)
-
-Made another way: the same arm link printed, cast (no undercuts along z), 3-axis milled from both sides with a 6 mm cutter, and with members capped at 6 mm. Each meets SF 3 and 0.5 mm.
-
-![manufacturing constraints](docs/images/manufacturing/arm-link.png)
 
 <sub>Rendered 2026-11-03 from `6c97b57` by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->
-## Limits
 
-- Linear elastic, small deflection in the main check; large deflection and
-  buckling are separate analyses (`nonlinear.py`), with contact (rigid
-  obstacles and self contact, optionally with Coulomb friction) and
-  tendons there only.
-- Printed layers are modelled as transversely isotropic stiffness plus a
-  tension-across-layers strength check. Interlayer shear is not checked
-  separately.
-- Material cards are datasheet values until you calibrate your printer
-  (`loadpath calibrate`).
-- Results depend on the grid: mass at a target safety factor moves about
-  5% with small changes of grid size or starting point.
-- Pure Python with NumPy, SciPy and numba kernels. A 40,000-cell study takes
-  a few minutes; a safety-factor search runs several of those and confirms
-  its pick on a tetrahedral mesh, so the larger eval parts take 15-60
-  minutes on four cores. The search uses idle cores for the next step's
-  checks ([wall time](docs/BENCHMARKS.md#wall-time-where-a-runs-minutes-go-2026-11-06)).
+## Learn more
 
-## Tests
-
-```bash
-python tests/run_tests.py && python tests/test_loadpath.py        # core
-python tests/test_tutorials.py                                    # every tutorial, quick mode
-python -m loadpath.evals.run --tier coarse --corpus 6 \
-    --baseline loadpath/evals/baselines/coarse.json --gate regressions   # under 30 min
-python -m loadpath.evals.run --out evals-out/                     # full eval suite, hours
-python -m loadpath.benchmarks.run --out bench-out/                # top88 / top3d benchmarks
-python docs/gallery.py --evals evals-out/                         # refresh the Examples renders
-```
-
-`.github/workflows/tests.yml` lists the full set CI runs.
+- [Everything in detail](docs/CAPABILITIES.md): every feature, speed, case studies, limits, CLI and Python.
+- [Quickstart](docs/quickstart.md) and [tutorials](docs/tutorials/): from install to a checked part.
+- [For agents](docs/agents.md): the MCP tools and workflow. The agent's own guide is [loadpath/SKILL.md](loadpath/SKILL.md).
+- [How much to trust it](docs/VALIDATION.md): what each model has been checked against. Results are simulated.
+- [Study reference](loadpath/README.md): every study field and the report.
 
 ## License
 

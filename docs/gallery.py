@@ -42,8 +42,8 @@ README = os.path.join(ROOT, "README.md")
 GALLERY = os.path.join(ROOT, "docs", "GALLERY.md")
 START, END = "<!-- gallery:start -->", "<!-- gallery:end -->"
 COLS = 3
-# Stress maps shown in the README (the rest are in docs/GALLERY.md).
-STRESS_PICKS = ["bell-crank", "printed-hook", "robot-upper-arm"]
+# Eval cases shown in the README, in this order (the rest are in docs/GALLERY.md).
+README_PICKS = ["arm-link", "bell-crank", "printed-hook", "robot-upper-arm", "robot-wrist-yoke", "mbb-beam"]
 
 # The metal heat exchanger case whose internal ceilings the gallery shows.
 METAL_CASE = "lpbf-intercooler-core"
@@ -247,6 +247,16 @@ def _caption(row):
     return " · ".join(bits)
 
 
+def _short_caption(row):
+    b = row.get("best") or {}
+    bits = []
+    if b.get("mass") is not None:
+        bits.append(f"{b['mass']:.1f} g")
+    if b.get("safetyFactor") is not None:
+        bits.append(f"safety factor {b['safetyFactor']:.1f}")
+    return " · ".join(bits) if row.get("pass") else " · ".join(bits + ["**fail**"])
+
+
 def _grid(items, width=280):
     """items: (image path, caption). An HTML table, COLS across."""
     lines = ["<table>"]
@@ -269,8 +279,6 @@ def _stamp(evals):
 # docs/images/manufacturing/ comes from full study runs of the variants named
 # here (2026-10-30, cloud box), not from the eval suite: re-run them by hand
 # when the optimizer changes enough to matter.
-MFG_README = ("Made another way: the same arm link printed, cast (no undercuts along z), 3-axis milled from both "
-              "sides with a 6 mm cutter, and with members capped at 6 mm. Each meets SF 3 and 0.5 mm.")
 MFG_GALLERY = ("The `arm-link` eval case (SF 3, 0.5 mm at the wrist, PA12) with each of loadpath's manufacturing "
                "constraints. Cast two-sided along z and milled from +z and -z, every hole runs straight through; "
                "the cable channel along x is the one undercut left (it needs a side core), and the report says so "
@@ -286,32 +294,17 @@ def write_docs(rows, evals):
     img = lambda *p: os.path.join(IMAGES, *p)  # noqa: E731
     cases = [r for r in rows if exist("cases", f"{r['case']}.png")]
     passed = sum(1 for r in rows if r.get("pass"))
-    # The README shows the tool off in a screenful; docs/GALLERY.md has everything.
-    readme = [START, "", "## Examples", "",
-              f"The eval suite ({passed}/{len(rows)} passing): robot-arm links, brackets, a bell crank and a hook, "
-              f"each optimized and then checked by a fresh analysis of the delivered mesh. "
-              f"\"Under envelope\" compares with the design space filled solid, not with a conventionally "
-              f"designed part. These are simulated results; see [docs/VALIDATION.md](docs/VALIDATION.md). "
-              f"Blue arrows are loads, red is keep-out. Every view, stress map and number is in "
-              f"[docs/GALLERY.md](docs/GALLERY.md).", "",
-              _grid([(img("cases", f"{r['case']}.png"), f"<b>{r['case']}</b><br><sub>{_caption(r)}</sub>")
-                     for r in cases], width=250)]
-    stress = [r for r in cases if exist("stress", f"{r['case']}.png")]
-    stress = ([r for r in stress if r["case"] in STRESS_PICKS] or stress)[:COLS]
-    if stress:
-        readme += ["", "Where the load goes: von Mises stress, blue (none) to red (the part's 98th percentile), on the part bent by its worst load case:", "",
-                   _grid([(img("stress", f"{r['case']}.png"), f"<sub>{r['case']}</sub>") for r in stress], width=250)]
+    # The README shows a handful of parts in one screen; docs/GALLERY.md has everything.
+    by_name = {r["case"]: r for r in cases}
+    picks = [by_name[n] for n in README_PICKS if n in by_name] or cases[:2 * COLS]
     hx = [(n, cap) for n, cap, *_ in HEATX if exist("heatx", f"{n}.png")]
-    if hx:
-        n, cap = hx[0]
-        readme += ["", "Two-fluid heat exchangers: two isolated channel networks through one sheet gyroid, "
-                   "with round-vaulted headers and round ports, shaped for the build only where the process "
-                   "needs it.", "", f"![{n}](docs/images/heatx/{n}.png)"]
-    if exist("heatx", "lpbf-ceilings.png"):
-        readme += ["", "Printed in metal, nothing inside can be supported: the channels end in peaked roofs "
-                   "instead of flat ceilings (red).", "", "![metal ceilings](docs/images/heatx/lpbf-ceilings.png)"]
-    if exist("manufacturing", "arm-link.png"):
-        readme += ["", MFG_README, "", "![manufacturing constraints](docs/images/manufacturing/arm-link.png)"]
+    readme = [START, "", "## Examples", "",
+              f"Parts from the eval suite ({passed}/{len(rows)} pass on a fresh analysis of the delivered mesh). "
+              f"Blue arrows are loads, red is space to keep clear. Simulated results: every view, stress map "
+              f"and number is in [docs/GALLERY.md](docs/GALLERY.md).", "",
+              _grid([(img("cases", f"{r['case']}.png"),
+                      f"<b>{r['case'].replace('-', ' ')}</b><br><sub>{_short_caption(r)}</sub>")
+                     for r in picks], width=250)]
     readme += ["", f"<sub>{_stamp(evals)}</sub>", "", END]
 
     with open(README) as fh:
