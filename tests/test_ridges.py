@@ -1,0 +1,94 @@
+"""ridges.py: printed ridges (web + teardrop bulb), lofted, windowed, blended."""
+import numpy as np
+
+from loadpath.ridges import Ridges, profile, section
+
+
+def _grid(p=0.1):
+    u = np.arange(-6, 6, p) + p / 2
+    v = np.arange(-1, 14, p) + p / 2
+    return np.meshgrid(u, v, indexing="ij")
+
+
+def test_profile_is_self_supporting():
+    U, V = _grid()
+    s = profile(U, V, 1.6, 10.0, 2.2, chin=45.0) <= 0
+    # walking up, the solid's width never grows by more than one step per step (45 degrees)
+    width = s.sum(axis=0) * 0.1
+    grow = np.diff(width)
+    assert grow.max() <= 2 * 0.1 + 1e-6 + 0.2       # two sides, a cell of rounding
+    # the web is t wide low down and the bulb 2R wide near the top
+    assert abs(width[np.searchsorted(V[0], 2.0)] - 1.6) < 0.21
+    assert abs(width.max() - 4.4) < 0.21
+    assert V[0][np.nonzero(width)[0].max()] < 10.0 + 0.1
+
+
+def test_bulb_beats_a_wall_of_the_same_height_and_mass():
+    r = section("ridge", t=1.6, H=10.0, R=2.2)
+    tw = (r["area mm2"] - 2.0 * 11.0) / 10.0
+    w = section("wall", t=tw, H=10.0)
+    assert abs(w["area mm2"] - r["area mm2"]) < 0.5
+    assert r["I mm4"] > 1.1 * w["I mm4"]
+    assert min(r["Z tip mm3"], r["Z skin mm3"]) > 1.15 * min(w["Z tip mm3"], w["Z skin mm3"])
+
+
+def test_ridges_loft_window_and_blend():
+    L = [np.array([[-30, 0, 0], [30, 0, 0]], float), np.array([[0, -30, 0], [0, 30, 0]], float)]
+    W = [np.linspace(0, 1, 2), np.zeros(2)]
+    # lofted height: the x line grows with its weight
+    r = Ridges(L, "+z", weight=W, t=(1.6, 2.4), H=(4.0, 12.0), R=(1.0, 2.2))
+    tip = lambda r, x: max(v for v in np.arange(0, 20, 0.1) if r(np.array([[x, 0, 0]]), np.array([v]))[0] <= 0)
+    assert tip(r, -25) < tip(r, 25) - 4
+    # the crossing is blended: just off the corner between the two lines is inside
+    assert r(np.array([[1.25, 1.25, 0]]), np.array([1.0]))[0] < 0 < min(r(np.array([[1.25, 5.0, 0]]), np.array([1.0]))[0], 0.3)
+    assert r(np.array([[4.0, 4.0, 0]]), np.array([1.0]))[0] > 0
+    # a deep web (height from the room) that is lightly loaded has diamond windows; loaded, none
+    r = Ridges(L, "+z", weight=W, H=lambda P: np.full(len(P), 16.0))
+    xs = np.arange(-28, 28, 0.25)
+    mid = r(np.column_stack([xs, np.full_like(xs, 0.0), np.zeros_like(xs)]), np.full(len(xs), 7.0))
+    light, heavy = mid[xs < -12], mid[xs > 20]
+    assert (light > 0).any() and (light <= 0).any()
+    assert (heavy <= 0).all()
+
+
+def _supported(S):
+    """Every solid cell (rows bottom to top) rests on a solid cell below it or one diagonal from it."""
+    below = np.zeros_like(S)
+    below[:, 1:] = S[:, :-1]
+    below[1:, 1:] |= S[:-1, :-1]
+    below[:-1, 1:] |= S[1:, :-1]
+    return ~(S & ~below)[:, 1:]
+
+
+def test_wall_ridges_print_on_a_side_wall_and_stand_up_on_the_floor():
+    from loadpath.ridges import WallRidges
+
+    L = [np.array([[0, -20, 0], [0, 20, 0]], float)]
+    p = 0.25
+    x = np.arange(0, 16, p) + p / 2
+    z = np.arange(-8, 16, p) + p / 2
+    X, Z = np.meshgrid(x, z, indexing="ij")
+    P = np.column_stack([X.ravel(), np.zeros(X.size), Z.ravel()])
+    # a side wall at x = 0 (the part at x > 0), printed up +z: a 45 degree shelf, reaching 10 mm out
+    r = WallRidges(L, "+z", lambda Q: np.tile([1.0, 0, 0], (len(Q), 1)), H=(10, 10), t=(2, 2), R=(2, 2))
+    S = (r(P) <= 0).reshape(X.shape)
+    S[0] = True                                         # the wall
+    ok = _supported(S)
+    assert ok.mean() > 0.995, np.argwhere(~ok)[:5]
+    assert 9.0 < x[S[1:].any(axis=1).nonzero()[0].max() + 1] < 10.6
+    # the floor (normal +z): upright, 10 mm tall, a web 2 mm wide
+    r = WallRidges([np.array([[-20, 0, 0], [20, 0, 0]], float)], "+z", lambda Q: np.tile([0, 0, 1.0], (len(Q), 1)),
+                   H=(10, 10), t=(2, 2), R=(2, 2))
+    Y, Z2 = np.meshgrid(np.arange(-6, 6, p) + p / 2, z, indexing="ij")
+    S = (r(np.column_stack([np.zeros(Y.size), Y.ravel(), Z2.ravel()])) <= 0).reshape(Y.shape)
+    assert abs(Z2[S].max() - 10.0) < 0.3
+    assert abs(S[:, np.searchsorted(z, 3.0)].sum() * p - 2.0) < 0.3
+
+
+def test_thin_keeps_half_of_a_parallel_family_and_every_crossing_line():
+    from loadpath.ridges import thin
+
+    xs = [np.array([[x, -40, 0], [x, 40, 0]], float) for x in np.arange(-33, 34, 11)]
+    ys = [np.array([[-40, 40, 0], [40, 40, 0]], float)]
+    kept, _, idx = thin([*(np.linspace(a, b, 40) for a, b in xs), np.linspace(*ys[0], 40)], spacing=22.0)
+    assert len(idx) == 5 and 7 in idx

@@ -88,7 +88,7 @@ jobs:
               tests/test_flow.py tests/test_airflow.py tests/test_heatx_rating.py tests/test_printsetup.py tests/test_metal.py
               tests/test_amgfast.py tests/test_selfsupport.py tests/test_cutcell.py tests/test_explore.py
               tests/test_porous.py tests/test_meshops.py tests/test_massfill.py tests/test_femops.py
-              tests/test_stability.py tests/test_fieldtorch.py
+              tests/test_stability.py tests/test_fieldtorch.py tests/test_ridges.py tests/test_members.py
           # OpenCascade (the step extra) and build123d only here; without
           # them these files skip or fail to import
           - group: step            # ~16 min there (build 6)
