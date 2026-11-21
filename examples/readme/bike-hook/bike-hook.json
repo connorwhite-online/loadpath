@@ -1,0 +1,222 @@
+{
+ "name": "bike-hook",
+ "description": "Garage wall hook that hangs a bike by its top tube, the bike parallel to the wall. Inferred: up to 15 kg (most road and mountain bikes, not e-bikes), held for ten years (creep), 1.5x its weight when lifted on or off, about once a day for ten years; a sideways knock at half the weight; top tube up to 50 mm, centred 165 mm out so the handlebars and pedals clear the wall; two #10 (M5) wood screws in a vertical line into one stud. PA 12 (MJF): the bike hangs for years and is lifted on and off daily, so the hook needs a nylon with measured fatigue and creep data and no weak layer direction; PETG's layer bond failed that first.",
+ "designSpace": [
+  {
+   "type": "box",
+   "min": [
+    0,
+    -20,
+    -80
+   ],
+   "max": [
+    200,
+    20,
+    45
+   ]
+  }
+ ],
+ "fasteners": [
+  {
+   "id": "upper",
+   "size": "M5",
+   "seat": [
+    6,
+    0,
+    30
+   ],
+   "direction": "-x",
+   "grip": 6,
+   "end": "face"
+  },
+  {
+   "id": "lower",
+   "size": "M5",
+   "seat": [
+    6,
+    0,
+    -55
+   ],
+   "direction": "-x",
+   "grip": 6,
+   "end": "face"
+  }
+ ],
+ "preserve": [
+  {
+   "id": "saddle",
+   "shape": {
+    "type": "intersect",
+    "shapes": [
+     {
+      "type": "subtract",
+      "shapes": [
+       {
+        "type": "cylinder",
+        "center": [
+         165,
+         0,
+         0
+        ],
+        "axis": "y",
+        "length": 40,
+        "r": 30
+       },
+       {
+        "type": "cylinder",
+        "center": [
+         165,
+         0,
+         0
+        ],
+        "axis": "y",
+        "length": 50,
+        "r": 25
+       }
+      ]
+     },
+     {
+      "type": "box",
+      "min": [
+       130,
+       -20,
+       -31
+      ],
+      "max": [
+       200,
+       20,
+       0
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "lip",
+   "shape": {
+    "type": "box",
+    "min": [
+     191,
+     -20,
+     -8
+    ],
+    "max": [
+     197,
+     20,
+     16
+    ]
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "top-tube",
+   "shape": {
+    "type": "union",
+    "shapes": [
+     {
+      "type": "cylinder",
+      "center": [
+       165,
+       0,
+       0
+      ],
+      "axis": "y",
+      "length": 60,
+      "r": 25
+     },
+     {
+      "type": "box",
+      "min": [
+       140,
+       -30,
+       0
+      ],
+      "max": [
+       190,
+       30,
+       60
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "supports": [
+  {
+   "region": "upper-bore",
+   "fix": "yz"
+  },
+  {
+   "region": "lower-bore",
+   "fix": "yz"
+  },
+  {
+   "shape": {
+    "type": "box",
+    "min": [
+     0,
+     -20,
+     -80
+    ],
+    "max": [
+     1,
+     20,
+     45
+    ]
+   },
+   "push": "+x"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "hang",
+   "hours": 87600,
+   "loads": [
+    {
+     "region": "saddle",
+     "mass": 15,
+     "dynamic": 1,
+     "gravity": "-z"
+    }
+   ]
+  },
+  {
+   "name": "lift-on",
+   "cycles": 4000,
+   "loads": [
+    {
+     "region": "saddle",
+     "mass": 15,
+     "dynamic": 1.5,
+     "gravity": "-z"
+    }
+   ]
+  },
+  {
+   "name": "knock",
+   "loads": [
+    {
+     "region": "saddle",
+     "force": [
+      0,
+      74,
+      -147
+     ]
+    }
+   ]
+  }
+ ],
+ "material": "pa12",
+ "process": {
+  "type": "mjf"
+ },
+ "goal": {
+  "safetyFactor": 2.0
+ },
+ "minMember": 5.0,
+ "symmetry": [],
+ "resolution": {
+  "maxElements": 50000
+ }
+}

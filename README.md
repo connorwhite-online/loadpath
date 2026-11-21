@@ -25,10 +25,27 @@ claude mcp add loadpath -- loadpath mcp   # or any MCP client: {"command": "load
 
 Then ask your agent:
 
-> I need a PETG bracket to hold a 10 kg shelf off the wall.
+> I need a hook to hang my bike on the garage wall.
 
-The agent works out the loads, mounts and clearances, runs loadpath, and reads
-the report. Everything runs on your machine.
+You don't give it numbers. The agent works out the loads and constraints, writes
+them into a study, runs loadpath, and reads the report. For this ask it decided:
+
+- **Load**: a bike up to 15 kg, hanging for ten years. Lifting it on or off is 1.5x that, about once a day. A sideways knock is half of it.
+- **Fit**: a top tube up to 50 mm wide, held 165 mm out so the handlebars and pedals clear the wall.
+- **Mount**: two #10 wood screws into one stud.
+- **Material**: PA 12 (MJF). It tried PETG first, but daily lifting fatigued the printed layers near the screws.
+
+<table>
+<tr>
+<td align="center"><img src="docs/images/readme/bike-hook.png" width="420"></td>
+</tr>
+<tr>
+<td align="center"><sub>The hook it delivered, with the top tube shown in blue. 293 g, safety factor 2.8 under the lift-on load.
+<a href="examples/readme/bike-hook/">Study and script</a>.</sub></td>
+</tr>
+</table>
+
+Everything runs on your machine.
 
 ## What you get
 
