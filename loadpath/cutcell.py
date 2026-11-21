@@ -248,6 +248,27 @@ class CutGrid:
         dof numbering (mg.GridElasticity's `springs`)."""
         m = self.mesh
         mod = np.broadcast_to(np.asarray(modulus, float), (m.n_elem,))[self.cut_index]
+        from . import femops
+
+        if femops.available() and len(self.cut_index) >= 256:
+            # assembled on the cut cells' own mesh (fem.Stiffness's compiled
+            # layout and scatter) and renumbered to this mesh's dofs: node
+            # ids ascend in grid order on both, so the columns stay sorted.
+            # The coo -> csr it replaces took 1.8 s on the arm link's 29k cut
+            # cells; same entries, summed in another order (to rounding)
+            sub = HexMesh(m.elem_ijk[self.cut_index], self.pitch, self.origin)
+            st = Stiffness(sub, self.nu, np.zeros(sub.n_dof, bool))
+            data = np.zeros(st.nnz)
+            st.add_elements(data, self.ke_cut * mod[:, None, None], np.arange(len(self.cut_index)))
+            gnode = m.node_id(sub.node_ijk)
+            gdof = (3 * gnode[:, None] + np.arange(3)).ravel()
+            rows = np.zeros(m.n_dof + 1, np.int64)
+            rows[gdof + 1] = np.diff(np.asarray(st.indptr, np.int64))
+            itype = np.int32 if max(st.nnz, m.n_dof) < 2 ** 31 else np.int64
+            k = sp.csr_matrix((data, gdof[np.asarray(st.indices)].astype(itype), np.cumsum(rows).astype(itype)),
+                              shape=(m.n_dof, m.n_dof))
+            k.has_sorted_indices = True
+            return k
         edof = m.edof[self.cut_index]
         rows = np.repeat(edof, 24, axis=1).ravel()
         cols = np.tile(edof, (1, 24)).ravel()

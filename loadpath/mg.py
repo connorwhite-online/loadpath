@@ -625,7 +625,12 @@ class GridElasticity:
         nn_f = int(np.prod(nshape_f))
         nn_c = int(np.prod(nshape_c))
         s = s.tocsr()
-        dofs = np.unique(np.concatenate([s.tocoo().row, s.tocoo().col]))
+        # the dofs it touches (rows or columns), by marking: np.unique over
+        # its coo row and column arrays sorted 2 x 10M entries (0.5 s)
+        mark = np.zeros(s.shape[0], bool)
+        mark[s.indices] = True
+        mark[np.diff(s.indptr) > 0] = True
+        dofs = np.flatnonzero(mark)
         comp, node = np.divmod(dofs, nn_f)
         ijk = np.stack(np.unravel_index(node, nshape_f), axis=1)
         pr = _prolong_rows(ijk, nshape_c).tocoo()
@@ -633,9 +638,11 @@ class GridElasticity:
         vals = pr.data
         if mask_fine is not None:
             vals = vals * mask_fine.reshape(-1)[dofs[pr.row]]
-        p = sp.csr_matrix((vals, (pr.row, cols)), shape=(len(dofs), 3 * nn_c))
-        ss = s[dofs][:, dofs]
-        return (p.T @ ss @ p).tocsr()
+        # P in the fine level's own rows (the rows s leaves empty stay
+        # empty): the same products, in the same order, without taking s
+        # apart into its touched rows and columns first
+        p = sp.csr_matrix((vals, (dofs[pr.row], cols)), shape=(s.shape[0], 3 * nn_c))
+        return (p.T @ s @ p).tocsr()
 
     def _build_coarse(self, lv):
         """Assemble the coarsest level and factor it (or build pyamg on it)."""
