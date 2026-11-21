@@ -3426,7 +3426,10 @@ ENCLOSURE_SCHEMA = {
             "additionalProperties": False},
         "rest": {**_AXIS, "description": "the side it is held by for the analysis (default -z): a small patch of "
                                          "the exterior there"},
-        "supportRadius": _POS, "supports": {"type": "array"}, "keepOut": {"type": "array"},
+        "supportRadius": _POS, "supports": {"type": "array"}, "keepOut": {"type": "array", "description":
+            "the study's keep-outs, as given; one with \"partsOut\": true is space nothing may stand in, the placed "
+            "parts too (a camera's light path to its window), where a plain keep-out only holds the designed "
+            "material out (a board's bay, which the board sits in)"},
         "loadCases": {"type": "array", "description": "more load cases, as in a study"},
         "switch": {"type": "object", "description": "a push pad, as in a handoff brief"},
         "feel": {"type": "object", "description": "feel targets, as in a study"},

@@ -1609,6 +1609,50 @@ def _stl_watertight(mesh) -> bool:
     return not len(_stl_bad_edges(mesh.vertices, np.asarray(mesh.faces, np.int64))[0])
 
 
+def _unfold_float32(mesh, info=None):
+    """The part as an STL stores it (float32, welded by position) can fold
+    where a boolean left sub-micron slivers: faces cross faces they share
+    no vertex with, and the delivery's soundness check refuses it (a
+    scanner cover's skin at its window and USB opening, 55 faces). Welded
+    in float32 and passed back through manifold3d with edges under `tol`
+    collapsed, it comes out unfolded: the first of 1e-5 .. 1e-3 mm that
+    does, closed and within 1e-3 of the volume, is kept; else `mesh`."""
+    import trimesh
+
+    from .crease import crossing_faces
+    from .shapes import manifold_from_trimesh
+
+    def f32(m):
+        w = trimesh.Trimesh(np.asarray(m.vertices, np.float32).astype(float), np.asarray(m.faces).copy(),
+                            process=False)
+        w.merge_vertices()
+        return w
+
+    def folds(m):
+        return len(crossing_faces(np.asarray(m.vertices, float), np.asarray(m.faces), np.arange(len(m.faces))))
+
+    try:
+        cur = f32(mesh)
+        n0 = folds(cur)
+        if not n0:
+            return mesh
+        v0 = abs(float(cur.volume))
+        for tol in (1e-5, 1e-4, 1e-3):
+            m2 = _drop_slivers(trimesh_from_manifold(manifold_from_trimesh(cur).simplify(tol)))
+            w = f32(m2)
+            if _stl_watertight(w) and abs(abs(float(w.volume)) - v0) <= 1e-3 * v0:
+                k = folds(w)
+                if k == 0:
+                    if info is not None:
+                        info["unfolded"] = {"crossingFaces": n0, "tolerance": tol}
+                    return m2
+                cur = w
+    except Exception as exc:  # noqa: BLE001 - the mesh stands; the soundness check reports it
+        if info is not None:
+            info["unfoldFailed"] = f"{type(exc).__name__}: {exc}"
+    return mesh
+
+
 def _drop_slivers(mesh):
     """Drop zero-volume shells (a pair of coincident triangles facing apart)
     that a boolean can leave on a flat face. manifold3d keeps them on vertices
@@ -2463,6 +2507,7 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
             again = None
         if again is not None and _stl_watertight(again):
             mesh = again
+    mesh = _unfold_float32(mesh, info)
     if parting is not None:
         mesh.metadata["parting"] = parting
         info["parting"] = parting

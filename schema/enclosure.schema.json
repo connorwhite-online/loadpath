@@ -2035,7 +2035,8 @@
       "type": "array"
     },
     "keepOut": {
-      "type": "array"
+      "type": "array",
+      "description": "the study's keep-outs, as given; one with \"partsOut\": true is space nothing may stand in, the placed parts too (a camera's light path to its window), where a plain keep-out only holds the designed material out (a board's bay, which the board sits in)"
     },
     "loadCases": {
       "type": "array",

@@ -667,8 +667,8 @@ class Boolean(Shape):
             out = mans[0] - m3d.Manifold.batch_boolean(mans[1:], m3d.OpType.Add)
         # slivers where cut faces nearly meet fold through each other once
         # an STL rounds them to float32 (a skin cut by a USB-C port): collapse
-        # edges under 10 nm, which moves no surface
-        return out.simplify(_SWEEP_FLAT * 1e-2)
+        # edges under _SLIVER (0.1 um), which moves no surface
+        return out.simplify(_SLIVER)
 
     def to_spec(self):
         return {"type": self.kind, "shapes": [s.to_spec() for s in self.parts]}
@@ -847,6 +847,10 @@ def shrink(shape: Shape, t: float, open=()) -> Shape:
 # mm: a swept triangle's prism thinner than this is skipped (a wall along
 # the motion; see Sweep.to_manifold)
 _SWEEP_FLAT = 1e-3
+# mm: edges a boolean or sweep leaves shorter than this are collapsed
+# (manifold simplify). At 1e-5 a scanner cover's skin still folded in
+# float32 at its window (6 crossing faces); 1e-4 cleared it, 0.0005 mm3 moved
+_SLIVER = 1e-4
 _SWEEP_PRISMS = 20_000
 
 
@@ -1013,8 +1017,8 @@ class Sweep(Shape):
         out = m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
         # the prisms' joins leave slivers an STL's float32 folds through each
         # other (13 crossing faces on a swept USB-C port): collapse edges
-        # under _SWEEP_FLAT / 100 (10 nm), which moves no surface
-        return out.simplify(_SWEEP_FLAT * 1e-2)
+        # under _SLIVER (0.1 um), which moves no surface
+        return out.simplify(_SLIVER)
 
     def to_spec(self):
         raise ValueError("a sweep is derived from a keep-out's insertFrom and has no JSON form of its own")

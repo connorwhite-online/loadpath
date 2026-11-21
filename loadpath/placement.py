@@ -50,6 +50,12 @@ __all__ = ["place", "rotations", "component_mesh"]
 _AX = {"x": 0, "y": 1, "z": 2}
 
 
+# mm an aligned part keeps off its own opening's walls (alignTo): the
+# opening is drawn for it, so the margin parts keep off everything else
+# does not apply there
+_OPENING_FIT = 0.05
+
+
 def _axis_vec(side) -> np.ndarray:
     if isinstance(side, str):
         s = side.strip().lower()
@@ -407,7 +413,15 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
             if lr is not None and lr["kind"] == "alignTo":
                 # the recess is the face's own stand-off from the exterior,
                 # not on top of the margin the rest of the part keeps
-                room = np.minimum(np.maximum(room_base, opening_room(lr["opening"], lr["recess"] - mg)), occ_state)
+                # and inside its own opening it keeps only _OPENING_FIT off
+                # the opening's walls, not the margin: the opening is drawn
+                # for it (a USB-C socket in its slot has ~0.1 mm a side), so
+                # held a margin off them it never got in (a scanner's socket
+                # sat 11.75 mm behind its port, 0.3 asked). Half a cell more
+                # on the grid; the exact refine holds the fit.
+                sl = mg - _OPENING_FIT + 0.5 * G.h
+                room = np.minimum(np.maximum(room_base, opening_room(lr["opening"], lr["recess"] - mg + sl) + sl),
+                                  occ_state)
             else:
                 room = np.minimum(room_base, occ_state)
             if lr is not None and lr["kind"] == "under":
@@ -746,15 +760,17 @@ def _opening_room(o: dict, pts, e, recess: float):
     return np.minimum(r, -(e + float(recess)))
 
 
-def _exact_room(pts, exterior, skin, op_shapes, fixed, given_shapes, others, opening=None, recess=0.3):
+def _exact_room(pts, exterior, skin, op_shapes, fixed, given_shapes, others, opening=None, recess=0.3, slack=0.0):
     """Exact room (mm) at points: off the cavity wall, fixed geometry, given
-    parts and other placed parts; an opening adds room inside it."""
+    parts and other placed parts; an opening adds room inside it (`opening`,
+    the part's own, `slack` mm more: what it may come closer to its walls
+    than to anything else)."""
     e = exterior.sdf(pts)
     r = -(e + skin)
     for o in op_shapes.values():
         r = np.maximum(r, _opening_room(o, pts, e, 0.3))
     if opening is not None:
-        r = np.maximum(r, _opening_room(op_shapes[opening], pts, e, recess))
+        r = np.maximum(r, _opening_room(op_shapes[opening], pts, e, recess + slack) + slack)
     for _, sh in fixed:
         r = np.minimum(r, sh.sdf(pts))
     for sh in given_shapes.values():
@@ -776,9 +792,11 @@ def _refine(g, R, t, lr, G, exterior, skin, op_shapes, fixed, given_shapes, pose
     recess = lr["recess"] if lr is not None and lr["kind"] == "alignTo" else 0.3
     mg = g.margin
 
+    sl = mg - _OPENING_FIT if opening is not None else 0.0
+
     def ok(tt):
         r = _exact_room(pts0 @ R.T + tt, exterior, skin, op_shapes, fixed, given_shapes, others, opening,
-                        recess - mg)
+                        recess - mg, sl)
         return float(r.min()) >= mg - 1e-6
 
     t = np.asarray(t, float)
@@ -807,9 +825,12 @@ def _refine(g, R, t, lr, G, exterior, skin, op_shapes, fixed, given_shapes, pose
         if best is None:
             return t, False
         t = t + best
-    for d in pushes:
+    for i, d in enumerate(pushes):
+        # into its opening as far as the exact room allows: the recess
+        # stops it (the grid may have left it short of the opening's mouth)
+        reach = 3 * G.h if not (i == 0 and opening is not None) else 30 * G.h
         step, moved = 0.5 * G.h, 0.0
-        while step > 0.02 and moved < 3 * G.h:
+        while step > 0.02 and moved < reach:
             if ok(t + step * d):
                 t = t + step * d
                 moved += step
@@ -869,6 +890,7 @@ def _layout(s, gb, byid, meshes, given, exterior, skin, op_shapes, fixed, given_
             # measured: how far the part's outermost point stands back from
             # the exterior across the opening (the brief's `recess`)
             rec["recess"] = round(float(o["plane"] - (pts @ o["axis"]).max()), 3)
+            rec["recessAsked"] = float(al.get("recess", 0.3))
     mass = sum(float(byid[m].get("mass") or 0.0) for m in out)
     com = None
     if mass > 0:

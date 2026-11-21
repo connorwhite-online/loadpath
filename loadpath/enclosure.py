@@ -64,6 +64,8 @@ _FACES = ["-z", "+z", "-x", "+x", "-y", "+y"]
 # opening's surround: enough skin to fix the opening's own frame, local
 # enough that the shell bending on the hand is left out)
 SURROUND_MM = 10.0
+# mm an aligned part may sit off its asked recess before the report says so
+RECESS_TOL = 0.5
 
 
 def _inner_centre(exterior, lo, hi, n: int = 28):
@@ -389,6 +391,18 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         fixed.append((fid, _fine_mesh_shape(spec, None)))
         preserve.append({"id": fid, "shape": spec})
 
+    # a brief keep-out with partsOut: space nothing may stand in, a part no
+    # more than the designed material (a camera's light path to its
+    # window). Placement keeps every part out of it; the study keeps the
+    # material out as any keep-out. Without it a keep-out only holds the
+    # material out (a board's bay, which the board sits in).
+    parts_out = []
+    for i, k in enumerate(b.get("keepOut") or []):
+        if isinstance(k, dict) and k.get("partsOut"):
+            from .shapes import shape_from_spec
+            parts_out.append((k.get("id") or f"keepOut-{i}",
+                              shape_from_spec(_abs_paths(k["shape"], base_dir), None)))
+
     comps = []
     for i, c in enumerate(b.get("components") or []):
         c = dict(c)
@@ -471,7 +485,8 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     aware = pl_opts.get("assemblyAware", True) and not split
 
     def lay_out(turning):
-        return place(exterior, comps, skin=t_skin, openings=op_place, fixed=fixed, rules=pl_opts, judge=judge,
+        return place(exterior, comps, skin=t_skin, openings=op_place, fixed=fixed + parts_out, rules=pl_opts,
+                     judge=judge,
                      pitch=pl_opts.get("pitch"), beam=int(pl_opts.get("beam", 3)),
                      margin=float(pl_opts.get("margin", 0.5)), on_progress=on_progress,
                      access=(lambda *a: access(*a, turning=turning)) if aware else None)
@@ -553,7 +568,8 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         if ins is not None and not c.get("external"):
             k["insertFrom"] = ins
         keep.append(k)
-    keep += _abs_paths(list(b.get("keepOut") or []), base_dir)
+    keep += [{k_: v_ for k_, v_ in k.items() if k_ != "partsOut"} if isinstance(k, dict) else k
+             for k in _abs_paths(list(b.get("keepOut") or []), base_dir)]
     for k, v in mounts.items():
         preserve.append({"id": f"mount-{k}", "shape": v["shape"]})
         # a board on screws: the taps, shanks, heads and drivers kept clear
@@ -827,6 +843,14 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     from .schema import lint
     issues = [x for x in lint(study, "study") if x["level"] == "error"]
     placement = {k: {kk: vv for kk, vv in v.items()} for k, v in lay["components"].items()}
+    for k, v in placement.items():
+        # a part aligned to an opening that did not get to its asked depth:
+        # a plug may not reach a socket set back in the wall
+        if v.get("recess") is not None and v.get("recessAsked") is not None \
+                and abs(v["recess"] - v["recessAsked"]) > RECESS_TOL:
+            warnings.append(f"{k}: sits {v['recess']:.2f} mm behind its opening, {v['recessAsked']:g} asked: it "
+                            "could not get further in (the opening narrower than the part, or something in the "
+                            "way). Check the part's shape against the opening's")
     report = {"placement": {"components": placement, "order": pr["order"], "given": pr["given"],
                             "centerOfMass": lay["centerOfMass"], "mass": lay["mass"], "pitch": pr["pitch"],
                             "layoutsTried": tried, "blocked": pr["blocked"], "seconds": pr["seconds"]},
