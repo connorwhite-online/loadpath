@@ -239,5 +239,5 @@
  "pass": {
   "safetyFactor": 2
  },
- "note": "Safety factor 3 on pressure is written as 1.5 x the pressure in its own case at the study's factor of 2."
+ "note": "Safety factor 3 on pressure is written as 1.5 x the pressure in its own case at the study's factor of 2. As written the flange is held in x over its whole face, as if glued, against a tug that tips it (check says so). Kept; the twin hose-elbow-petg-b holds x under the four screws only."
 }

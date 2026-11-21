@@ -48,6 +48,7 @@ python -m loadpath.evals.heldout table runs/NAME
 | 2026-11-20 | tet check judges the worst direction (pull request 19): drawer pull re-run | 7 of 11 | 6 of 11 | 10 of 11 | Drawer pull 12.0 g at SF 2.20 in the worst direction. Its 10.5 g in the row above was a false pass (0.64); its 17.8 g in the row before was a real one |
 | 2026-11-20 | second batch of six (snap fits, ducts, enclosure parts), cold on main c9b09b4 | 1 of 6 | 5 of 6 | 1 of 6 | Tool clip first try; latch hook, hose elbow, box cover, wall box pass with a check warning; fan duct refused at check (twins -b refused, -c passes 14.1 g) |
 | 2026-11-20 | wall sets the cell; a tap's floor is not a closed bore: elbow, cover, wall box re-run | 2 of 6 | 5 of 6 | 2 of 6 | Box cover first try, 28.5 g; elbow's wall warning gone; wall box still 1.9 cells and 57 min |
+| 2026-11-21 | main c95c289: fan duct -c re-run; twins held under their screws (latch hook -b, hose elbow -b) | | | | Fan duct 15.3 g with every design kept, 65 min; both twins clean check and pass (1.2 g SF 2.15; 16.3 g SF 4.1): the glued passes were real, the elbow's margin 25% high |
 
 The scorer leaves a warning about this machine's free memory out of the
 "clean check" count: it is about the machine, not the study. A diagnosis
