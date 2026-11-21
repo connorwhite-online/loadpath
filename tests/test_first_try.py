@@ -277,6 +277,9 @@ def test_a_push_support_carries_pressure_and_lets_go_where_it_is_lifted():
     lever needs about the line, and its gaps and forces are never both
     there. Pressed down instead, the seat carries the lever on the load's
     side. Held "fix: all" the face would pull."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
     import trimesh
 
     from loadpath import pushseat
@@ -297,9 +300,11 @@ def test_a_push_support_carries_pressure_and_lets_go_where_it_is_lifted():
         hm, bc = g.hm, g.bc
         line = np.unique(hm.node_xyz[bc.fixed[2::3], 0])
         assert len(line) == 1 and np.ptp(hm.node_xyz[bc.fixed[0::3], 2]) < 0.6, line   # a hinge line, no clamp
-        _, us, lam = pushseat.solve(lambda r: _solve_grid(st, g, st.elastic(st.material), st.material.E, r),
-                                    bc.loads, bc.seats, hm.node_xyz, hm.n_dof)
         ps = pushseat.patches(bc.seats, hm.node_xyz, hm.n_dof)
+        ks, held = pushseat.hold(ps, hm.node_xyz, g.pitch)
+        gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=held)})
+        _, us, lam = pushseat.solve(lambda r: _solve_grid(st, gs, st.elastic(st.material), st.material.E, r),
+                                    bc.loads, ps, st.material.E * ks)
         x = np.array([np.abs(p[2::3]) @ hm.node_xyz[:, 0] / np.abs(p[2::3]).sum() for p in ps])
         gap = np.array([p @ us[0] for p in ps])
         arm = float(np.mean(hm.node_xyz[bc.loads[0][2::3] != 0, 0])) - line[0]
@@ -311,6 +316,51 @@ def test_a_push_support_carries_pressure_and_lets_go_where_it_is_lifted():
     assert abs(-(lam * x).sum() / (50.0 * arm) - 1) < 0.03, (lam * x).sum()
     lam, x, gap, arm = plate(-50.0)
     assert lam[x < -10].sum() < 1e-6 and abs((lam * x).sum() / (50.0 * arm) - 1) < 0.03, (lam, x)
+
+
+def test_a_part_that_only_its_seat_stops_is_solved_and_one_that_lifts_off_is_refused():
+    """A plate on a seat with one hinge line: nothing but the seat stops it
+    rocking, so the stiffness without the seat is singular. The check
+    solves it all the same (the seat is held on springs for the solves and
+    they are taken out again exactly, whatever their stiffness), the seat's
+    force is in the report and balances the hinge's, and a load that lifts
+    the plate with nothing to hold it down is said to."""
+    import trimesh
+
+    from loadpath import pushseat
+    from loadpath.verify import verify_part
+
+    def study(fix_z, fz):
+        hinge = [{"shape": _box([19.9, 0, -0.1], [20.1, 10, 4.1]), "fix": "y"},
+                 {"shape": _box([19.9, 0, -0.5], [20.1, 10, 0.1]), "fix": "x"}]
+        if fix_z:
+            hinge.append({"shape": _box([19.9, 0, -0.1], [20.1, 10, 4.1]), "fix": "z"})
+        return study_from_dict({
+            "designSpace": [_box([0, 0, 0], [60, 10, 4])],
+            "supports": hinge + [{"shape": _box([0, 0, -0.5], [60, 10, 0.1]), "push": "+z"}],
+            "loads": [{"shape": _box([58, 0, 3.9], [60, 10, 4.1]), "force": [0, 0, fz]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}})
+
+    m = trimesh.creation.box(extents=[60, 10, 4])
+    m.apply_translation([30, 5, 2])
+    seat, was = [], pushseat.HOLD
+    try:
+        for hold in (0.1, 1.0):
+            pushseat.HOLD = hold
+            rows = verify_part(study(True, 50.0), m)["reactions"]
+            fz = [r["cases"][0]["force"][2] for r in rows]
+            assert fz[3] < -50 and abs(sum(fz) - 50.0) < 0.05, fz       # pried: the heel bears, the hinge holds both
+            seat.append(fz[3])
+    finally:
+        pushseat.HOLD = was
+    assert abs(seat[0] / seat[1] - 1) < 5e-3, seat                      # the solves' own accuracy
+    rows = verify_part(study(False, -50.0), m)["reactions"]            # lying on the seat, pressed down
+    assert abs(rows[-1]["cases"][0]["force"][2] + 50.0) < 0.05, rows[-1]
+    try:
+        verify_part(study(False, 50.0), m)
+        raise AssertionError("a plate lifted off its seat was solved")
+    except ValueError as exc:
+        assert "lifts the part off its seat" in str(exc)
 
 
 def test_a_push_support_is_refused_with_fix_or_a_force_of_unknown_direction():
