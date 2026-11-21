@@ -5,10 +5,13 @@ before an optimization is spent on it, a warning means the study is wrong
 and not that the grid is coarse, and a named print direction is not a ban
 on supports. Check-level fixtures, a few seconds. Run: `python3 tests/test_first_try.py`.
 """
+import json
 import sys
 import time
 import traceback
 from pathlib import Path
+
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -266,6 +269,64 @@ def test_a_searchs_candidates_read_a_pinned_wall_at_two_cut_cells():
     assert abs(grid() - 0.4) < 1e-9
     assert abs(grid(shell_cells=SEARCH_SHELL_CELLS) - 0.8) < 1e-9
     assert abs(grid(shell_cells=SEARCH_SHELL_CELLS, cut_cells=False) - 0.4) < 1e-9
+
+
+def test_a_push_support_carries_pressure_and_lets_go_where_it_is_lifted():
+    """A plate lying on a seat, held down along one line and pried up at
+    its far end: the seat pushes only on the heel, with the moment the
+    lever needs about the line, and its gaps and forces are never both
+    there. Pressed down instead, the seat carries the lever on the load's
+    side. Held "fix: all" the face would pull."""
+    import trimesh
+
+    from loadpath import pushseat
+    from loadpath.verify import _analysis_grid, _solve_grid
+
+    def plate(fz):
+        st = study_from_dict({
+            "designSpace": [_box([0, 0, 0], [60, 10, 4])],
+            "supports": [{"shape": _box([19.9, 0, -0.1], [20.1, 10, 4.1]), "fix": "z"},
+                         {"shape": _box([19.9, 0, -0.1], [20.1, 10, 4.1]), "fix": "y"},
+                         {"shape": _box([19.9, 0, -0.5], [20.1, 10, 0.1]), "fix": "x"},
+                         {"shape": _box([0, 0, -0.5], [60, 10, 0.1]), "push": "+z"}],
+            "loads": [{"shape": _box([58, 0, 3.9], [60, 10, 4.1]), "force": [0, 0, fz]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}})
+        m = trimesh.creation.box(extents=[60, 10, 4])
+        m.apply_translation([30, 5, 2])
+        g = _analysis_grid(st, m, float(m.volume), 20000)
+        hm, bc = g.hm, g.bc
+        line = np.unique(hm.node_xyz[bc.fixed[2::3], 0])
+        assert len(line) == 1 and np.ptp(hm.node_xyz[bc.fixed[0::3], 2]) < 0.6, line   # a hinge line, no clamp
+        _, us, lam = pushseat.solve(lambda r: _solve_grid(st, g, st.elastic(st.material), st.material.E, r),
+                                    bc.loads, bc.seats, hm.node_xyz, hm.n_dof)
+        ps = pushseat.patches(bc.seats, hm.node_xyz, hm.n_dof)
+        x = np.array([np.abs(p[2::3]) @ hm.node_xyz[:, 0] / np.abs(p[2::3]).sum() for p in ps])
+        gap = np.array([p @ us[0] for p in ps])
+        arm = float(np.mean(hm.node_xyz[bc.loads[0][2::3] != 0, 0])) - line[0]
+        return lam[0], x - line[0], gap, arm
+
+    lam, x, gap, arm = plate(50.0)
+    assert lam.min() >= 0 and gap.min() > -1e-8 and np.abs(lam * gap).max() < 1e-6
+    assert lam[x > 0].sum() < 1e-6 < lam[x < 0].sum()                      # the heel alone
+    assert abs(-(lam * x).sum() / (50.0 * arm) - 1) < 0.03, (lam * x).sum()
+    lam, x, gap, arm = plate(-50.0)
+    assert lam[x < -10].sum() < 1e-6 and abs((lam * x).sum() / (50.0 * arm) - 1) < 0.03, (lam, x)
+
+
+def test_a_push_support_is_refused_with_fix_or_a_force_of_unknown_direction():
+    base = {"designSpace": [_box([0, 0, 0], [60, 10, 4])],
+            "supports": [{"shape": _box([19, 0, -0.1], [21, 10, 4.1])},
+                         {"shape": _box([0, 0, -0.2], [60, 10, 0.05]), "push": "+z"}],
+            "loads": [{"shape": _box([58, 0, 3.9], [60, 10, 4.1]), "force": [0, 0, 50]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}}
+    assert study_from_dict(base).supports[1].push == (0.0, 0.0, 1.0)
+    bad = json.loads(json.dumps(base))
+    bad["supports"][1]["fix"] = "z"
+    try:
+        study_from_dict(bad)
+        raise AssertionError("push with fix was accepted")
+    except ValueError as exc:
+        assert "push" in str(exc)
 
 
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]

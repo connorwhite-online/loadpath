@@ -166,6 +166,9 @@ class Support:
     # (verify.support_reactions); with a cap it is held like the safety factor.
     max_force: float | None = None
     max_moment: float | None = None
+    # A seat (pushseat.py): the unit direction this support pushes the part in,
+    # and nothing else. It holds no pull and no sliding.
+    push: tuple[float, float, float] | None = None
 
 
 @dataclass
@@ -1669,7 +1672,18 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                 and (d.get("goal") or {}).get("maxDeflection") is None:
             raise ValueError(f"supports[{i}]: maxForce / maxMoment are held by the search for the lightest part, "
                              "which needs goal.safetyFactor or maxDeflection")
-        supports.append(Support(region, shape, fix_t, pin, *caps))
+        push = None
+        if s.get("push") is not None:
+            if "fix" in s or any(c is not None for c in caps):
+                raise ValueError(f"supports[{i}]: a push support holds only along its push; leave out fix, "
+                                 "maxForce and maxMoment")
+            try:
+                push = tuple(float(v) for v in _axis_vector(s["push"], ""))
+            except ValueError:
+                raise ValueError(f"supports[{i}].push is the way the seat pushes the part: 'x', '-z' or a "
+                                 "vector [x, y, z]") from None
+            fix_t = (False, False, False)
+        supports.append(Support(region, shape, fix_t, pin, *caps, push))
 
     cases_in = d.get("loadCases")
     if cases_in is None and "loads" in d:

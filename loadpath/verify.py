@@ -2031,7 +2031,17 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     axis_bond = np.zeros(3)
     spreads = bc.spreads or [None] * len(study.load_cases)
 
+    seat_forces = []
+
     def solve(moduli, rhs):
+        if bc.seats:
+            # supports that only push (pushseat.py): their forces are solved with the cases
+            from . import pushseat
+
+            stiff, us, lam = pushseat.solve(lambda r: _solve_grid(study, g, study.elastic(mat), moduli, r), rhs,
+                                         bc.seats, hm.node_xyz, hm.n_dof)
+            seat_forces[:] = lam
+            return stiff, us
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
 
     # Stress is read against strength as an average over the material's own

@@ -288,6 +288,11 @@ _SUPPORT = {
                                     "e.g. a bolt or bearing rating; reported always as report.reactions"},
         "maxMoment": {"type": "number", "exclusiveMinimum": 0,
                       "description": "N·mm: the most moment this support may carry about its centroid"},
+        "push": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3],
+                 "description": "A seat: the face rests on a wall, a table or a mating part, which pushes the "
+                                "part this way ('+z' or a vector) and holds nothing else: no pull where the "
+                                "load lifts the face off, no sliding. Hold the fasteners with their own "
+                                "supports. Not with fix, maxForce or maxMoment"},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,
