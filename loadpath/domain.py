@@ -1338,6 +1338,32 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                 forced |= np.abs(np.asarray(b).reshape(-1, 3)).max(axis=1) > 0
     if not forced.any():
         forced = None
+    def strap(touch, shape, thick):
+        """The cells within `thick` of a loaded keep-out's surface, behind the
+        cells `touch` that carry it (and the level the mesh is cut at there)."""
+        # by distance from the loaded surface itself, not by layers
+        # of cells: the strap's back is then a surface (level_hint,
+        # which the mesh is cut from), not the grid's staircase
+        reach = int(np.ceil(thick / pitch)) + 1
+        g = np.zeros(dims, bool)
+        g[tuple(mesh.elem_ijk[touch].T)] = True
+        g = ndimage.binary_dilation(g, structure=ndimage.generate_binary_structure(3, 3),
+                                    iterations=reach) & active_grid
+        near = np.flatnonzero(g[tuple(mesh.elem_ijk.T)])
+        dist = np.abs(shape.sdf(mesh.elem_centers()[near]))
+        lv = np.clip(0.5 + (thick - dist) / pitch, 0.0, 1.0)
+        # ... and only behind the nodes that carry force: within a
+        # cell and a half of a cell that touches one
+        gt = np.zeros(dims, bool)
+        gt[tuple(mesh.elem_ijk[touch].T)] = True
+        side = ndimage.distance_transform_edt(~gt)[tuple(mesh.elem_ijk[near].T)] <= thick / pitch + 0.5
+        lv = np.where(side, lv, np.nan)
+        keep = np.isfinite(lv) & (np.isnan(level_hint[near]) | (lv > np.nan_to_num(level_hint[near], nan=0.0)))
+        level_hint[near[keep]] = lv[keep]
+        touch = np.zeros(mesh.n_elem, bool)
+        touch[near[np.nan_to_num(lv, nan=0.0) >= 0.5]] = True
+        return touch
+
     for ri, nodes in enumerate(bc.regions):
         touch = nodes[mesh.enode].any(axis=1)
         if not touch.any():
@@ -1377,27 +1403,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
             thick = max(float(study.min_member or 0.0), pitch)
             shape = _region_shape_of(study, ri)
             if shape is not None:
-                # by distance from the loaded surface itself, not by layers
-                # of cells: the strap's back is then a surface (level_hint,
-                # which the mesh is cut from), not the grid's staircase
-                reach = int(np.ceil(thick / pitch)) + 1
-                g = np.zeros(dims, bool)
-                g[tuple(mesh.elem_ijk[touch].T)] = True
-                g = ndimage.binary_dilation(g, structure=ndimage.generate_binary_structure(3, 3),
-                                            iterations=reach) & active_grid
-                near = np.flatnonzero(g[tuple(mesh.elem_ijk.T)])
-                dist = np.abs(shape.sdf(mesh.elem_centers()[near]))
-                lv = np.clip(0.5 + (thick - dist) / pitch, 0.0, 1.0)
-                # ... and only behind the nodes that carry force: within a
-                # cell and a half of a cell that touches one
-                gt = np.zeros(dims, bool)
-                gt[tuple(mesh.elem_ijk[touch].T)] = True
-                side = ndimage.distance_transform_edt(~gt)[tuple(mesh.elem_ijk[near].T)] <= thick / pitch + 0.5
-                lv = np.where(side, lv, np.nan)
-                keep = np.isfinite(lv) & (np.isnan(level_hint[near]) | (lv > np.nan_to_num(level_hint[near], nan=0.0)))
-                level_hint[near[keep]] = lv[keep]
-                touch = np.zeros(mesh.n_elem, bool)
-                touch[near[np.nan_to_num(lv, nan=0.0) >= 0.5]] = True
+                touch = strap(touch, shape, thick)
             else:
                 layers = int(np.ceil(thick / pitch))
                 if layers > 1:
@@ -1421,6 +1427,16 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                 step[tuple(np.where(np.arange(3) == thin, [2, 2, 2], 1))] = True
                 g = ndimage.binary_dilation(g, structure=step, iterations=layers - int(ext[thin])) & active_grid
                 touch = g[tuple(mesh.elem_ijk.T)]
+        elif ri >= len(study.supports) and float(study.min_member or 0.0) > pitch:
+            # A small loaded region lining a keep-out (a bore on its pin):
+            # one cell of pinned wall is thinner than anything the mesh
+            # keeps, so the analysis had a ring round the pin and the part
+            # did not (a fork's axle bores came out open under the axle).
+            # A wall that carries the load is a member: pinned to the
+            # minimum member's thickness, as the larger regions above are.
+            shape = _region_shape_of(study, ri)
+            if shape is not None:
+                touch = strap(touch, shape, float(study.min_member))
         pres_el = pres_el | touch
 
     found = _found_symmetry(study, mesh, dims, pres_el, bc, loads, weights, spreads)

@@ -360,6 +360,13 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    surfaces crossed, so the part was not delivered. Found by the held-out
    re-run, reproduced on a development elbow. Drawn shapes keep their
    place; only the optimizer's material is held to the member size.
+8. **A loaded bore lined thinner than the mesh keeps.** The cells lining
+   a small loaded keep-out (a pin's bore) were pinned one cell thick so
+   the load rests on material. A one-cell wall is not a member: the mesh
+   kept it only where the optimizer had backed it, and a fork's axle
+   bores came out open under the axle while the analysis had a full
+   ring. The lining is pinned a minimum member thick all round, as the
+   larger loaded regions of item 1 already were.
 
 ## Rule for work under this document
 

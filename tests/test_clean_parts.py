@@ -208,3 +208,31 @@ def test_a_drawn_wall_thinner_than_a_member_keeps_its_place():
     m, _ = reconstruct(s, d, np.ones(d.mesh.n_elem))
     r = sound_check(m)
     assert r["ok"], r.get("detail")
+
+
+def test_a_loaded_bore_is_lined_a_member_thick():
+    """A pin through a fork's two arms, pushing up. The cells lining the
+    bore are pinned so the load rests on material; one cell of them is a
+    wall thinner than the mesh keeps, so the analysis had a ring round the
+    pin and the part had half of one (a fork's axle bores, open under the
+    axle). The lining is a member: pinned to the minimum member's
+    thickness, all the way round."""
+    spec = {"name": "fork", "designSpace": [{"type": "box", "min": [-12, -14, -40], "max": [12, 14, 0]}],
+            "keepOut": [{"id": "pin", "shape": {"type": "cylinder", "center": [0, 0, -30], "axis": "y",
+                                                "length": 30, "r": 3.0}},
+                        {"id": "roller", "shape": {"type": "cylinder", "center": [0, 0, -30], "axis": "y",
+                                                   "length": 14, "r": 11.5}, "bore": False}],
+            "supports": [{"shape": {"type": "box", "min": [-12, -14, -1], "max": [12, 14, 0.5]}, "fix": "xyz"}],
+            "loadCases": [{"name": "up", "loads": [{"region": "pin", "force": [0, 0, 200],
+                                                    "distribution": "bearing"}]}],
+            "material": "petg", "process": {"type": "fdm", "buildDirection": "+z"},
+            "goal": {"volumeFraction": 0.3}, "resolution": {"pitch": 0.9}}
+    s = study_from_dict(spec)
+    d = build_domain(s)
+    c = d.mesh.elem_centers()
+    r = np.hypot(c[:, 0], c[:, 2] + 30)
+    wall = (np.abs(c[:, 1]) > 8.0) & (r > 3.0) & (r < 3.0 + s.min_member - 0.5 * d.pitch)
+    assert wall.sum() > 300 and np.asarray(d.preserve, bool)[wall].all()
+    # and no further: the rest is the optimizer's
+    beyond = (np.abs(c[:, 1]) > 8.0) & (r > 3.0 + s.min_member + d.pitch) & (r < 8.0)
+    assert not np.asarray(d.preserve, bool)[beyond].any()
