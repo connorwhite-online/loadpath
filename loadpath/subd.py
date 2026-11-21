@@ -185,16 +185,75 @@ class Hierarchy:
 def quad_cage(mesh, faces, crease=None, seed=0):
     """An all-quad cage over a closed triangle mesh with about `faces`
     quads (Instant Meshes, pure-quad mode), its vertices on the mesh."""
-    import os
-    import tempfile
-
-    import pyinstantmeshes as im
-
     # Instant Meshes' pure-quad mode subdivides its quad-dominant mesh once,
     # so ask for a quarter of the faces; the in-memory call hands back
     # triangles, so the quads come through an OBJ
     kw = dict(target_face_count=max(8, int(faces) // 4), pure_quad=True, deterministic=True,
               smooth_iterations=2, crease_angle=-1.0 if crease is None else float(crease))
+    v, f = _instant_quads(mesh, kw)
+    if not len(f):
+        # Instant Meshes lays its field over the input's own vertex graph:
+        # slivers (an optimized part's exact bores and mount faces are long
+        # triangles, aspect over 10^4 beside 0.07 mm ones) leave it thousands
+        # of singularities and nothing to extract (the arm link: 0 faces at
+        # every density). The cage only needs the shape, so the layout runs on
+        # an even resampling of it; the fit is to `mesh` itself.
+        v, f = _instant_quads(_even(mesh, 0.25 * float(np.sqrt(mesh.area / max(int(faces), 1)))), kw)
+    if not len(f):
+        raise ValueError("Instant Meshes extracted no faces")
+    return _cage_from_quads(mesh, v, f)
+
+
+def _even(mesh, step):
+    """`mesh` resampled with even triangles about `step` mm (marching cubes
+    of its signed distance), cached on it: the same surface for Instant
+    Meshes' layout, without slivers. The grid is refined until it keeps
+    every hole (same Euler number), at most about 12M points."""
+    cache = mesh.__dict__.setdefault("_lp_even", {})
+    lo, hi = mesh.bounds[0], mesh.bounds[1]
+    size = hi - lo
+    step = max(min(float(step), float(np.median(mesh.edges_unique_length))), float(np.prod(size) / 12e6) ** (1 / 3))
+    key = round(step, 4)
+    if key in cache:
+        return cache[key]
+    import trimesh
+    from skimage import measure
+
+    out = None
+    for _ in range(3):
+        pad = 2.0 * step
+        # off the grid by an odd fraction: a flat face lying exactly on a
+        # row of samples meshes as a torn sheet
+        axes = [np.arange(a - pad, b + pad + step, step) + 0.317 * step for a, b in zip(lo, hi)]
+        P = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+        S = _signed_distance(mesh, P).reshape([len(a) for a in axes])
+        vv, ff, _, _ = measure.marching_cubes(S, 0.0, spacing=(step, step, step))
+        out = trimesh.Trimesh(vv + [a[0] for a in axes], ff[:, ::-1], process=True)
+        if out.euler_number == mesh.euler_number or float(np.prod(size)) / (0.5 * step) ** 3 > 4e7:
+            break
+        step *= 0.5
+    cache[key] = out
+    return out
+
+
+def _signed_distance(mesh, P):
+    """Signed distance (negative inside) from points to a closed mesh."""
+    try:
+        import igl
+        return igl.signed_distance(P, np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64))[0]
+    except ImportError:
+        import trimesh
+        return -trimesh.proximity.signed_distance(mesh, P)
+
+
+def _instant_quads(mesh, kw):
+    """Instant Meshes' pure-quad remesh of `mesh`: (vertices, quads), quads
+    possibly empty."""
+    import os
+    import tempfile
+
+    import pyinstantmeshes as im
+
     with tempfile.TemporaryDirectory() as td:
         src, dst = os.path.join(td, "in.obj"), os.path.join(td, "out.obj")
         with open(src, "w") as fh:
@@ -218,8 +277,12 @@ def quad_cage(mesh, faces, crease=None, seed=0):
                     f.append([int(x.split("/")[0]) - 1 for x in line.split()[1:]])
     if any(len(x) != 4 for x in f):
         raise RuntimeError("quad remesh returned faces that are not quads")
-    v = np.asarray(v, float)
-    f = np.asarray(f, np.int64)
+    return np.asarray(v, float).reshape(-1, 3), np.asarray(f, np.int64).reshape(-1, 4)
+
+
+def _cage_from_quads(mesh, v, f):
+    """The quads cleaned (no repeated corner, unused vertices dropped,
+    oriented like `mesh`, holes closed, pinches split, doublets dissolved)."""
     f = f[np.array([len(set(x)) == 4 for x in f.tolist()], bool)]      # no repeated corner
     used = np.unique(f)
     remap = np.full(len(v), -1)
@@ -231,37 +294,98 @@ def quad_cage(mesh, faces, crease=None, seed=0):
     vol = np.einsum("ij,ij->i", t[:, 0], np.cross(t[:, 1], t[:, 2])).sum() / 6
     if vol * float(mesh.volume) < 0:
         f = f[:, ::-1]
-    v, f = _close_holes(v, f)
+    try:
+        v, f = _close_holes(v, f)
+    except ValueError:
+        # a hole with an odd number of sides cannot be tiled by quads on its
+        # own corners (every quad tiling has an even boundary); split every
+        # quad in four, which doubles every side, and close it then. The
+        # new points are on the old quads, off the surface; the fit moves them.
+        v, f = _close_holes(*_split_quads(v, f))
     v, f = _split_pinches(v, f)
     v, f = _dissolve_doublets(v, f)
     return Cage(v, f)
 
 
-def _close_holes(v, f):
-    """Instant Meshes can leave a small hole where its extraction gives up;
-    a hole with an even number of sides closes with quads round a new
-    centre vertex. Returns (v, f); an odd hole raises (the caller retries
-    at another density)."""
+def _thickness(mesh, n=4000, q=10):
+    """The part's thin walls and members, mm: the `q`th percentile of the
+    distance straight through it from points on its surface (inward
+    rays)."""
+    pts, fi = mesh.sample(n, return_index=True) if hasattr(mesh, "sample") else (None, None)
+    nrm = mesh.face_normals[fi]
+    o = pts - 1e-4 * float(np.linalg.norm(mesh.extents)) * nrm
+    try:
+        loc, ray, _ = mesh.ray.intersects_location(o, -nrm, multiple_hits=False)
+    except Exception:
+        return float(np.linalg.norm(mesh.extents))
+    if not len(ray):
+        return float(np.linalg.norm(mesh.extents))
+    d = np.linalg.norm(loc - o[ray], axis=1)
+    return float(np.percentile(d[d > 0], q)) if (d > 0).any() else float(np.linalg.norm(mesh.extents))
+
+
+def _split_quads(v, f):
+    """Each quad in four (edge midpoints, face centres; no smoothing):
+    an open quad mesh's every boundary loop doubles in length."""
     n = len(v)
     a = f.ravel()
     b = np.roll(f, -1, axis=1).ravel()
-    has = set((a * n + b).tolist())
-    nxt = {int(y): int(x) for x, y in zip(a, b) if int(y) * n + int(x) not in has}
-    if not nxt:
-        return v, f
-    new_v, new_f, seen = [], [], set()
-    for s0 in list(nxt):
-        if s0 in seen:
+    key = np.minimum(a, b) * n + np.maximum(a, b)
+    uk, inv = np.unique(key, return_inverse=True)
+    mids = 0.5 * (v[uk // n] + v[uk % n])
+    cen = v[f].mean(axis=1)
+    m = inv.reshape(-1, 4) + n                      # midpoint of edge (i, i+1)
+    c = np.arange(len(f)) + n + len(uk)
+    q = []
+    for i in range(4):
+        q.append(np.stack([f[:, i], m[:, i], c, m[:, (i - 1) % 4]], 1))
+    return np.vstack([v, mids, cen]), np.vstack(q)
+
+
+def _hole_loops(f):
+    """The boundary loops of an open quad mesh, each as its vertices in
+    order. Walked face by face round each corner, so a vertex two holes (or
+    one hole twice) pass through is followed the right way."""
+    a = f.ravel()
+    b = np.roll(f, -1, axis=1).ravel()
+    he = {(int(x), int(y)): i for i, (x, y) in enumerate(zip(a, b))}
+    prev = lambda h: 4 * (h // 4) + (h % 4 - 1) % 4  # noqa: E731
+    # hole edge (y -> x) for each face half-edge (x -> y) without a twin
+    open_ = {h for (x, y), h in he.items() if (y, x) not in he}
+    loops, used = [], set()
+    for h0 in open_:
+        if h0 in used:
             continue
-        loop, c = [s0], nxt[s0]
-        seen.add(s0)
-        while c != s0 and c not in seen and c in nxt and len(loop) < 64:
-            loop.append(c)
-            seen.add(c)
-            c = nxt[c]
-        if c != s0 or len(loop) % 2:
-            raise ValueError(f"quad cage has a hole of {len(loop)} sides")
+        loop, h = [], h0
+        for _ in range(len(open_) + 1):
+            used.add(h)
+            loop.append(int(b[h]))                    # the hole runs y -> x
+            # round x: from face edge x -> y back through faces to the next open one
+            x = int(a[h])
+            g = prev(h)                               # p -> x in the same face
+            for _ in range(64):
+                t = he.get((x, int(a[g])))            # twin x -> p
+                if t is None:
+                    break
+                g = prev(t)
+            # g is (p -> x) with no twin: the hole goes on x -> p, i.e. face edge g
+            h = g
+            if h == h0:
+                break
+        loops.append(loop)
+    return loops
+
+
+def _close_holes(v, f):
+    """Instant Meshes can leave a small hole where its extraction gives up;
+    a hole with an even number of sides closes with quads round a new
+    centre vertex. Returns (v, f); an odd or very long hole raises."""
+    n = len(v)
+    new_v, new_f = [], []
+    for loop in _hole_loops(f):
         L = len(loop)
+        if L % 2 or L > 64:
+            raise ValueError(f"quad cage has a hole of {L} sides")
         if L == 4:
             new_f.append(loop)
             continue
@@ -269,6 +393,8 @@ def _close_holes(v, f):
         new_v.append(v[loop].mean(axis=0))
         for i in range(0, L, 2):
             new_f.append([ci, loop[i], loop[(i + 1) % L], loop[(i + 2) % L]])
+    if not new_f:
+        return v, f
     if new_v:
         v = np.vstack([v, new_v])
     return v, np.vstack([f, np.asarray(new_f, np.int64)])
@@ -583,7 +709,12 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
     else:
         tol, why = pick_tolerance(accuracy, nz)
     area = float(mesh.area)
-    n = int(faces) if faces else max(96, int(area / (ext / 12.0) ** 2))
+    # a face no wider than the part's thin walls and members: a cage
+    # coarser than a member cannot follow it (Instant Meshes then bridges
+    # the holes between members, or leaves holes of its own); ext / 12 on
+    # a chunky part
+    edge = min(ext / 12.0, 1.2 * _thickness(mesh))
+    n = int(faces) if faces else min(max_faces, max(96, int(area / edge ** 2)))
     data = _samples(mesh, 300_000)
     check = _samples(mesh, 200_000, seed=1)
     tries = []

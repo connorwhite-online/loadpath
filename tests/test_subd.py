@@ -139,6 +139,26 @@ def test_cage_repairs():
     subd.Cage(v3, f3)
 
 
+def test_cage_over_slivers():
+    """A plate with an exact bore and boss (manifold booleans: long thin
+    triangles across the flats, as an optimized part's bores and mount
+    faces are) gives Instant Meshes nothing to extract; the cage is laid
+    over an even resampling of the same shape instead and keeps its hole."""
+    import manifold3d as m3d
+
+    from loadpath.shapes import trimesh_from_manifold
+    b = (m3d.Manifold.cube([40, 20, 8], True) - m3d.Manifold.cylinder(20, 5, 5, 256, True)
+         + m3d.Manifold.cylinder(8, 10, 10, 256, True).translate([20, 0, 0]))
+    m = trimesh_from_manifold(b)
+    v, f = subd._instant_quads(m, dict(target_face_count=300, pure_quad=True, deterministic=True,
+                                       smooth_iterations=2, crease_angle=-1.0))
+    assert not len(f)            # the raw mesh: nothing (so this test still tests the fallback)
+    cage = subd.quad_cage(m, 1200)
+    tri = np.concatenate([cage.Q[:, [0, 1, 2]], cage.Q[:, [0, 2, 3]]])
+    assert trimesh.Trimesh(cage.V, tri, process=False).euler_number == m.euler_number == 0
+    assert len(cage.Q) > 400
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

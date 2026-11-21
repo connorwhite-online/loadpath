@@ -1976,8 +1976,11 @@ STUDY_SCHEMA = {
                                "description": "Round every concave edge of the organic body by this radius (mm): "
                                               "a closing in distance space. Default half the minMember, at least 1."},
                      "fillet": {"type": "number", "minimum": 0,
-                                "description": "Fillet radius (mm) where the organic body meets preserved "
-                                               "geometry. Default 1.5 x minMember, at least 3."},
+                                "description": "Fillet size (mm) where the organic body meets preserved "
+                                               "geometry, as the round of the same reach; the blend is "
+                                               "curvature continuous where it starts (G2) and its "
+                                               "tightest radius is 0.29 x this. Default 1.5 x minMember, "
+                                               "at least 3."},
                      "smooth": {"type": "number", "minimum": 0,
                                 "description": "Gaussian smoothing of the refined field, in fine cells (default 0.9)."},
                      "taubin": {"type": "integer", "minimum": 0,

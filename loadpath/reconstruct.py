@@ -94,6 +94,29 @@ def _smooth_union(a, b, k):
     return np.minimum(a, b) - h * h * k * 0.25
 
 
+# A blend made by `_smooth_union` is tangent to both surfaces where it starts
+# but its curvature jumps there, from the surface's own to about a third of
+# its peak in one step: a reflection kinks along both edges of every junction
+# (G1). `_g2_union`'s correction, k (0.24 h^3 - 0.044 h^5), starts with zero
+# value, slope and curvature, so the blend leaves each surface with that
+# surface's own curvature (G2); the coefficients are the C2 quintic with the
+# lowest peak curvature for the material it adds (a right-angle corner:
+# 3.12 / k at the quadratic's area, 2.87 / k for the quadratic). At the same k
+# its tightest radius is 0.253 k against the quadratic's 0.348 k, so a blend
+# that is to be no tighter, and so raise stress no more, uses k x G2_SCALE.
+G2_SCALE = 0.348 / 0.2526
+
+
+def _g2_union(a, b, k):
+    """Smooth minimum of two signed distances that is curvature continuous
+    (C2) where the blend starts: their union with a G2 fillet. Same reach
+    (|a - b| < k) as `_smooth_union`; see G2_SCALE for the same tightest
+    radius."""
+    h = np.maximum(k - np.abs(a - b), 0.0) / k
+    h3 = h * h * h
+    return np.minimum(a, b) - k * h3 * (0.24 - 0.044 * h * h)
+
+
 def _field_distance(fine, step, level=0.5):
     """Signed distance (mm, negative inside) to the `level` surface of a
     smooth density field: exact distance transforms away from the surface,
@@ -918,9 +941,13 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # met bosses in a hard crease (the robot arm's wrist yoke, QA 10/28). The
         # exact union in reconstruct() then adds the preserved shapes, which
         # the fillet meets tangentially, so it leaves no crease of its own.
+        # (`blend` is the equivalent round: the tightest radius of the blend
+        # is 0.29 x it, 0.87 mm at the default 3 mm, close to the 0.86 mm
+        # over which PA 12 averages stress at a notch, failure.material_length;
+        # G2: the same tightest radius, curvature continuous at its edges)
         sd = sdfs.min(preserve).reshape(fine.shape)
-        k = o.blend / 1.2
-        du = _smooth_union(_field_distance(fine, step, o.level), sd, k)
+        k = o.blend / 1.2 * G2_SCALE
+        du = _g2_union(_field_distance(fine, step, o.level), sd, k)
         # back to density, over the same width the smoothing gave the field
         width = 2.0 * step
         filleted = np.clip(o.level - du / (2.0 * width), 0.0, 1.0)
@@ -940,7 +967,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # boundary: that filled a push pad's whole cavity.
         sk = sdfs.min(skin).reshape(fine.shape)
         inset = min(0.35, 0.3 * float(o.skin_fillet))
-        du = _smooth_union(_field_distance(fine, step, o.level), sk + inset, o.skin_fillet)
+        du = _g2_union(_field_distance(fine, step, o.level), sk + inset, o.skin_fillet * G2_SCALE)
         width = 2.0 * step
         filleted = np.clip(o.level - du / (2.0 * width), 0.0, 1.0)
         # only the fillets: not the inset skin itself, which the exact skin

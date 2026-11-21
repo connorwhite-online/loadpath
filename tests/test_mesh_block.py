@@ -54,6 +54,34 @@ def test_mesh_block_rounds_the_joint():
     assert at(m1, *far) <= at(m0, *far) + 20                               # ... and not along the plain bar
 
 
+def _corner_profile(union, k, step=0.002):
+    """The blended right-angle corner of two half-planes (x < 0, y < 0) as
+    a curve: (points, curvature)."""
+    from skimage import measure
+    x = np.arange(-0.5, 3.0 * k, step)
+    X, Y = np.meshgrid(x, x, indexing="ij")
+    c = max(measure.find_contours(union(X, Y, k), 0.0), key=len) * step + x[0]
+    d1 = np.gradient(c, axis=0)
+    d2 = np.gradient(d1, axis=0)
+    kap = np.abs(d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0]) / np.linalg.norm(d1, axis=1) ** 3
+    return c, kap
+
+
+def test_junction_blend_is_g2_and_no_tighter():
+    """The blend where members meet preserved geometry leaves each surface
+    with that surface's own curvature (zero on a flat), where the old one
+    jumped to a third of its peak in one step; scaled by G2_SCALE its
+    tightest radius is the old one's, so it raises stress no more."""
+    from loadpath.reconstruct import G2_SCALE, _g2_union, _smooth_union
+    _, kq = _corner_profile(_smooth_union, 1.0)
+    c, kg = _corner_profile(_g2_union, G2_SCALE)
+    assert abs(kg.max() - kq.max()) / kq.max() < 0.03, (kg.max(), kq.max())
+    on = kq > 1e-3
+    assert kq[on][1] > 0.1 * kq.max()                      # the old blend: a step in curvature at its edge
+    edge = c[:, 0] > 0.97 * G2_SCALE                       # the new one, along the last 3% of its reach
+    assert kg[edge].max() < 0.02 * kg.max()                 # rises from zero
+
+
 if __name__ == "__main__":
     test_mesh_block_rounds_the_joint()
     print("ok")

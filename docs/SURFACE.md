@@ -22,7 +22,15 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
 2. **Quad cage.** Instant Meshes (Jakob et al. 2015, BSD, `pyinstantmeshes`)
    lays an all-quad mesh whose edges follow the principal curvature
    directions. Its occasional leftovers (a small hole, a pinched vertex, a
-   doublet) are repaired.
+   doublet) are repaired: holes are traced face by face round each corner,
+   so one that passes a vertex twice is followed right, and an odd-sided
+   hole (no quad tiling has an odd boundary) is closed after splitting every
+   quad in four. Slivers in the input (exact bores and mount faces cut by
+   manifold booleans are long triangles beside 0.07 mm ones) leave Instant
+   Meshes nothing to extract at any density; the cage is then laid over an
+   even resampling of the same shape and fitted to the original. The first
+   density comes from the part: faces no wider than 1.2 x its thin walls and
+   members (10th percentile of the distance straight through it).
 3. **Fit.** The cage's control points move until its Catmull-Clark limit
    surface lies on the mesh: least squares between exact limit points and
    their closest points on the mesh, both ways, with correspondences across
