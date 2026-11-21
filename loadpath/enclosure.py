@@ -309,6 +309,29 @@ def _offset_below(H, step: float, t: float):
     return np.where(steep, H + t, H - t)
 
 
+def _abs_paths(v, base_dir):
+    """A copy of a brief block with its shapes' file paths made absolute:
+    a relative path is the brief's (its folder), while the study written
+    out resolves against its own folder (_localize copies them there)."""
+    import copy
+    v = copy.deepcopy(v)
+    if base_dir is None:
+        return v
+
+    def walk(x):
+        if isinstance(x, dict):
+            if x.get("type") in ("mesh", "sdf", "brep") and isinstance(x.get("path"), str) \
+                    and not os.path.isabs(x["path"]):
+                x["path"] = os.path.abspath(os.path.join(base_dir, x["path"]))
+            for y in x.values():
+                walk(y)
+        elif isinstance(x, list):
+            for y in x:
+                walk(y)
+    walk(v)
+    return v
+
+
 def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None) -> dict:
     """Brief in; a study, a placement and a report out (files under
     out_dir: cad/<component>.stl in product coordinates, the study). See the
@@ -530,7 +553,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         if ins is not None and not c.get("external"):
             k["insertFrom"] = ins
         keep.append(k)
-    keep += list(b.get("keepOut") or [])
+    keep += _abs_paths(list(b.get("keepOut") or []), base_dir)
     for k, v in mounts.items():
         preserve.append({"id": f"mount-{k}", "shape": v["shape"]})
         # a board on screws: the taps, shanks, heads and drivers kept clear
@@ -580,7 +603,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     # what verify will find under a support or a mount: the fixed parts
     # when the brief has them (they are what gets checked), else the skin
     material = [sh for _, sh in fixed]
-    supports = b.get("supports")
+    supports = _abs_paths(b.get("supports"), base_dir)
     if not supports:
         pts, moved = _support_points(exterior, centre, rest, r_sup, material, lo, hi)
         supports = [{"shape": {"type": "sphere", "center": _r(q), "r": round(r_sup, 3)}} for q in pts]
@@ -595,7 +618,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         gone = {f"mount-{k}" for k in mounts if k not in kept}
         preserve[:] = [p for p in preserve if p["id"] not in gone]
         mounts = kept
-    cases = list(b.get("loadCases") or [])
+    cases = _abs_paths(list(b.get("loadCases") or []), base_dir)
     loads = b.get("loads") or {}
 
     def face_slab(f, depth):

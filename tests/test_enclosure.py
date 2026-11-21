@@ -624,3 +624,15 @@ if __name__ == "__main__":
                 print("FAIL", name, flush=True)
                 traceback.print_exc()
     sys.exit(1 if fails else 0)
+
+
+def test_brief_keepout_mesh_paths_resolve_against_the_brief():
+    # a keepOut drawn as a mesh beside the brief: the study is written into
+    # the out folder, so its path must not be read against that folder
+    import os
+    from loadpath.enclosure import _abs_paths
+
+    k = [{"id": "light", "shape": {"type": "union", "shapes": [{"type": "mesh", "path": "light.stl"}]}, "bore": False}]
+    got = _abs_paths(k, "/briefs/scanner")
+    assert got[0]["shape"]["shapes"][0]["path"] == os.path.abspath("/briefs/scanner/light.stl")
+    assert k[0]["shape"]["shapes"][0]["path"] == "light.stl"   # the brief is not changed
