@@ -2066,6 +2066,19 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     ms = _weigh(pick.report)
 
     pending = [None, False]   # a probe's last part, awaiting its tet confirm
+    ratio_last = [None]       # the last constrained part's ratio over its target
+
+    def loose() -> bool:
+        """The box is a cost bound on a bonus the run may not need. When the
+        run has a clock (--time-limit) with room for another part, a stage
+        that already holds a lighter passing part, still loose (its last
+        ratio over the accepted band), goes on to the clock instead: a 4 g
+        snap clip's stage stopped at 1.20 over target with 22 of its 40
+        minutes unused, one step from the band."""
+        left = _time_left(should_stop)
+        if left is None or not won[0] or ratio_last[0] is None or ratio_last[0] < _CONSTRAINED_DONE or not done[0]:
+            return False
+        return left > (time.time() - start) / done[0]
 
     def judge(event, margin=None):
         if beaten[0] is None and _probe_beaten(goal, event, ms, margin):
@@ -2096,6 +2109,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
         if stage == "outcome":
             done[0] += 1
             pending[0], pending[1] = event, False
+        if event.get("reading") == "constrained" and event.get("ratio") is not None:
+            ratio_last[0] = float(event["ratio"])
         if event.get("reading") == "constrained" and far[0] is None and _out_of_reach(event.get("mass"), event.get("ratio"), ms):
             far[0] = (event["mass"], event["ratio"])
         if on_progress is not None:
@@ -2109,12 +2124,12 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
             pending[0] = None
         # past the outer band: one part, kept going only if it is promising
         short = outer and done[0] >= 1 and pending[0] is None and not promising[0]
-        return beaten[0] is not None or far[0] is not None or settled[0] or short \
+        return beaten[0] is not None or far[0] is not None or (settled[0] and not loose()) or short \
             or (should_stop is not None and should_stop())
 
     def stop():
         over = time.time() > deadline if quick.on() else _box_over(deadline, box, done[0])
-        return over or user_stop()
+        return (over and not loose()) or user_stop()
     # the run's own clock goes down with them (_deadline)
     user_stop.deadline = stop.deadline = _deadline(should_stop)
 
@@ -2377,6 +2392,9 @@ def _out_of_reach(mass, ratio, search_mass: float) -> bool:
         and mass / ratio > _PROBE_REACH * search_mass
 
 
+# A constrained part this close over its target (verified margin) ends the
+# constrained loop
+_CONSTRAINED_DONE = 1.12
 # The constrained method's relaxation while every run passes (_relax_step):
 # aimed at this ratio, inside the band a run is accepted in (under 1.12)
 _RELAX_AIM = 1.06
@@ -3715,7 +3733,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             # (what goal.method auto weighs against the search's part: _out_of_reach)
             emit({"reading": "constrained", "mass": _weigh(r), "ratio": float(ratio)})   # (no stage: not a step of the run)
             if ratio >= 1.0:
-                if ratio < 1.12:
+                if ratio < _CONSTRAINED_DONE:
                     break
                 if t_pass is None or t > t_pass:
                     t_pass, x_pass = t, o.x
