@@ -408,15 +408,15 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None):
             poles.reshape(-1, 3)[~kidx] = xs.reshape(3, ni).T
         Bu, Du = basis(bu, np.arange(a * s + 1) / s, der=True)
         Bv, Dv = basis(bv, np.arange(b * s + 1) / s, der=True)
-        S = np.einsum("ia,abk,jb->ijk", Bu, poles, Bv)
+        S = np.einsum("ia,abk,jb->ijk", Bu, poles, Bv, optimize=True)
         dev = np.linalg.norm(S - X, axis=2)
         err = float(dev.max())
         worst = max(worst, err)
         if Rg.any():
             exact = max(exact, float(dev[Rg].max()))
         # normals along the four sides, keyed by the fine vertex they sit on
-        Su = np.einsum("ia,abk,jb->ijk", Du, poles, Bv)
-        Sv = np.einsum("ia,abk,jb->ijk", Bu, poles, Dv)
+        Su = np.einsum("ia,abk,jb->ijk", Du, poles, Bv, optimize=True)
+        Sv = np.einsum("ia,abk,jb->ijk", Bu, poles, Dv, optimize=True)
         Nr = np.cross(Su, Sv)
         Nr /= np.maximum(np.linalg.norm(Nr, axis=2, keepdims=True), 1e-300)
         for sl in ((slice(1, -1), 0), (slice(1, -1), -1), (0, slice(1, -1)), (-1, slice(1, -1))):

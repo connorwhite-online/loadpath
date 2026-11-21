@@ -69,9 +69,12 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
 | input | cage | STEP faces | time | deviation p99 / max | worst kink | valid, volume |
 |---|---|---|---|---|---|---|
 | Tripo-style pebble (holes, double wall, jitter) | 4902 quads (was 5623) | 240 (was 525) | 3.3 min (was 12.5) | 0.072 / 0.36 mm (was 0.095 / 0.35) | 0.013 deg (was 0.63) | yes, -0.004% (was -0.14%) |
-| optimized arm link body (quick run, 2026-11-21) | 6187 quads (was 8383) | 640 (was 4173) | 4.0 min (was 20.5) | 0.095 / 0.58 mm (was 0.093 / 0.65) | 0.021 deg | yes, -0.02% (the old route left 4 free edges: not a solid) |
+| optimized arm link body (quick run, 2026-11-21) | 6389 quads (was 8383) | 598 (was 4173) | 3.2 min (was 20.5) | 0.095 / 1.37 mm (was 0.093 / 0.65) | 0.028 deg | yes, -0.02% (the old route left 4 free edges: not a solid) |
 
-Tolerance 0.1 mm (a third of FDM's +-0.3 mm) on both. Same machine (4
+Tolerance 0.1 mm (a third of FDM's +-0.3 mm) on both; the tolerance holds
+the 99th percentile, and the worst point on the arm link (1.37 mm, where
+a narrow member meets a boss) moves from run to run with the cage the
+remesher lays (0.58 mm on another run of the same body). Same machine (4
 cores), same input, run one at a time. Earlier (2026-11-17): soft plate +
 exact bore 146 B-spline faces + 1 cylinder, 250 s.
 

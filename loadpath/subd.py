@@ -59,8 +59,11 @@ class Cage:
         m = len(Q)
         a = Q.ravel()
         b = np.roll(Q, -1, axis=1).ravel()
-        key = np.stack([np.minimum(a, b), np.maximum(a, b)], 1)
-        E, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+        nv = max(len(self.V), int(Q.max()) + 1 if Q.size else 0)
+        # an edge as one integer (lo n + hi): the same order as unique rows, a fraction of the time
+        key = np.minimum(a, b) * nv + np.maximum(a, b)
+        u, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
+        E = np.stack([u // nv, u % nv], 1)
         if (cnt != 2).any():
             raise ValueError(f"cage is not closed and manifold: {int((cnt != 2).sum())} edges with "
                              f"{sorted(set(cnt.tolist()) - {2})} faces")
@@ -562,7 +565,7 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
     return cage, H
 
 
-def _pcg(K, pre, B, X0, rtol=1e-9, maxiter=200):
+def _pcg(K, pre, B, X0, rtol=1e-7, maxiter=200):
     """Solve K X = B (symmetric positive definite, three right-hand
     sides at once) by conjugate gradients from X0, preconditioned by a
     factorization `pre` of a matrix near K."""
@@ -751,7 +754,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
         # is on (faces go as h^-2), and the next cage aims a little under
         # the tolerance: a cage finer than needed has more star points, so
         # more patches, and every fit on it is slower
-        rate = 2.0
+        rate = 2.5
         if len(tries) >= 2 and tries[-2]["p99"] > dev["p99"] > 0:
             rate = 2.0 * np.log(tries[-2]["p99"] / dev["p99"]) / np.log(len(cage.Q) / tries[-2]["faces"])
             rate = float(np.clip(rate, 2.5, 4.0))
@@ -1281,8 +1284,8 @@ def pack(H, C, bs, lay):
                 X[i * s:i * s + s + 1, j * s:j * s + s + 1] = np.rot90(XG[q], _oriented(G, q, r))
         Bu = _bspline_basis(a, np.arange(a * s + 1) / s)
         Bv = _bspline_basis(b, np.arange(b * s + 1) / s)
-        poles = np.einsum("ia,ijk,jb->abk", np.linalg.pinv(Bu).T, X, np.linalg.pinv(Bv).T)
-        err = float(np.abs(np.einsum("ia,abk,jb->ijk", Bu, poles, Bv) - X).max())
+        poles = np.einsum("ia,ijk,jb->abk", np.linalg.pinv(Bu).T, X, np.linalg.pinv(Bv).T, optimize=True)
+        err = float(np.abs(np.einsum("ia,abk,jb->ijk", Bu, poles, Bv, optimize=True) - X).max())
         if err > 1e-6:
             continue                      # not one spline after all (a fold in the layout): keep its patches
         out.append(("bspline", poles, (a, b)))
