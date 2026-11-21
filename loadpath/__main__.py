@@ -1632,7 +1632,8 @@ def main(argv=None):
         from .study import save_field
         dom = summary.get("domain") or {}
         field = save_field(os.path.join(args.out, stem + ".field.npz"), getattr(o, "xphys", None),
-                           dom.get("pitch"), dom.get("cells")) if dom.get("pitch") else None
+                           dom.get("pitch"), dom.get("cells"), level=getattr(o, "xlevel", None)) \
+            if dom.get("pitch") else None
         if field:
             summary["outcomes"][i]["field"] = field
         if getattr(o, "compensated", None) is not None:

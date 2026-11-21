@@ -259,7 +259,8 @@ def _first_step(monkeypatch, x0, limits):
 
     monkeypatch.setattr(co, "MMA", Capture)
     monkeypatch.setattr(co, "_normalize", lambda prev, smax, pm, it: 1.0)
-    s = study_from_dict(_LUG)
+    # (symmetry off: the gradient handed to the optimizer is otherwise the mirrored average)
+    s = study_from_dict(dict(_LUG, symmetry=False))
     d = build_domain(s)
     o = SimpOptions(volume_fraction=0.4, filter_radius=filter_radius(d, None), max_iterations=1, x0=x0, beta_start=2.0)
     co.optimize_constrained(d, s.material.nu, o, limits)

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import os
+
 import numpy as np
 from scipy import ndimage
 
@@ -49,6 +51,10 @@ class Domain:
     support_nodes: np.ndarray     # bool per node
     load_nodes: np.ndarray        # bool per node (any case)
     mirror: dict = field(default_factory=dict)   # axis -> element index of the mirror cell (-1 none)
+    # per element, or None: how full a cell pinned by a loaded surface is
+    # (0-1, 0.5 on the pinned strap's back; nan where nothing says), for the
+    # mesh's sub-cell surface (simp.boundary_field)
+    level_hint: np.ndarray | None = None
     warnings: list = field(default_factory=list)
     # Pin supports as penalty springs at unit modulus (scale by E), or None.
     springs: object = None
@@ -907,6 +913,155 @@ def _overlap_share(shape, cutters, pitch: float, cap: int = 40_000):
         return None, 0.0, 0.0
 
 
+# what a mirror plane must not have to pass over, for the test below to be
+# the whole story: each of these puts something in the design problem that
+# the load vectors, supports and pinned cells do not show
+_SYMMETRY_BLIND = ("thermal", "access", "pattern", "stock", "multi_material", "vibration", "mass_properties",
+                   "aero", "foundry", "cast_feed", "build_sim")
+
+
+def _found_symmetry(study: Study, mesh: HexMesh, dims, pres_el, bc, loads, weights, spreads) -> list:
+    """The mirror planes (through the design space's centre, 'x', 'y', 'z')
+    the problem itself has and the study did not declare.
+
+    A design problem that is its own mirror image has a mirror-symmetric
+    optimum: the mirror image of any design carries the mirrored loads
+    exactly as well, and the loads are the same set. The optimizer run
+    without the constraint still drifts off it (round-off picks a side where
+    two layouts tie, and every later iteration builds on the pick), so a
+    fork's two arms or a plate's four straps come out different for no
+    reason a load gives. That reads as a mistake, and it is one: the part
+    holds a preference the problem does not have. So the symmetry found
+    here is held, as a declared one is.
+
+    Found on the grid, where the problem is finally stated: every cell has
+    its mirror cell, the same cells are pinned solid, the same freedoms are
+    held at mirror nodes, and every load case's mirror image is a load case
+    of the same weight (itself, usually). A force of unknown direction is
+    its own image when its nodes are; a cone's axis must lie in the plane.
+    A push given one way only (a sideways load along +x) is not symmetric
+    and is not taken to be: say `"direction": "any"`, add the opposite
+    case, or declare `symmetry`. `"symmetry": false` turns the search off.
+    Self-weight must lie in the plane, and so must the build direction of
+    a part grown to print without supports (an overhang is not its own
+    mirror image across the bed)."""
+    raw = getattr(study, "raw", None) or {}
+    study.symmetry_missed = {}
+    if raw.get("symmetry") is False or os.environ.get("LOADPATH_AUTO_SYMMETRY", "1") == "0":
+        return []
+    if any(getattr(study, a, None) for a in _SYMMETRY_BLIND) or bc.springs is not None or bc.raw_loads:
+        return []
+    if getattr(study, "inertia_masses", None) or getattr(study, "inertia_bodies", None):
+        return []
+    dims = tuple(int(d) for d in dims)
+    lut = np.full(dims, -1, np.int64)
+    lut[tuple(mesh.elem_ijk.T)] = np.arange(mesh.n_elem)
+    ndims = tuple(d + 1 for d in dims)
+    nlut = np.full(ndims, -1, np.int64)
+    nlut[tuple(mesh.node_ijk.T)] = np.arange(mesh.n_nodes)
+    fixed = np.asarray(bc.fixed, bool).reshape(-1, 3)
+    out = []
+    why = {}
+    study.symmetry_missed = why
+    for a, axis in enumerate("xyz"):
+        if axis in study.symmetry:
+            continue
+        if study.gravity is not None and abs(float(study.gravity[a])) > 1e-9 * float(np.linalg.norm(study.gravity)):
+            why[axis] = "gravity"
+            continue
+        proc = getattr(study, "process", None)
+        builds = [getattr(study, "print_direction", None)]
+        if proc is not None and proc.overhangs:
+            # (layers alone are their own mirror image across the bed; a
+            # part grown to stand without supports is not)
+            builds.append(proc.build)
+        if any(_along(b, a) for b in builds):
+            why[axis] = "build direction"
+            continue
+        m_ijk = mesh.elem_ijk.copy()
+        m_ijk[:, a] = dims[a] - 1 - m_ijk[:, a]
+        em = lut[tuple(m_ijk.T)]
+        if (em < 0).any() or not np.array_equal(pres_el[em], pres_el):
+            why[axis] = "shape"
+            continue
+        n_ijk = mesh.node_ijk.copy()
+        n_ijk[:, a] = dims[a] - n_ijk[:, a]
+        nm = nlut[tuple(n_ijk.T)]
+        if (nm < 0).any() or not np.array_equal(fixed[nm], fixed):
+            why[axis] = "supports"
+            continue
+        sign = np.ones(3)
+        sign[a] = -1.0
+
+        def image(f):
+            return (np.asarray(f, float).reshape(-1, 3)[nm] * sign).ravel()
+
+        def same(u, v):
+            scale = max(float(np.abs(u).max(initial=0.0)), float(np.abs(v).max(initial=0.0)))
+            return scale == 0.0 or float(np.abs(u - v).max()) <= 1e-6 * scale
+
+        ok = True
+        for i, f in enumerate(loads):
+            sp = spreads[i] if i < len(spreads) else None
+            hit = False
+            for j, g in enumerate(loads):
+                if abs(float(weights[i]) - float(weights[j])) > 1e-12:
+                    continue
+                sq = spreads[j] if j < len(spreads) else None
+                if (sp is None) != (sq is None):
+                    continue
+                if sp is None:
+                    hit = same(image(f), np.asarray(g, float))
+                else:
+                    hit = (sp.cos_half == sq.cos_half and same(image(sp.base), sq.base)
+                           and all(same(image(sp.basis[k]) * sign[k], sq.basis[k]) for k in range(3))
+                           and (sp.cos_half <= -1.0 or (abs(float(sp.nominal[a])) < 1e-9
+                                                         and same(np.asarray(sp.nominal), np.asarray(sq.nominal)))))
+                if hit:
+                    break
+            if not hit:
+                ok = False
+                why[axis] = "load case %d" % i
+                break
+        if ok:
+            out.append(axis)
+    return out
+
+
+def _region_shape_of(study: Study, ri: int):
+    """The keep-out a load region lines (bc.regions[ri]: supports first, then
+    each case's loads in order, pressures left out), or None when the region
+    is a solid or an inline shape (its nodes are in it, not round it)."""
+    k = len(study.supports)
+    for case in study.load_cases:
+        for ld in case.loads:
+            if ld.pressure:
+                continue
+            if k == ri:
+                if ld.shape is not None or ld.region is None:
+                    return None
+                try:
+                    shape, kind = study.region_shape(ld.region)
+                except ValueError:
+                    return None
+                return shape if kind == "keepOut" else None
+            k += 1
+    return None
+
+
+def _along(build, a: int) -> bool:
+    """Whether a build direction ((axis, sign), a vector, or "auto"/None) has a part along axis a."""
+    if build is None or isinstance(build, str):
+        return False
+    try:
+        if len(build) == 2 and not hasattr(build[0], "__len__") and int(build[0]) == build[0] and abs(build[1]) == 1:
+            return int(build[0]) == a
+        v = np.asarray(build, float)
+        return abs(float(v[a])) > 1e-9 * float(np.linalg.norm(v))
+    except (TypeError, ValueError):
+        return True
+
+
 def _build_domain(study: Study, pitch: float) -> Domain:
     lo, hi = study.bounds()
     center = 0.5 * (lo + hi)
@@ -1168,6 +1323,17 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     radius = 1.3 * float(study.min_member) if study.min_member else 1.5 * pitch
     active_grid = np.zeros(dims, bool)
     active_grid[tuple(mesh.elem_ijk.T)] = True
+    # the nodes that carry force in some case (an unknown direction's along any axis)
+    level_hint = np.full(mesh.n_elem, np.nan)
+    forced = np.zeros(mesh.n_nodes, bool)
+    for i, f in enumerate(loads):
+        forced |= np.abs(np.asarray(f).reshape(-1, 3)).max(axis=1) > 0
+        sp = spreads[i] if i < len(spreads) else None
+        if sp is not None:
+            for b in sp.basis:
+                forced |= np.abs(np.asarray(b).reshape(-1, 3)).max(axis=1) > 0
+    if not forced.any():
+        forced = None
     for ri, nodes in enumerate(bc.regions):
         touch = nodes[mesh.enode].any(axis=1)
         if not touch.any():
@@ -1180,6 +1346,63 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         # (a load over its whole top, 6% of the cells) left deck nodes on
         # void and its compliance went up a million-fold.
         if touch.sum() > _ANCHOR_MAX_FRACTION * mesh.n_elem and not (face and ri >= len(study.supports)):
+            if ri < len(study.supports) or forced is None:
+                continue
+            # A loaded region that is neither small nor a flat face: a shaft
+            # bearing on a saddle, a tool in a clip's jaws, which on a small
+            # part line more than that share of its cells (surface grows as
+            # the square of a part's size, cells as the cube). A force acts
+            # on material or not at all: left to the optimizer, the nodes
+            # that carry it sat on void once the projection sharpened (the
+            # eroded design's edge ends short of every boundary), the
+            # compliance it reads went up a hundredfold between its first
+            # and last stage, and what it handed on was a design of that
+            # reading: ragged walls and spikes reaching for loaded nodes (a
+            # rod holder at 40,000 cells, 2026-11-21). So the cells under
+            # the nodes that carry force in some case are pinned, to the
+            # minimum member's thickness as a loaded face is. Only those: a
+            # bearing presses on the half of the bore it pushes, and the
+            # other half is the optimizer's.
+            # (a node already on pinned material, a drawn solid's own, has
+            # what it needs: nothing is added round a preserved region)
+            held = np.zeros(mesh.n_nodes, bool)
+            held[mesh.enode[pres_el].ravel()] = True
+            touch = (nodes & forced & ~held)[mesh.enode].any(axis=1)
+            if not touch.any():
+                continue
+            thick = max(float(study.min_member or 0.0), pitch)
+            shape = _region_shape_of(study, ri)
+            if shape is not None:
+                # by distance from the loaded surface itself, not by layers
+                # of cells: the strap's back is then a surface (level_hint,
+                # which the mesh is cut from), not the grid's staircase
+                reach = int(np.ceil(thick / pitch)) + 1
+                g = np.zeros(dims, bool)
+                g[tuple(mesh.elem_ijk[touch].T)] = True
+                g = ndimage.binary_dilation(g, structure=ndimage.generate_binary_structure(3, 3),
+                                            iterations=reach) & active_grid
+                near = np.flatnonzero(g[tuple(mesh.elem_ijk.T)])
+                dist = np.abs(shape.sdf(mesh.elem_centers()[near]))
+                lv = np.clip(0.5 + (thick - dist) / pitch, 0.0, 1.0)
+                # ... and only behind the nodes that carry force: within a
+                # cell and a half of a cell that touches one
+                gt = np.zeros(dims, bool)
+                gt[tuple(mesh.elem_ijk[touch].T)] = True
+                side = ndimage.distance_transform_edt(~gt)[tuple(mesh.elem_ijk[near].T)] <= thick / pitch + 0.5
+                lv = np.where(side, lv, np.nan)
+                keep = np.isfinite(lv) & (np.isnan(level_hint[near]) | (lv > np.nan_to_num(level_hint[near], nan=0.0)))
+                level_hint[near[keep]] = lv[keep]
+                touch = np.zeros(mesh.n_elem, bool)
+                touch[near[np.nan_to_num(lv, nan=0.0) >= 0.5]] = True
+            else:
+                layers = int(np.ceil(thick / pitch))
+                if layers > 1:
+                    g = np.zeros(dims, bool)
+                    g[tuple(mesh.elem_ijk[touch].T)] = True
+                    g = ndimage.binary_dilation(g, structure=ndimage.generate_binary_structure(3, 1),
+                                                iterations=layers - 1) & active_grid
+                    touch = g[tuple(mesh.elem_ijk.T)]
+            pres_el = pres_el | touch
             continue
         if face:
             if ri < len(study.supports):
@@ -1196,8 +1419,9 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                 touch = g[tuple(mesh.elem_ijk.T)]
         pres_el = pres_el | touch
 
+    found = _found_symmetry(study, mesh, dims, pres_el, bc, loads, weights, spreads)
     mirror = {}
-    for axis in study.symmetry:
+    for axis in list(study.symmetry) + found:
         a = "xyz".index(axis)
         m_ijk = mesh.elem_ijk.copy()
         m_ijk[:, a] = dims[a] - 1 - m_ijk[:, a]
@@ -1211,6 +1435,9 @@ def _build_domain(study: Study, pitch: float) -> Domain:
 
     from .thermal import study_heat
 
+    if found:
+        study.found_symmetry = list(found)
+    hint = level_hint if np.isfinite(level_hint).any() else None
     dom = Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
@@ -1223,7 +1450,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                   bodies=carried_bodies(study, mesh, _rbm(mesh.node_xyz)) if bc.raw_loads else [],
                   thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
                                      near=_near_cells(mesh, support_nodes | load_nodes)),
-                  warp=_warp_term(study, mesh), joints=joints)
+                  warp=_warp_term(study, mesh), joints=joints, level_hint=hint)
     aero = getattr(study, "aero", None)
     if aero is not None and aero.in_optimizer:
         from .aero import BlockageCost

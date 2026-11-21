@@ -10,7 +10,7 @@
     {"file": "transcript.json", "value": "r['first']['mass']", "min": 12, "max": 32, "what": "first run's mass, g"},
     {"file": "transcript.json", "value": "r['final']['passes']", "equals": true, "what": "final part passes SF 2 and the deflection goal"},
     {"file": "transcript.json", "value": "r['final']['payloadDeflection']", "max": 0.8, "what": "final payload deflection, mm"},
-    {"file": "transcript.json", "value": "r['final']['mass']", "min": 30, "max": 47, "what": "final mass, g"},
+    {"file": "transcript.json", "value": "r['final']['mass']", "min": 22, "max": 47, "what": "final mass, g"},
     {"file": "transcript.json", "value": "r['final']['safetyFactor']", "min": 2.0, "what": "final safety factor"},
     {"file": "transcript.json", "value": "r['final']['bodies']", "equals": 1, "what": "one body"},
     {"file": "transcript.json", "value": "r['final']['recalled']", "min": 1, "what": "outcomes the rerun replayed from the first run"},

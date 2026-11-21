@@ -662,10 +662,50 @@ def binding_weights(binding, case_c, power: float) -> tuple[np.ndarray, float]:
     return beta * (b / j) ** (power - 1.0), j
 
 
+def boundary_field(xp, fields, cells: float, hint=None):
+    """The delivered design with its boundary placed inside the cells it
+    crosses: a density that is `xp` away from the surface and passes 0.5
+    where the filtered field it was cut from passes its threshold.
+
+    The projection that makes a design solid-or-void throws away where,
+    inside a cell, its surface is: `xp` at the sharpest stage is 0 or 1 to
+    a few percent, and a surface meshed from it follows the grid's cells, a
+    staircase on every face not square to the grid. The filtered field the
+    projection was cut from is smooth over the filter's radius and crosses
+    its threshold at the surface itself. Its slope there is about one over
+    the radius, so times the radius in cells it ramps from void to solid
+    over about one cell: the same design, anti-aliased.
+
+    `fields` are (filtered field, threshold) in order of say: the blueprint
+    first (delivery follows it wherever the analysed design is in reach,
+    _keep_cores), then its opening (where a membrane was dropped). `hint` is the same reading for cells
+    pinned by the problem's own geometry (domain.level_hint), nan elsewhere.
+    A cell none of them agrees with `xp` on (pruned, closed, cut for a tool:
+    whatever was done after the projection) keeps its side of 0.5, a quarter
+    off it, so one such cell alone is a ripple and not a bead."""
+    xp = np.asarray(xp, float)
+    solid = xp >= 0.5
+    gain = max(float(cells), 1.0)
+    ramps = [np.clip(0.5 + gain * (np.asarray(src, float) - float(at)), 0.0, 1.0) for src, at in fields]
+    have = np.isfinite(hint) if hint is not None else np.zeros(len(xp), bool)
+    pinned = have & (np.nan_to_num(hint, nan=0.0) >= 0.5) if hint is not None else have
+    lev = np.where(solid, 0.75, 0.25)
+    done = np.zeros(len(xp), bool)
+    for r in ramps:
+        ok = ~done & ((r >= 0.5) == solid)
+        lev[ok] = r[ok]
+        done |= ok
+    if hint is not None:
+        # the pinned strap and the design are one body: as full as either says
+        lev[pinned & ~done] = ramps[0][pinned & ~done]
+        lev[have] = np.maximum(lev[have], hint[have])
+    return lev
+
+
 @dataclass
 class SimpResult:
     x: np.ndarray                     # design variables
-    xphys: np.ndarray                 # projected densities, what we mesh
+    xphys: np.ndarray                 # projected densities, what we solve on
     compliance: float
     case_compliance: list
     volume_fraction: float
@@ -687,6 +727,9 @@ class SimpResult:
     # one inside the limits at the sharpest projection), or None when the run
     # ended before there was one and the last iterate is delivered
     delivered: dict | None = None
+    # xphys with its surface placed inside the cells it crosses
+    # (boundary_field): what we mesh. None: mesh xphys
+    xlevel: np.ndarray | None = None
 
 
 def filter_radius(domain: Domain, min_member: float | None, min_hole: float | None = None) -> float:
@@ -905,10 +948,19 @@ def _keep_cores(domain, opened, analysed, blueprint, radius):
     see filter_radius): the member returns at the width the volume was
     counted at, and a sheet with no analysed core (the membranes the opening
     is there to drop) still has nothing to bring it back. A design with no
-    such cell is delivered exactly as before."""
+    such cell is delivered as opened."""
     lost = (analysed > 0.5) & (opened < 0.5)
     if not lost.any():
         return opened
+    # Everywhere, not only round the lost cells. Round them alone, a sheet or
+    # an edge that sits at the opening's cut comes back in patches: the
+    # opening returns some cells of it and not their neighbours, the
+    # blueprint returns a ball round each cell it missed, and the two do not
+    # share a surface. That left a row of beads along every edge of every
+    # delivered part (594 surface cells on a 40k-cell rod holder), which the
+    # mesh smoothed into lumps. The blueprint within reach of the analysed
+    # design is one surface: the one the volume was counted at.
+    lost = analysed > 0.5
     # a cell is in reach when any of it is: its centre within the reach plus half a cell
     reach = radius / 2.6 + 0.5 * domain.pitch
     n = int(np.ceil(reach / domain.pitch))
@@ -1949,6 +2001,7 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         # the delivered part prints by the rule its schedule ends on, wherever the loop stopped
         am_b.eps = am_e.eps = am_v.eps = overhang_eps(max(beta, opts.beta_max))
     xt, xp = physical(x, beta)
+    lev_fields = [(xt, opts.eta)]
     if opts.erode > 0:
         # Deliver the OPENING of the blueprint: erode, then dilate back by the
         # same amount with the same filter. Everything the optimizer was
@@ -1956,7 +2009,10 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         # erosion (the membrane round 3 of the evals left inside the bell
         # crank's frame) does not come back.
         xe = eroded(xt, beta)
-        xp = _project((h @ xe) / hs, beta, opts.eta - opts.erode)
+        # the blueprint's ramp first: the delivered boundary is the blueprint's
+        # wherever the analysed design is in reach (_keep_cores)
+        lev_fields.append(((h @ xe) / hs, opts.eta - opts.erode))
+        xp = _project(lev_fields[-1][0], beta, opts.eta - opts.erode)
         xp = _keep_cores(domain, xp, xe, _project(xt, beta, opts.eta), opts.filter_radius)
         xp[pres] = 1.0
         xp = printed(am_v, xp)
@@ -2030,7 +2086,9 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
             comp += (weights0 if bind is not None else weights)[ci] * wc.compliance
         energy += weights[ci] * stiff * sum(m * fe.strain_energy(v) for m, v in wc.energy)
     warp = _warp_report(domain, xp) if domain.warp is not None else None
-    return SimpResult(x=x, xphys=xp, compliance=comp, case_compliance=case_c,
+    return SimpResult(x=x, xphys=xp, xlevel=boundary_field(xp, lev_fields, opts.filter_radius / domain.pitch,
+                                             getattr(domain, "level_hint", None)),
+                      compliance=comp, case_compliance=case_c,
                       volume_fraction=float(xp[design].mean()), iterations=it,
                       converged=converged, seconds=time.time() - t0, history=history,
                       case_direction=case_d, energy=energy / mesh.pitch ** 3, warp=warp)

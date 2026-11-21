@@ -263,6 +263,8 @@ class Outcome:
     # the optimized density field this mesh was drawn from (per domain cell),
     # so a part can be re-meshed without optimizing again
     xphys: object = None
+    # xphys with its surface inside the cells it crosses (simp.boundary_field), what the mesh was cut from
+    xlevel: object = None
     # infill.grade_infill's result (modifier meshes for the graded 3MF)
     grading: object = None
     # buildsim.compensate_mesh's pre-distorted part (buildSim.compensate)
@@ -676,7 +678,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
                                stiffness_bound=_stiffness_limited(study), **_making(study)),
                    on_iter=on_iter, should_stop=should_stop)
     note({"stage": "mesh", "volumeFraction": vf})
-    mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
+    mesh, rinfo = reconstruct(study, domain, _meshed_field(res), ReconstructOptions())
     opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
            "compliance": res.compliance, "caseCompliance": res.case_compliance,
            **({"caseDirection": res.case_direction} if any(d is not None for d in res.case_direction) else {}),
@@ -685,6 +687,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
            **({"escape": res.escape} if res.escape else {})}
     o = Outcome(vf, mesh, {}, opt, rinfo)
     o.xphys = res.xphys
+    o.xlevel = res.xlevel
     o.x = res.x
     if not verify:
         return o
@@ -860,30 +863,45 @@ def _domain_info(d: Domain, radius: float) -> dict:
         "preservedCells": int(d.preserve.sum()),
         "filterRadius": radius,
         "loadCases": d.case_names,
+        # the mirror planes the design is held to: declared, and found (domain._found_symmetry)
+        **({"symmetry": sorted(d.mirror)} if len(d.mirror) else {}),
     }
 
 
-def save_field(path: str, xphys, pitch: float, cells: int | None = None) -> str | None:
+def _meshed_field(res):
+    """The field a design is meshed from: its densities with the surface
+    placed inside the cells it crosses (simp.boundary_field) when the
+    optimizer gave them, else the densities themselves."""
+    return res.xphys if getattr(res, "xlevel", None) is None else res.xlevel
+
+
+def save_field(path: str, xphys, pitch: float, cells: int | None = None, level=None) -> str | None:
     """Save an outcome's optimized density field (.npz: xphys as float32 and
-    the design grid's pitch), so a bad mesh can be re-meshed without
-    optimizing again (`loadpath remesh`). None when there is no field, or it
-    is not on the grid named (`cells`)."""
+    the design grid's pitch; `level`, the field it was meshed from, when the
+    optimizer gave one), so a bad mesh can be re-meshed without optimizing
+    again (`loadpath remesh`). None when there is no field, or it is not on
+    the grid named (`cells`)."""
     if xphys is None:
         return None
     x = np.asarray(xphys, np.float32).ravel()
     if cells is not None and len(x) != int(cells):
         return None
-    np.savez_compressed(path, xphys=x, pitch=np.float64(pitch))
+    extra = {}
+    if level is not None and np.size(level) == len(x):
+        extra["level"] = np.asarray(level, np.float32).ravel()
+    np.savez_compressed(path, xphys=x, pitch=np.float64(pitch), **extra)
     return path if path.endswith(".npz") else path + ".npz"
 
 
-def load_field(path: str):
-    """(xphys, pitch) from save_field's file (or a bare .npy of xphys:
-    pitch None, the study's own grid)."""
+def load_field(path: str, meshed: bool = True):
+    """(field, pitch) from save_field's file (or a bare .npy of xphys:
+    pitch None, the study's own grid): the field the part was meshed from
+    when the file has one (`meshed`), else its densities."""
     if path.endswith(".npy"):
         return np.load(path).astype(float), None
     with np.load(path) as z:
-        return z["xphys"].astype(float), float(z["pitch"]) if "pitch" in z else None
+        key = "level" if meshed and "level" in z else "xphys"
+        return z[key].astype(float), float(z["pitch"]) if "pitch" in z else None
 
 
 # Peak memory of one worker, roughly, by the most cells it solves at once
@@ -1127,7 +1145,8 @@ def _save_partial(o, pitch: float | None = None) -> None:
                     n += 1
                     stem = f"{base}-{n}"
             o.mesh.export(os.path.join(d, stem + ".stl"))
-            o.partial_field = save_field(os.path.join(d, stem + ".field.npz"), o.xphys, pitch) if pitch else None
+            o.partial_field = save_field(os.path.join(d, stem + ".field.npz"), o.xphys, pitch,
+                                         level=getattr(o, "xlevel", None)) if pitch else None
             o.partial_stem = stem
         field = getattr(o, "partial_field", None)
         with open(os.path.join(d, "outcomes.jsonl"), "a") as fh:
@@ -2644,9 +2663,11 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         def on_iter(rec, xp):
             emit({"stage": "optimize", "volumeFraction": vf, **rec}, xp)
 
+        xlevel = None
         if made is not None:
             # a design made here by another optimizer (the strength polish): mesh and verify it
-            x, xphys, opt = made
+            x, xphys, opt = made[:3]
+            xlevel = made[3] if len(made) > 3 else None
             warp = None
         elif replay is None:
             breq = buck_state["sf"] * buck_state["kb"] if buck_state["on"] else None
@@ -2661,7 +2682,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                                        binding=_binding(study, domain, src),
                                        stiffness_bound=_stiffness_limited(study), **_making(study)),
                            on_iter=on_iter, should_stop=should_stop)
-            x, xphys = res.x, res.xphys
+            x, xphys, xlevel = res.x, res.xphys, res.xlevel
             warp = res.warp
             opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                    "compliance": res.compliance, "caseCompliance": res.case_compliance,
@@ -2671,11 +2692,12 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         else:
             # a stored design for this very problem: mesh and verify it, no optimizing
             x, xphys = replay[0], replay[1]
+            xlevel = replay[3] if len(replay) > 3 else None
             warp = None
             opt = {"iterations": 0, "converged": True, "seconds": 0.0, "recalled": True,
                    "achievedVolumeFraction": float(xphys.mean())}
         emit({"stage": "mesh", "volumeFraction": vf})
-        mesh, rinfo = reconstruct(study, domain, xphys, ReconstructOptions())
+        mesh, rinfo = reconstruct(study, domain, xphys if xlevel is None else xlevel, ReconstructOptions())
         emit({"stage": "verify", "volumeFraction": vf})
         try:
             # the search's own reading: its pick is read again (_confirm, tet_confirm)
@@ -2726,11 +2748,12 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 _check_warp(warp, mesh)
         o = Outcome(vf, mesh, report, opt, rinfo)
         o.xphys = xphys
+        o.xlevel = xlevel
         o.x = x
         o.voxel_sf = report.get("safetyFactor")
         if memory is not None and made is None:
             # (a polished design is not the compliance design of its fraction: not one to recall as that)
-            memory.add(vf, x, xphys, report)
+            memory.add(vf, x, xphys, report, level=xlevel)
         m = _margin(study, report)
         if m is not None:
             report["margin"] = m
@@ -3213,7 +3236,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         "iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                         "achievedVolumeFraction": res.volume_fraction, "method": "strength polish",
                         "limits": {"stress": s_lim, **({"deflection": d_lim} if d_lim is not None else {}),
-                                   **({"buckling": b_lim} if b_lim is not None else {})}}))
+                                   **({"buckling": b_lim} if b_lim is not None else {})}}, res.xlevel))
                 except (RuntimeError, ValueError):
                     if repair:
                         repair, stride = False, 0
@@ -3332,7 +3355,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         extrusion=study.extrusion, pattern=study.pattern,
                         build_direction=study.print_direction),
             limits, on_iter=on_iter, should_stop=should_stop)
-        mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
+        mesh, rinfo = reconstruct(study, domain, _meshed_field(res), ReconstructOptions())
         # The tet cross-check starts beside the voxel check, not after it:
         # every constrained part with a voxel reading is read on tets
         # (below), the mesher is most of that minute and a half, and it
@@ -3365,6 +3388,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             opt["bucklingFactor"] = float(min(bks))   # the optimizer's own reading, eroded grey design
         o = Outcome(res.volume_fraction, mesh, report, opt, rinfo)
         o.xphys = res.xphys
+        o.xlevel = res.xlevel
         o.voxel_sf = report.get("safetyFactor")
         m = _margin(study, report)
         report["margin"] = m
