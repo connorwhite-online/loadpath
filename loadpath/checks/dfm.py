@@ -205,7 +205,14 @@ def _trapped_voids(solid, origin, pitch):
     voxel_mm3 = pitch ** 3
     voids = []
     if keep:
-        centers = ndimage.center_of_mass(np.ones(lbl.shape, np.uint8), lbl, keep)
+        # each void's mean cell index, within its own box (find_objects):
+        # center_of_mass over the whole grid scanned it once per call
+        boxes = ndimage.find_objects(lbl)
+        centers = []
+        for k in keep:
+            box = boxes[k - 1]
+            idx = np.argwhere(lbl[box] == k)
+            centers.append(idx.mean(axis=0) + np.array([sl.start for sl in box]))
         for k, c in zip(keep, centers):
             voids.append({
                 "volumeMm3": round(float(sizes[k]) * voxel_mm3, 3),
@@ -214,6 +221,15 @@ def _trapped_voids(solid, origin, pitch):
             })
     voids.sort(key=lambda v: v["volumeMm3"], reverse=True)
     return voids, float(sum(v["volumeMm3"] for v in voids))
+
+
+def _volume(mesh):
+    """The enclosed volume by the divergence theorem (trimesh's .volume
+    integrates its whole inertia tensor for it: 1.4 s of 6.7 on a 1.4M-face
+    part, against 0.3)."""
+    from ..narrowband import signed_volume
+
+    return signed_volume(np.asarray(mesh.vertices, float), np.asarray(mesh.faces))
 
 
 def check_dfm(part, spec=None):
@@ -255,7 +271,7 @@ def check_dfm(part, spec=None):
         report["watertight"] = True  # an implicit solid is closed by construction
     else:
         report.update(watertight=bool(part.is_watertight), triangles=int(len(part.faces)),
-                      volumeMm3=round(float(abs(part.volume)), 3) if len(part.faces) else 0.0)
+                      volumeMm3=round(abs(_volume(part)), 3) if len(part.faces) else 0.0)
 
     grid = None
     grid_error = None

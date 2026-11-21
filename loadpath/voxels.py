@@ -303,6 +303,12 @@ def _tile_len(shape, cap):
     return max(int(_TILE_VOXELS // max(plane, 1)) - 2 * cap, 8)
 
 
+def _edt(a):
+    from .edtops import edt
+
+    return edt(a)
+
+
 def wall_thickness(solid, pitch, cap_mm=None, limit_mm=None, spots=5, origin=None, thin_cells=False):
     """Member thickness of a grid's solid, in mm, on the medial ridge (the
     local maxima of the distance to void). The estimate 2*edt - 0.5 cells is
@@ -336,7 +342,7 @@ def wall_thickness(solid, pitch, cap_mm=None, limit_mm=None, spots=5, origin=Non
             padded = np.pad(padded, ((1, 0), (0, 0), (0, 0)))
         if hb == shape[0]:
             padded = np.pad(padded, ((0, 1), (0, 0), (0, 0)))
-        edt = ndimage.distance_transform_edt(padded).astype(np.float32)
+        edt = _edt(padded).astype(np.float32)
         edt = edt[(1 if ha == 0 else 0):edt.shape[0] - (1 if hb == shape[0] else 0), 1:-1, 1:-1]
         np.minimum(edt, cap, out=edt)
         ridge = sub & (edt >= ndimage.maximum_filter(edt, size=3)) & (edt > 0)

@@ -215,3 +215,18 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_compiled_edt_is_scipys():
+    """edtops.edt: scipy's distance_transform_edt to the bit, on random
+    grids of every aspect and fill and on single-cell-thick slabs."""
+    from scipy import ndimage
+
+    from loadpath.edtops import edt
+
+    rng = np.random.default_rng(0)
+    for shape, p in [((5, 6, 7), 0.5), ((40, 30, 20), 0.9), ((32, 32, 32), 0.99), ((1, 50, 3), 0.7),
+                     ((30, 1, 1), 0.8), ((60, 50, 40), 0.999)]:
+        a = rng.random(shape) < p
+        a[0, 0, 0] = False
+        assert np.array_equal(edt(a), ndimage.distance_transform_edt(a))
