@@ -159,3 +159,33 @@ def test_surface_fit_is_the_same_kept_between_load_cases():
     part = cg.restrict(keep)
     assert not hasattr(part, "_fit")
     part.nodal_stress(u1.reshape(-1, 3)[np.unique(cg.mesh.enode[keep])].ravel(), E)
+
+
+def test_compiled_stress_read_agrees_with_numpy(monkeypatch):
+    """The compiled stress read (stressops: element fields, sample and
+    corner stresses, the fit's weights and their sum) gives the numpy
+    path's numbers to rounding, with and without a free expansion and a
+    stress mask, and plan_fit found ahead is the plan nodal_stress uses."""
+    from loadpath import stressops
+
+    if not stressops.available():
+        pytest.skip("numba kernels off")
+    rng = np.random.default_rng(7)
+    u = rng.standard_normal(_block().mesh.n_dof) * 1e-3
+    for th, masked in ((None, False), (1e-4, False), (None, True)):
+        fast, slow = _block(), _block()
+        if masked:
+            fast.stress_mask = slow.stress_mask = rng.random(fast.mesh.n_elem) < 0.8
+        t = None if th is None else np.full(fast.mesh.n_elem, th)
+        mod = rng.uniform(0.5, 1.5, fast.mesh.n_elem) * E
+        plan = fast.plan_fit()
+        a = fast.nodal_stress(u, mod, thermal=t)
+        assert fast._fit is plan
+        monkeypatch.setenv("LOADPATH_STRESSOPS", "numpy")
+        b = slow.nodal_stress(u, mod, thermal=t)
+        xs, ws, ss = slow._samples(plan[2], u, mod, t)
+        monkeypatch.delenv("LOADPATH_STRESSOPS")
+        assert np.abs(a - b).max() <= 1e-12 * np.abs(b).max()
+        xf, wf, sf = fast._samples(plan[2], u, mod, t)
+        assert np.array_equal(xf, xs) and np.array_equal(wf, ws)
+        assert np.abs(sf - ss).max() <= 1e-12 * np.abs(ss).max()

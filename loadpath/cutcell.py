@@ -38,6 +38,9 @@ resolve (0.97-1.06 at 2.5x finer). The whole-cell staircase reads
 """
 from __future__ import annotations
 
+import threading
+import weakref
+
 import numpy as np
 import scipy.sparse as sp
 
@@ -198,7 +201,8 @@ class CutGrid:
             return self
         new = object.__new__(CutGrid)
         new.__dict__.update(self.__dict__)
-        new.__dict__.pop("_fit", None)          # nodal_stress's surface fit: the kept elements' own
+        for k in ("_fit", "_nek", "_cut_pos"):  # nodal_stress's surface fit and maps: the kept elements' own
+            new.__dict__.pop(k, None)
         new.mesh = HexMesh(self.mesh.elem_ijk[keep], self.pitch, self.origin)
         new.fill, new.ind, new.cut = self.fill[keep], self.ind[keep], self.cut[keep]
         pos = np.full(self.mesh.n_elem, -1, np.int64)
@@ -252,17 +256,47 @@ class CutGrid:
 
     # --- stress ---------------------------------------------------------------
 
+    def _sample_groups(self, near):
+        """The solid sample points of the elements in `near` (bool per
+        element), as groups (elements, point, weight) in the order they are
+        read: a full cell's eight Gauss points (points 0-7), then a cut
+        cell's solid sub-cell centres (8 on, rule.centers' order); and the
+        points' natural coordinates."""
+        g = np.array([[a, b, cc] for a in (-_GAUSS, _GAUSS) for b in (-_GAUSS, _GAUSS) for cc in (-_GAUSS, _GAUSS)])
+        full = np.nonzero(near & ~self.cut)[0]
+        cut = np.nonzero(near & self.cut)[0]
+        groups = [(full, qi, 1.0 / 8) for qi in range(len(g))] if len(full) else []
+        if len(cut):
+            ind = self.ind[cut]
+            groups += [(cut[ind[:, sidx]], len(g) + sidx, 1.0 / self.n ** 3)
+                       for sidx in range(len(self.rule.centers))]
+        return [gr for gr in groups if len(gr[0])], np.concatenate([g, np.asarray(self.rule.centers, float)])
+
+    def _sample_points(self, near):
+        """(xyz, weight) of _samples' points, without the stress."""
+        groups, xi = self._sample_groups(near)
+        if not groups:
+            return np.zeros((0, 3)), np.zeros(0)
+        m = self.mesh
+        sel = np.concatenate([gr[0] for gr in groups])
+        pts = np.concatenate([np.full(len(gr[0]), gr[1]) for gr in groups])
+        xyz = m.origin + (m.elem_ijk[sel] + 0.5 * (xi[pts] + 1.0)) * self.pitch
+        return xyz, np.concatenate([np.full(len(gr[0]), gr[2]) for gr in groups])
+
     def _samples(self, near, u, modulus, thermal=None):
         """Stress at the solid sample points of the elements in `near` (bool
         per element): a full cell's eight Gauss points, a cut cell's solid
         sub-cell centres. Returns (xyz, weight, stress)."""
+        from . import stressops
+
+        if stressops.available():
+            return (*self._sample_points(near), self._sample_stress(near, u, modulus, thermal))
         m = self.mesh
         c = elastic_c(1.0, self.nu)
         mod = np.broadcast_to(np.asarray(modulus, float), (m.n_elem,))
         th = None if thermal is None else np.asarray(thermal, float)
         pos = np.full(m.n_elem, -1, np.int64)
         pos[self.cut_index] = np.arange(len(self.cut_index))
-        g = np.array([[a, b, cc] for a in (-_GAUSS, _GAUSS) for b in (-_GAUSS, _GAUSS) for cc in (-_GAUSS, _GAUSS)])
         xyz, w, sig = [], [], []
         # what an element brings to every one of its points, once: its
         # nodes' displacements, bubble amplitudes and (cut cells) the mean
@@ -278,9 +312,10 @@ class CutGrid:
         if isc.any():
             alpha_n[isc] = np.einsum("pij,pj->pi", self.r_cut[k[isc]], ue_n[isc])
             off_n[isc] = np.einsum("pij,pj->pi", self.mbar_cut[k[isc]], alpha_n[isc])
-
-        def put(el, xi_pt, weight):
+        groups, xi = self._sample_groups(near)
+        for el, pt, weight in groups:
             j = row[el]
+            xi_pt = xi[pt]
             bu, ba = b_nodes(xi_pt[None])[0], b_bubbles(xi_pt[None])[0]
             eps = ue_n[j] @ bu.T + alpha_n[j] @ ba.T
             eps -= off_n[j]
@@ -290,21 +325,46 @@ class CutGrid:
             sig.append((eps @ c.T) * mod[el][:, None])
             xyz.append(m.origin + (m.elem_ijk[el] + 0.5 * (xi_pt + 1.0)) * self.pitch)
             w.append(np.full(len(el), weight))
-
-        full = np.nonzero(near & ~self.cut)[0]
-        if len(full):
-            for q in g:
-                put(full, q, 1.0 / 8)
-        cut = np.nonzero(near & self.cut)[0]
-        if len(cut):
-            ind = self.ind[cut]
-            for sidx, q in enumerate(self.rule.centers):
-                el = cut[ind[:, sidx]]
-                if len(el):
-                    put(el, q, 1.0 / self.n ** 3)
         if not xyz:
             return np.zeros((0, 3)), np.zeros(0), np.zeros((0, 6))
         return np.concatenate(xyz), np.concatenate(w), np.concatenate(sig)
+
+    def _sample_stress(self, near, u, modulus, thermal=None):
+        """_samples' stress alone, (points, 6): one compiled pass over the
+        elements' fields, one over the points (stressops)."""
+        from . import stressops
+
+        if not stressops.available():
+            return self._samples(near, u, modulus, thermal)[2]
+        m = self.mesh
+        groups, xi = self._sample_groups(near)
+        if not groups:
+            return np.zeros((0, 6))
+        mod = np.broadcast_to(np.asarray(modulus, float), (m.n_elem,))
+        els = np.nonzero(near)[0]
+        row = np.full(m.n_elem, -1, np.int64)
+        row[els] = np.arange(len(els))
+        ue_n, alpha_n, off_n = self._element_fields(u, els)
+        sel = np.concatenate([gr[0] for gr in groups])
+        pts = np.concatenate([np.full(len(gr[0]), gr[1]) for gr in groups])
+        th = None if thermal is None else np.asarray(thermal, float)[sel]
+        return stressops.point_stress(ue_n, alpha_n, off_n, row[sel], pts, mod[sel], th,
+                                      b_nodes(xi), b_bubbles(xi), elastic_c(1.0, self.nu), self.pitch)
+
+    def _element_fields(self, u, els=None):
+        """Per element of `els` (all when None): its 24 nodal displacements,
+        9 bubble amplitudes and the mean bubble strain a cut cell takes off
+        (0 on a full cell): (ue, alpha, off)."""
+        from . import stressops
+
+        m = self.mesh
+        pos = getattr(self, "_cut_pos", None)
+        if pos is None or len(pos) != m.n_elem:
+            pos = np.full(m.n_elem, -1, np.int64)
+            pos[self.cut_index] = np.arange(len(self.cut_index))
+            self._cut_pos = pos
+        els = np.arange(m.n_elem) if els is None else np.asarray(els, np.int64)
+        return stressops.element_fields(u, m.edof, els, pos, self.r_full, self.r_cut, self.mbar_cut)
 
     def surface_points(self, xyz, k=8):
         """Points on the true surface nearest each of xyz (the mean of the k
@@ -329,15 +389,11 @@ class CutGrid:
         the true surface read the surface fit at their closest surface
         point; the rest the fill-weighted average of their elements' corner
         stresses (verify.nodal_stress's recovery)."""
+        from . import stressops
 
         m = self.mesh
         c = elastic_c(1.0, self.nu)
         mod = np.broadcast_to(np.asarray(modulus, float), (m.n_elem,))
-        ue = u[m.edof]                                              # (e, 24)
-        alpha = ue @ self.r_full.T                                  # (e, 9) bubble amplitudes
-        if len(self.cut_index):
-            alpha[self.cut_index] = np.einsum("pij,pj->pi", self.r_cut, ue[self.cut_index])
-        acc = np.zeros((m.n_nodes, 6))
         # cells whose stress is the printed material's (a bought member's cells are not: stock.py); a node
         # reads the cells of the part round it, never a member's
         mask = getattr(self, "stress_mask", None)
@@ -345,43 +401,74 @@ class CutGrid:
         wsum = np.bincount(m.enode.ravel(), weights=np.repeat(fill, 8), minlength=m.n_nodes)
         corners = 2.0 * CORNERS - 1.0
         bu, ba = b_nodes(corners), b_bubbles(corners)
-        for k in range(8):
-            eps = ue @ bu[k].T + alpha @ ba[k].T
+        fast = stressops.available()
+        if fast:
+            # each node sums its (up to 8) elements' corner stresses, corner
+            # by corner as the bincounts below add them, in one pass
+            ue, alpha, off = self._element_fields(u)
+            got = getattr(self, "_nek", None)
+            if got is not None and got[0] is m.enode:
+                nek = got[1]
+            else:
+                # the element whose corner k a node is (one at most), -1 none
+                nek = np.full((m.n_nodes, 8), -1, np.int64)
+                for k in range(8):
+                    nek[m.enode[:, k], k] = np.arange(m.n_elem)
+                self._nek = (m.enode, nek)
+            acc = stressops.corner_sum(ue, alpha, off, mod * fill,
+                                       None if thermal is None else np.asarray(thermal, float),
+                                       bu, ba, c, self.pitch, nek)
+        else:
+            ue = u[m.edof]                                              # (e, 24)
+            alpha = ue @ self.r_full.T                                  # (e, 9) bubble amplitudes
             if len(self.cut_index):
-                eps[self.cut_index] -= np.einsum("pij,pj->pi", self.mbar_cut, alpha[self.cut_index])
-            eps /= self.pitch
-            if thermal is not None:
-                eps[:, :3] -= np.asarray(thermal, float)[:, None]
-            sk = (eps @ c.T) * (mod * fill)[:, None]
-            for j in range(6):
-                acc[:, j] += np.bincount(m.enode[:, k], weights=sk[:, j], minlength=m.n_nodes)
+                alpha[self.cut_index] = np.einsum("pij,pj->pi", self.r_cut, ue[self.cut_index])
+            acc = np.zeros((m.n_nodes, 6))
+            for k in range(8):
+                eps = ue @ bu[k].T + alpha @ ba[k].T
+                if len(self.cut_index):
+                    eps[self.cut_index] -= np.einsum("pij,pj->pi", self.mbar_cut, alpha[self.cut_index])
+                eps /= self.pitch
+                if thermal is not None:
+                    eps[:, :3] -= np.asarray(thermal, float)[:, None]
+                sk = (eps @ c.T) * (mod * fill)[:, None]
+                for j in range(6):
+                    acc[:, j] += np.bincount(m.enode[:, k], weights=sk[:, j], minlength=m.n_nodes)
         out = acc / np.maximum(wsum, 1e-30)[:, None]
-        # the surface nodes' fit is the same for every load case: where they
-        # are, which samples each reads and with what weights are found once
-        key = (id(m), id(self.fill), id(self.cut), None if mask is None else hash(np.asarray(mask).tobytes()))
-        fit, sig = getattr(self, "_fit", None), None
-        if fit is None or fit[0] != key:
-            fit, sig = self._fit_plan(key, mask, u, modulus, thermal)
-            if fit[3].size <= _FIT_KEEP:
-                self._fit = fit
-        _, cand, near_el, idx, wts = fit
+        _, cand, near_el, idx, wts = self.plan_fit()
         if not len(cand):
             return out
-        if sig is None:
-            sig = self._samples(near_el, u, modulus, thermal)[2]
+        sig = self._sample_stress(near_el, u, modulus, thermal)
+        if fast:
+            stressops.fit_apply(wts, idx, sig, cand, out)
+            return out
         for s in range(0, len(cand), 20000):
             sl = slice(s, s + 20000)
             out[cand[sl]] = np.einsum("qk,qkc->qc", wts[sl], sig[idx[sl]])
         return out
 
-    def _fit_plan(self, key, mask, u, modulus, thermal):
-        """(key, surface nodes, the elements whose samples they read, each
-        node's samples, their weights in its fit), and the samples' stress
-        under this load case."""
+    def plan_fit(self):
+        """The surface fit's plan: (key, surface nodes, the elements whose
+        samples they read, each node's samples, their weights in its fit).
+        It is the geometry's alone, the same for every load case, so it is
+        found once (kept unless over _FIT_KEEP), and can be found ahead,
+        on another thread, while the displacements are solved (verify)."""
+        mask = getattr(self, "stress_mask", None)
+        key = (id(self.mesh), id(self.fill), id(self.cut), None if mask is None else hash(np.asarray(mask).tobytes()))
+        with _fit_lock(self):
+            fit = getattr(self, "_fit", None)
+            if fit is not None and fit[0] == key:
+                return fit
+            fit = self._fit_plan(key, mask)
+            if fit[3].size <= _FIT_KEEP:
+                self._fit = fit
+            return fit
+
+    def _fit_plan(self, key, mask):
         from scipy.spatial import cKDTree
 
         m = self.mesh
-        none = (key, np.zeros(0, np.int64), None, np.zeros((0, 0), np.int64), np.zeros((0, 0))), None
+        none = (key, np.zeros(0, np.int64), None, np.zeros((0, 0), np.int64), np.zeros((0, 0)))
         # nodes on cut cells, or touching the grid's empty neighbours
         on_cut = np.zeros(m.n_nodes, bool)
         on_cut[m.enode[self.cut].ravel()] = True
@@ -408,7 +495,7 @@ class CutGrid:
             near_el = nn[m.enode].any(axis=1)
         if mask is not None:
             near_el &= mask
-        xyz, w, sig = self._samples(near_el, u, modulus, thermal)
+        xyz, w = self._sample_points(near_el)
         if not len(xyz):
             return none
         tree = cKDTree(xyz)
@@ -416,7 +503,21 @@ class CutGrid:
         dist, idx = tree.query(p, k=k, workers=-1)
         idx = np.asarray(idx).reshape(len(p), k)
         dist = np.asarray(dist).reshape(len(p), k)
-        return (key, cand, near_el, idx, _fit_weights(p, xyz, w, dist, idx, self.pitch)), sig
+        return key, cand, near_el, idx, _fit_weights(p, xyz, w, dist, idx, self.pitch)
+
+
+_FIT_LOCKS = weakref.WeakKeyDictionary()
+_FIT_LOCKS_GUARD = threading.Lock()
+
+
+def _fit_lock(grid):
+    """One lock per CutGrid: a plan found ahead on another thread is waited
+    for, not found twice."""
+    with _FIT_LOCKS_GUARD:
+        lk = _FIT_LOCKS.get(grid)
+        if lk is None:
+            lk = _FIT_LOCKS[grid] = threading.Lock()
+        return lk
 
 
 _FIT_KEEP = 16_000_000          # weights kept between load cases (128 MB, as many indices)
@@ -426,6 +527,10 @@ def _fit_weights(p, xyz, w, dist, idx, h):
     """_fit_linear's value at each point as weights on its neighbours'
     values, (p, k): the fit is linear in them, and the weights are the
     geometry's alone."""
+    from . import stressops
+
+    if stressops.available():
+        return stressops.fit_weights(p, xyz, w, dist, idx, h, FIT_TAPER)
     out = np.empty(idx.shape)
     e0 = np.array([1.0, 0.0, 0.0, 0.0])
     for s in range(0, len(p), 20000):

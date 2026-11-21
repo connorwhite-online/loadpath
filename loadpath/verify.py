@@ -2069,16 +2069,29 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
 
     # Stress is read against strength as an average over the material's own
     # length (_MaterialAverage), as the tetrahedral check reads it
+    radius = None
     if _averaged():
         from .crosscheck import stress_radius
 
         radius, report["stressReading"] = stress_radius(study, pitch)
-        average = _MaterialAverage(hm.node_xyz, hm.enode, fill, pitch, radius)
-    else:
-        average = None
+
+    def prepare_read():
+        # what reading the stress needs of the grid alone, found on a thread
+        # while the displacements are solved: the cut cells' surface fit
+        # (CutGrid.plan_fit) and the averaging operator
+        if cg is not None:
+            cg.plan_fit()
+        return _MaterialAverage(hm.node_xyz, hm.enode, fill, pitch, radius) if radius is not None else None
+
+    from .pools import pool
+
+    _read_pool = pool(2, "loadpath-read")
+    _read_prep = _read_pool.submit(prepare_read)
+    _read_pool.shutdown(wait=False)
 
     def read(stiff, u, modulus, thermal=None):
         sig = nodal_stress(stiff, u, modulus, thermal)
+        average = _read_prep.result()
         return sig if average is None else average(sig)
 
     # Impact cases (loadCases[].impact): the force is what stops the energy
