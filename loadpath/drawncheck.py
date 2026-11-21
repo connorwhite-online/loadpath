@@ -58,7 +58,7 @@ def exterior_report(study, mesh) -> dict | None:
     if len(study.design_space) != 1 or not isinstance(study.design_space[0], MeshShape):
         return None
     sk = study.raw.get("skin")
-    if not sk or (isinstance(sk, dict) and sk.get("open")):
+    if not sk or sk == "solid" or (isinstance(sk, dict) and sk.get("open")):
         return None
     base = getattr(study, "base_dir", None)
     # the cuts the openings made (a box round a drawn port opens the port only)

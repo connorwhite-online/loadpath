@@ -1840,7 +1840,10 @@ STUDY_SCHEMA = {
                                  "clamps are designed round them and every joint is checked (docs/STOCK.md)."},
         "supports": {"type": "array", "items": {"$ref": "#/$defs/support"},
                      "description": "Where the part is held. Required unless every load is a pressure."},
-        "skin": {"anyOf": [_POS, {"type": "object", "properties": {
+        "skin": {"anyOf": [_POS, {"const": "solid", "description": "build/check-build: the part is drawn whole "
+                                                                   "(a bracket, a mount): the designSpace is the "
+                                                                   "part, no cavity; as a study, no skin"},
+                           {"type": "object", "properties": {
                      "thickness": _POS,
                      "open": {"type": "array", "items": {"type": "string", "pattern": "^[+-]?[xyz]$"},
                               "description": "design-space faces left without skin, like '-z' (where ribs "

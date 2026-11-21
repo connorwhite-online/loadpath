@@ -264,11 +264,44 @@ def test_mcp_job_reads_back():
     assert os.path.exists(info["part"]) and pngs and pngs[0][:4] == b"\x89PNG", info
 
 
+def test_a_part_drawn_whole_is_checked_without_a_skin():
+    """A bracket or a mount drawn whole in CAD has no exterior to hollow:
+    `skin: "solid"` checks it as drawn (it was refused for want of a skin)."""
+    d = tempfile.mkdtemp(prefix="lp-solid-")
+    Path(d, "cad.py").write_text(
+        "from build123d import Box, Cylinder, Pos\n"
+        "def body():\n    return Box(40, 20, 6) - Pos(10, 0, 0) * Cylinder(2.25, 10)\n"
+        "def bolt():\n    return Pos(10, 0, 0) * Cylinder(2.0, 20)\n")
+    doc = {"name": "plate", "designSpace": {"type": "brep", "path": "cad.py:body"}, "skin": "solid",
+           "material": "petg", "process": "fdm",
+           "components": [{"id": "bolt", "shape": {"type": "brep", "path": "cad.py:bolt"}, "clearance": 0.0}],
+           "assert": [{"type": "wall", "min": 1.0}]}
+    assert not lint(doc, "study"), lint(doc, "study")
+    spec = build_spec(doc, d)
+    assert spec.solid
+    import trimesh
+    part = trimesh.creation.box((40, 20, 6))
+    hole = trimesh.creation.cylinder(2.25, 10, sections=96)
+    hole.apply_translation((10, 0, 0))
+    part = part.difference(hole)
+    rep = check_part(doc, part, base_dir=d, render=False)
+    assert _row(rep, "closed")["ok"] and _row(rep, "exterior")["ok"], rep["failed"]
+    c = _row(rep, "clear:bolt")
+    assert c["ok"] and c["value"] >= 0.2, c
+    try:
+        build_spec({**doc, "skin": "hollow"}, d)
+    except ValueError as exc:
+        assert "solid" in str(exc)
+    else:
+        raise AssertionError("an unknown skin word was taken")
+
+
 TESTS = [
     test_spec_lints_and_parses,
     test_pod_builds_and_passes_every_check,
     test_a_square_port_fails_its_fillet_assertion,
     test_checks_run_on_a_part_made_elsewhere,
+    test_a_part_drawn_whole_is_checked_without_a_skin,
     test_a_patched_seam_fails_the_region_check,
     test_a_round_against_a_mesh_exterior,
     test_a_mass_out_of_reach_says_so,

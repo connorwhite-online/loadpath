@@ -109,6 +109,7 @@ class BuildSpec:
     skin_lo: float | None = None
     skin_hi: float | None = None
     build_direction: object = None
+    solid: bool = False                # skin "solid": the designSpace is the part, no cavity
     _ext_man: object = None
     _ext_mesh: object = None
 
@@ -192,8 +193,16 @@ def build_spec(doc: dict, base_dir: str | None = None) -> BuildSpec:
 
     skin = doc.get("skin")
     if skin is None:
-        raise ValueError("skin is the wall the body keeps of the exterior: a thickness in mm, or "
-                         "{thickness, zones: [{id, shape, thickness, blend}]}")
+        raise ValueError("skin is the wall the body keeps of the exterior: a thickness in mm, "
+                         "{thickness, zones: [{id, shape, thickness, blend}]}, or \"solid\" for a part "
+                         "drawn whole (a bracket, a mount: the designSpace is the part)")
+    solid = isinstance(skin, str) and skin.strip().lower() == "solid"
+    if isinstance(skin, str) and not solid:
+        raise ValueError(f"skin is a thickness in mm, an object, or \"solid\"; got {skin!r}")
+    if solid:
+        # no cavity: the walls fill the exterior (assemble skips the field)
+        lo, hi = exterior.bounds()
+        skin = {"thickness": float(np.linalg.norm(np.asarray(hi) - np.asarray(lo)))}
     if isinstance(skin, (int, float)):
         skin = {"thickness": skin}
     t0 = skin.get("thickness")
@@ -275,7 +284,9 @@ def build_spec(doc: dict, base_dir: str | None = None) -> BuildSpec:
     spec = BuildSpec(name=str(doc.get("name", "part")), exterior=exterior, skin=float(t0), zones=zones,
                      interfaces=interfaces, components=components, material=material, process=proc,
                      target=None, asserts=list(doc.get("assert") or []), references=list(doc.get("references") or []),
-                     doc=doc, base_dir=base_dir, build_direction=build_dir)
+                     doc=doc, base_dir=base_dir, build_direction=build_dir, solid=solid)
+    if solid and spec.adjustable():
+        raise ValueError("a solid part has no wall to move: targetMass.adjust needs a skin")
 
     tm = doc.get("targetMass")
     if tm is not None:
@@ -516,6 +527,8 @@ def assemble(spec: BuildSpec, body: BodyField, pitch: float, progress=None):
     t = time.time()
     info = {"pitch": round(float(pitch), 4)}
     try:
+        if spec.solid:
+            raise ValueError("no inside: a solid part")
         cav = field_mesh(body, lo, hi, pitch=pitch, project=3, progress=progress)
         cav_man = manifold_from_trimesh(cav)
         info["cavityVolume"] = round(float(cav.volume), 2)
@@ -561,6 +574,8 @@ def _pitch(spec: BuildSpec, quick: bool, pitch=None):
         return float(pitch)
     lo, hi = spec.exterior.bounds()
     thin = min([spec.skin] + [z.thickness for z in spec.zones])
+    if spec.solid:
+        thin = 2.0                       # nothing is sampled but the checks' grids; keep the pitch modest
     p = thin / (2.5 if quick else 4.0)
     # and no coarser than the smallest fillet can be drawn on
     blends = [i.blend for i in spec.interfaces if i.blend > 0]

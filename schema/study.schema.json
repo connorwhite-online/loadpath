@@ -75,6 +75,10 @@
           "exclusiveMinimum": 0
         },
         {
+          "const": "solid",
+          "description": "build/check-build: the part is drawn whole (a bracket, a mount): the designSpace is the part, no cavity; as a study, no skin"
+        },
+        {
           "type": "object",
           "properties": {
             "thickness": {

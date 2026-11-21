@@ -22,7 +22,7 @@ needs no loads or supports. With them it is also an ordinary study.
 | Block | What it is |
 |---|---|
 | `designSpace` | the exterior, kept exactly: a CAD solid, STEP, mesh or SDF |
-| `skin` | the wall kept of it, and `zones` where the wall is another thickness |
+| `skin` | the wall kept of it, and `zones` where the wall is another thickness; `"solid"` for a part drawn whole (a bracket, a mount: no cavity, the designSpace is the part) |
 | `interfaces` | features that must be exact, as CAD solids: `add` (a boss, a plunger, a cradle) or `cut` (a port, a bore, an opening) |
 | `components` | the bought parts as solids where they sit, with `clearance`, `mass`, `keepIn`, `insertFrom` |
 | `targetMass` | grams, and which walls may move to reach it |

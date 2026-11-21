@@ -1953,7 +1953,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if "bore" not in next((k for k in d.get("keepOut") or [] if k.get("id") == r.id), {}):
             # a pressure vessel's cavity is closed on purpose
             r.bore = r.bore and r.id not in pressurized
-    if d.get("skin") is not None:
+    if d.get("skin") is not None and d.get("skin") != "solid":    # "solid": a part drawn whole (build)
         t, shape = _skin(d["skin"], design_space, base_dir)
         if "skin" in taken:
             raise ValueError("region id 'skin' is taken; it names the design space's skin")

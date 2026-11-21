@@ -568,7 +568,7 @@ def _process_checks(spec, mesh):
         return rows
     from .dfm_reference import review
 
-    floor = min([spec.skin] + [z.thickness for z in spec.zones])
+    floor = None if getattr(spec, "solid", False) else min([spec.skin] + [z.thickness for z in spec.zones])
     measured = None
     if proc in ("sls", "mjf", "sla", "dlp"):
         from .processcheck import check_process
