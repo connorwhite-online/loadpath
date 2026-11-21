@@ -245,6 +245,29 @@ def test_a_pinned_wall_sets_the_cell_when_the_study_did_not():
     assert thin(check_study(lid(0.6)))
 
 
+def test_a_searchs_candidates_read_a_pinned_wall_at_two_cut_cells():
+    """A cut cell does not round a wall's thickness, so a search's own
+    reading of a candidate spends two cells through it; the delivered
+    reading keeps four, and so does any reading on whole cells."""
+    import trimesh
+
+    from loadpath.verify import SEARCH_SHELL_CELLS, _analysis_grid
+
+    st = study_from_dict({"designSpace": [_box([-30, -20, 0], [30, 20, 2])], "skin": {"thickness": 1.6, "open": ["-z"]},
+                          "supports": [{"shape": _box([-30, -20, -0.5], [-24, 20, 0.3])},
+                                       {"shape": _box([24, -20, -0.5], [30, 20, 0.3])}],
+                          "loads": [{"shape": _cyl([0, 0, 1.8], "z", 0.8, 6), "force": [0, 0, -60]}],
+                          "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2},
+                          "resolution": {"maxElements": 20000}})
+    lid = trimesh.creation.box(extents=[60, 40, 2])
+    lid.apply_translation([0, 0, 1])
+    vol = float(lid.volume)
+    grid = lambda **kw: _analysis_grid(st, lid, vol, 2000, **kw).pitch  # noqa: E731
+    assert abs(grid() - 0.4) < 1e-9
+    assert abs(grid(shell_cells=SEARCH_SHELL_CELLS) - 0.8) < 1e-9
+    assert abs(grid(shell_cells=SEARCH_SHELL_CELLS, cut_cells=False) - 0.4) < 1e-9
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 

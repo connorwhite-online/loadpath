@@ -553,6 +553,18 @@ _WET_SMOOTH = 1.5
 # cells verification will spend getting there
 _SHELL_CELLS = 4.0
 _SHELL_MAX_CELLS = 400_000
+# Cells through the wall for a search's own reading of a candidate, where cut
+# cells are on. Four is for whole cells, whose walls round to a cell. A cut
+# cell integrates the wall's true thickness and its incompatible-mode element
+# bends exactly in one layer, so the count has only to place the wall in the
+# grid: on cut cells a ribbed lid's 1.5 mm skin read safety factor 1.88, 1.87
+# and 2.09 at 4, 2.5 and 2 cells through (2.00 at 6) and its deflection within
+# 5%, a tray's 2 mm wall 5.44, 5.75 and 5.38 (5.31 at 6), and a cantilever
+# plate's deflection held to 2-4% down to 2 cells and fell off below 1.5; the
+# check at 2 took a fifth of the time at 4. The part a search picks is read
+# again (its confirm, at _SHELL_CELLS, or on tets), so this sets the cost of
+# looking, not the delivered reading.
+SEARCH_SHELL_CELLS = 2.0
 # A grid coarser than the design's reads the part it was designed on
 # coarser still: a 3 mm deck designed at 1.5 mm cells, analysed at 1.91,
 # sagged 2.16 mm where 1.41 mm cells read 4.09 and tets 6.8 (the fan
@@ -1377,7 +1389,7 @@ def _joined_through_faces(mesh, pitch, solid, origin):
 
 
 def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=None, contact_band=None,
-                   cut_cells=None, fractional: bool = False, nu=None, max_pitch=None):
+                   cut_cells=None, fractional: bool = False, nu=None, max_pitch=None, shell_cells=None):
     """The grid a finished part is analyzed on (verify_part's, and the
     across-layer readings behind orient.rank_orientations, so the two read
     the same part the same way): the pitch, the cells (cut cells unless the
@@ -1408,16 +1420,18 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
     if max_pitch and pitch > max_pitch:
         # no coarser than the grid the part was designed on, within a budget
         pitch = max(max_pitch, (vol / (_MAX_PITCH_STRETCH * max_cells)) ** (1.0 / 3.0))
+    cut = use_cut_cells(study, cut_cells) and not fractional
     if study.shells:
         # A wall voxelizes to a whole number of cells, so at two or three
         # cells through it reads up to a cell thick or thin: bending stress
         # goes as 1/t^2, and a plenum's 2 mm wall read 2.4 mm and 30% under
         # its stress at 0.8 mm cells. Four cells through the thinnest wall or
-        # skin, within a cell budget.
+        # skin, within a cell budget (`shell_cells`: fewer, on cut cells,
+        # which do not round: SEARCH_SHELL_CELLS).
         thin = min(t for _, t in study.shells)
-        pitch = min(pitch, max(thin / _SHELL_CELLS, (vol / _SHELL_MAX_CELLS) ** (1.0 / 3.0)))
+        through = min(_SHELL_CELLS, shell_cells) if shell_cells and cut else _SHELL_CELLS
+        pitch = min(pitch, max(thin / through, (vol / _SHELL_MAX_CELLS) ** (1.0 / 3.0)))
     share = None
-    cut = use_cut_cells(study, cut_cells) and not fractional
     cg = None
     if cut:
         from .cutcell import cut_from_mesh
@@ -1769,7 +1783,8 @@ def verify_part(study: Study, mesh, *args, **kwargs) -> dict:
 
 def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
                  contact_band: float | None = None, refine: int = 3, fields: bool = False,
-                 fractional: bool = False, cut_cells: bool | None = None, max_pitch: float | None = None) -> dict:
+                 fractional: bool = False, cut_cells: bool | None = None, max_pitch: float | None = None,
+                 shell_cells: float | None = None) -> dict:
     """Analyze a finished part (trimesh) against the study. Returns a JSON-able
     report. `contact_band` (mm) is how far from applied loads and supports
     stress is left out of the peak; it defaults to 1.5 analysis cells, and the
@@ -1791,7 +1806,9 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     (cutcell.py): sub-cell stiffness, stress read on the surface, and
     finer submodels on members under 3 cells thick; member thickness no
     longer rounds to whole cells (the robot arm's wrist link struts: whole cells
-    0.35-3.5x of fine tets, cut cells 0.74-1.13x; docs/BENCHMARKS.md)."""
+    0.35-3.5x of fine tets, cut cells 0.74-1.13x; docs/BENCHMARKS.md).
+    `shell_cells`: cells through the thinnest pinned wall where cut cells are
+    on (default _SHELL_CELLS; a search's candidates take SEARCH_SHELL_CELLS)."""
     from .shapes import manifold_from_trimesh
 
     t0 = time.time()
@@ -1944,7 +1961,7 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     # its own copy of the mesh: trimesh's caches are not for two threads
     _geo = _geo_pool.submit(geometry, {}, mesh if isinstance(_geo_pool, SerialExecutor) else mesh.copy())
     g = _analysis_grid(study, mesh, vol, max_cells, min_pitch, contact_band, cut_cells, fractional,
-                       max_pitch=max_pitch)
+                       max_pitch=max_pitch, shell_cells=shell_cells)
     pitch, cg, solid, origin, share = g.pitch, g.cg, g.solid, g.origin, g.share
     hm, bc, fill, band, edges, on_edge = g.hm, g.bc, g.fill, g.band, g.edges, g.on_edge
     support_nodes, fixed = bc.support_nodes, bc.fixed
