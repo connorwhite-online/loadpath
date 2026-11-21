@@ -112,6 +112,13 @@ def edge_continuity(shape, samples=24, skip_seams=True):
     m = _edge_face_map()
     TopExp.MapShapesAndAncestors_s(_as_face(shape), TopAbs_EDGE, TopAbs_FACE, m)
     out = []
+    all_faces = []
+    from OCP.TopExp import TopExp_Explorer
+    ex = TopExp_Explorer(_as_face(shape), TopAbs_FACE)
+    while ex.More():
+        if not any(ex.Current().IsSame(g) for g in all_faces):
+            all_faces.append(ex.Current())
+        ex.Next()
     for i in range(1, m.Extent() + 1):
         fl = list(m.FindFromIndex(i))
         e = TopoDS.Edge(m.FindKey(i))
@@ -156,17 +163,87 @@ def edge_continuity(shape, samples=24, skip_seams=True):
             g1 = float(np.degrees(np.arccos(np.clip(abs(na @ nb), -1, 1))))
             g2 = float(abs(ka - kb))
             share = g2 / max(abs(ka), abs(kb), 1e-9)
-            rows.append((g0, g1, g2, share, pa))
+            rows.append((g0, g1, g2, share, pa, na))
         r = np.array([x[:4] for x in rows])
         w = int(np.argmax(r[:, 1]))
+        pts = np.array([x[4] for x in rows])
+        nrm = np.mean([x[5] for x in rows], axis=0)
         out.append({"edge": i, "G0": float(r[:, 0].max()), "G1": float(r[:, 1].max()), "G2": float(r[:, 2].max()),
-                    "G2share": float(r[:, 3].max()), "point": np.round(rows[w][4], 2).tolist()})
+                    "G2share": float(r[:, 3].max()), "point": np.round(rows[w][4], 2).tolist(),
+                    "faces": sorted(next((k for k, g in enumerate(all_faces) if g.IsSame(f)), -1) for f in (fa, fb)),
+                    "centre": pts.mean(0).tolist(), "normal": (nrm / max(np.linalg.norm(nrm), 1e-30)).tolist(),
+                    "points": pts})
     summ = {"edges": len(out),
             "worstG0": max((x["G0"] for x in out), default=0.0),
             "worstG1": max((x["G1"] for x in out), default=0.0),
             "worstG2": max((x["G2"] for x in out), default=0.0),
             "worstG2share": max((x["G2share"] for x in out), default=0.0)}
     return out, summ
+
+
+def joins(shape, g1=0.5, g2=0.002, samples=24):
+    """Every join of a B-rep (the shared edges between one pair of faces,
+    taken together: a boss's root, an opening's lip, a cap's rim), graded:
+    [{"faces", "G0", "G1", "G2", "grade", "centre", "normal", "radius"}],
+    worst first. grade is "crease" (tangent planes differ by more than `g1`
+    degrees: an edge meant to be seen, or a mistake), "tangent" (planes
+    agree, curvature jumps by more than `g2` /mm: a reflection bends
+    there) or "curvature" (continuous to both). A designer's STEP exterior
+    or a surfaced part reads the same way."""
+    rows, _ = edge_continuity(shape, samples)
+    by = {}
+    for r in rows:
+        by.setdefault(tuple(r["faces"]), []).append(r)
+    out = []
+    for fc, rs in by.items():
+        pts = np.vstack([r["points"] for r in rs])
+        c = pts.mean(0)
+        n = np.mean([r["normal"] for r in rs], axis=0)
+        w1, w2 = max(r["G1"] for r in rs), max(r["G2"] for r in rs)
+        out.append({"faces": list(fc), "G0": max(r["G0"] for r in rs), "G1": w1, "G2": w2,
+                    "grade": "crease" if w1 > g1 else "tangent" if w2 > g2 else "curvature",
+                    "centre": c.tolist(), "normal": (n / max(np.linalg.norm(n), 1e-30)).tolist(),
+                    "radius": float(np.linalg.norm(pts - c, axis=1).max())})
+    rank = {"crease": 0, "tangent": 1, "curvature": 2}
+    out.sort(key=lambda j: (rank[j["grade"]], -j["G1"], -j["G2"]))
+    return out
+
+
+def join_sheet(shape, path, mesh=None, limit=12, stripes=16, size=520, **grade):
+    """A close-up of every join (`joins`), zebra-striped, each framed on
+    its own edge and titled with its grade and numbers: the check a
+    surfacing artist makes by eye, for every opening and mount at once.
+    Returns the joins."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from .raster import Camera
+    from .surfacing import mesh as _mesh
+    js = joins(shape, **grade)
+    m = mesh if mesh is not None else _mesh(shape, 0.01, 0.05)
+    show = js[:limit]
+    cols = min(4, max(1, len(show)))
+    rws = int(np.ceil(len(show) / cols)) or 1
+    fig, axes = plt.subplots(rws, cols, figsize=(3.6 * cols, 3.9 * rws), squeeze=False)
+    for ax in axes.ravel():
+        ax.set_axis_off()
+    for ax, j in zip(axes.ravel(), show):
+        c, n = np.asarray(j["centre"]), np.asarray(j["normal"])
+        if n @ (c - m.centroid) < 0:
+            n = -n
+        side = np.cross(n, [0.0, 0.0, 1.0] if abs(n[2]) < 0.9 else [1.0, 0.0, 0.0])
+        side /= np.linalg.norm(side)
+        view = n + 0.8 * side + 0.45 * np.cross(n, side)       # from outside, off the normal: the stripes cross the join
+        r = max(j["radius"], 1.0)
+        cam = Camera(position=c + 6.0 * r * view / np.linalg.norm(view), look_at=c, ortho=3.4 * r, width=size, height=size)
+        ax.imshow(zebra_image(m, cam, stripes))
+        ax.set_title(f"faces {j['faces'][0]}-{j['faces'][1]}: {j['grade']}\n"
+                     f"gap {j['G0']:.4f} mm, {j['G1']:.2f} deg, curvature jump {j['G2']:.4f} /mm", fontsize=7.5)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return js
 
 
 # ---- meshes ---------------------------------------------------------------

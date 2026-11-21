@@ -231,6 +231,13 @@ def test_blend_g2():
         assert summ["edges"] >= 2 and summ["worstG1"] < 0.01, summ
         worst[c] = summ["worstG2"]
     assert worst["G2"] < 2e-4 and worst["G1"] > 0.01, worst       # the sphere's curvature is 0.02 /mm
+    # joins: every pair of faces graded, with a close-up of each
+    g1 = Q.joins(S.sew([outer, S.blend((outer, hole), (tube, bot), "G1"), tube]))
+    assert len(g1) == 2 and g1[0]["grade"] == "tangent" and g1[0]["G2"] > 0.01, g1
+    with tempfile.TemporaryDirectory() as tmp:
+        g2 = Q.join_sheet(S.sew([outer, b, tube]), os.path.join(tmp, "joins.png"))
+        assert os.path.getsize(os.path.join(tmp, "joins.png")) > 20000
+    assert len(g2) == 2 and all(j["grade"] == "curvature" for j in g2) and all(3.0 < j["radius"] < 20.0 for j in g2), g2
     # the lead: how far each face's shape carries into the blend
     near, far = S.blend((outer, hole), (tube, bot), lead=0.6), S.blend((outer, hole), (tube, bot), lead=(1.0, 1.5))
     assert near.fit["lead"][0] < 0.7 * b.fit["lead"][0] and far.fit["lead"][1] > 1.4 * b.fit["lead"][1]

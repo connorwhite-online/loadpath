@@ -92,10 +92,17 @@ from loadpath import surfacequality as Q
 
 rows, worst = Q.edge_continuity(solid)    # G0 gap, G1 angle, G2 jump on every shared edge
 k = Q.surface_curvature(face)             # principal curvatures over a face
+js = Q.join_sheet(solid, "joins.png")     # every join graded (crease / tangent / curvature), a close-up of each
 r = Q.fairness(mesh, min_radius=2.5, ignore=grooves)
 r["wobble"], r["tight"], r["score"]       # flaws, clustered and placed
 Q.quality_sheet([before, after], "q.png", cameras)   # zebra + curvature maps
 ```
+
+`joins` groups the shared edges by the pair of faces they join (a boss's
+root, an opening's lip, a cap's rim) and grades each: a crease, tangent
+only, or curvature continuous. `join_sheet` frames a zebra close-up on
+every one. It reads any B-rep, so a designer's STEP exterior can be
+audited for where its reflections will bend before anything is built on it.
 
 `fairness` works on any mesh (a field model's marching-cubes skin, a scan,
 a tessellated B-rep). Curvature comes from a weighted quadric fitted at each
