@@ -28,6 +28,7 @@ p = S.fair_patch((x0, x1), (z0, z1), pins, soft=soft)   # the fairest height fie
 L = S.loft(sections, rails=[silhouette])          # sections warped onto rails, Gordon surface
 cap, err = S.cap([(edge, neighbour_face, "G2")])  # N-sided patch carrying its neighbours' curvature
 b = S.blend((face_a, edge_a), (face_b, edge_b))   # G2 across a gap; lead=0.7 turns sooner
+a2, bl, b2 = S.fillet(face_a, face_b, 3.0)        # two crossing faces, cut back and blended G2
 holed = S.cut(face, loop)                         # an opening, its edge on the surface
 s2 = S.edit(s, [(0.5, 0.5, (0, 3, 0))], freeze=3) # pull a handle; the surface stays fair
 solid = S.sew_solid([L.face(), cap, ...])
@@ -60,6 +61,12 @@ f = S.sdf(solid, pitch=0.4)                       # exact signed distance, for f
   curve would and arrives on face b the same way. How far each face's shape
   reaches into the blend (the lead) is the length that changes the
   section's curvature least. `lead` scales it, per side.
+- **Fillets that carry curvature.** `fillet(face_a, face_b, radius)` takes
+  two faces that cross, cuts each back to the radius from the other's
+  surface (`setback`: the face's intersection with the other's offset, so
+  the new edge lies on the face exactly) and lays a `blend` across. A
+  rolling-ball fillet is an arc, tangent with a curvature jump where it
+  starts; this leaves each face with that face's own curvature.
 - **Openings.** `cut(face, loop)` cuts an opening along a curve projected
   onto the face, so the new edge lies on the surface exactly, ready for
   `blend` or `cap`. `hole_edges` lists them.

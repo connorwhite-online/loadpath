@@ -999,6 +999,38 @@ def _sdf_grid(m, lo, hi, p, band):
 # surface and leave it as fair as before.
 
 def _edge_frames(face, edge, s):
+    """`_edge_frame1` along one edge, or along several that run head to
+    tail (a list): walked as one curve by arc length."""
+    if not isinstance(edge, (list, tuple)):
+        return _edge_frame1(face, edge, s)
+    if len(edge) == 1:
+        return _edge_frame1(face, edge[0], s)
+    probes = [_edge_frame1(face, e, np.array([0.0, 1.0])) for e in edge]
+    scale = max(sum(q["length"] for q in probes), 1e-9)
+    order = _chain([(q["polyline"][0], q["polyline"][-1]) for q in probes], 1e-3 * scale)
+    lens = np.array([probes[i]["length"] for i, _ in order])
+    cum = np.r_[0.0, np.cumsum(lens)] / lens.sum()
+    s = np.asarray(s, float)
+    k = np.clip(np.searchsorted(cum, s, side="right") - 1, 0, len(order) - 1)
+    out = None
+    for j, (i, rev) in enumerate(order):
+        sel = np.nonzero(k == j)[0]
+        if not len(sel):
+            continue
+        loc = np.clip((s[sel] - cum[j]) / max(cum[j + 1] - cum[j], 1e-30), 0, 1)
+        fr = _edge_frame1(face, edge[i], 1.0 - loc if rev else loc)
+        if out is None:
+            out = {key: np.zeros((len(s),) + v.shape[1:]) for key, v in fr.items() if isinstance(v, np.ndarray) and key != "polyline"}
+        for key in out:
+            out[key][sel] = fr[key]
+    line = np.vstack([probes[i]["polyline"][::-1] if rev else probes[i]["polyline"] for i, rev in order])
+    out["polyline"] = line
+    out["length"] = float(lens.sum())
+    out["closed"] = bool(np.linalg.norm(line[0] - line[-1]) < 1e-6 * max(out["length"], 1.0))
+    return out
+
+
+def _edge_frame1(face, edge, s):
     """Along an edge of a face, at arc-length fractions `s` (0..1): the
     points P, the face's unit normal N, the unit direction d in the tangent
     plane square to the edge and pointing out of the face, the second
@@ -1595,3 +1627,124 @@ def edit(s, moves, hold=(), freeze=2, energy="bending"):
         if hasattr(s, k):
             setattr(out, k, getattr(s, k))
     return out
+
+
+def _signed_distance(surf, P):
+    """Signed distance from points to a surface: + on the side its normal
+    (Su x Sv) points."""
+    from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
+    from OCP.gp import gp_Pnt, gp_Vec
+    out = np.zeros(len(P))
+    pr = GeomAPI_ProjectPointOnSurf()
+    q, su, sv = gp_Pnt(), gp_Vec(), gp_Vec()
+    for i, p in enumerate(np.asarray(P, float)):
+        pr.Init(gp_Pnt(*map(float, p)), surf)
+        if pr.NbPoints() == 0:
+            out[i] = np.nan
+            continue
+        u, v = pr.LowerDistanceParameters()
+        surf.D1(u, v, q, su, sv)
+        n = su.Crossed(sv)
+        d = np.array([p[0] - q.X(), p[1] - q.Y(), p[2] - q.Z()])
+        out[i] = np.sign(d @ np.array([n.X(), n.Y(), n.Z()]) + 1e-300) * pr.LowerDistance()
+    return out
+
+
+def _split(face_, tool):
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Splitter
+    from OCP.OCP.collections import List_TopoDS_Shape
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+    a, b = List_TopoDS_Shape(), List_TopoDS_Shape()
+    a.Append(face_)
+    b.Append(tool)
+    sp = BRepAlgoAPI_Splitter()
+    sp.SetArguments(a)
+    sp.SetTools(b)
+    sp.Build()
+    out, ex = [], TopExp_Explorer(sp.Shape(), TopAbs_FACE)
+    while ex.More():
+        out.append(TopoDS.Face(ex.Current()))
+        ex.Next()
+    return out
+
+
+def _edges_of(face_):
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+    out, ex = [], TopExp_Explorer(face_, TopAbs_EDGE)
+    while ex.More():
+        e = TopoDS.Edge(ex.Current())
+        if not any(e.IsSame(o) for o in out):
+            out.append(e)
+        ex.Next()
+    return out
+
+
+def _sample_points(face_, k=40):
+    m = mesh(face_, 0.2, 0.3)
+    c = np.asarray(m.triangles_center)
+    return c[np.linspace(0, len(c) - 1, min(k, len(c))).astype(int)]
+
+
+def setback(face_a, face_b, radius, keep=None):
+    """Face a cut back from where it crosses face b: the part of a further
+    than `radius` from b's surface, on one side of b. Returns (the kept
+    face, its new edges, which lie `radius` from b). `keep`: a point near
+    the part of a to keep (default: its larger side of b). The cut is a's
+    intersection with b's surface offset by the radius, so the new edge
+    lies on a exactly."""
+    _occ()
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.Geom import Geom_OffsetSurface
+    fa = face_a.face() if isinstance(face_a, Surface) else face_a
+    fb = face_b.face() if isinstance(face_b, Surface) else face_b
+    sb = BRep_Tool.Surface_s(fb)
+    if keep is not None:
+        side = float(np.sign(_signed_distance(sb, np.asarray(keep, float)[None])[0]))
+    else:
+        parts = _split(fa, fb)
+        big = max(parts, key=_area)
+        side = float(np.sign(np.nanmedian(_signed_distance(sb, _sample_points(big)))))
+    tool = BRepBuilderAPI_MakeFace(Geom_OffsetSurface(sb, side * radius), *sb.Bounds(), 1e-6).Face()
+    parts = _split(fa, tool)
+    if len(parts) < 2:
+        raise ValueError(f"setback: the faces do not cross, or not further than the radius {radius} apart")
+
+    def score(q):
+        d = side * _signed_distance(sb, _sample_points(q))
+        if keep is not None:
+            return -float(np.linalg.norm(_sample_points(q, 200) - np.asarray(keep, float), axis=1).min()) if np.nanmedian(d) > radius else -np.inf
+        return _area(q) if np.nanmedian(d) > radius else -np.inf
+    kept = max(parts, key=score)
+    new = []
+    for e in _edges_of(kept):
+        ce = BRepAdaptor_Curve(e)
+        tt = np.linspace(ce.FirstParameter(), ce.LastParameter(), 7)[1:-1]
+        pts = np.array([[q.X(), q.Y(), q.Z()] for q in (ce.Value(float(a)) for a in tt)])
+        if np.nanmax(np.abs(side * _signed_distance(sb, pts) - radius)) < 1e-3 * max(radius, 1.0):
+            new.append(e)
+    if not new:
+        raise ValueError("setback: found no edge at the radius on the kept face")
+    return kept, new
+
+
+def fillet(face_a, face_b, radius, continuity="G2", lead=1.0, keep=(None, None), tol=5e-4):
+    """Two crossing faces joined by a curvature-continuous blend in place
+    of their sharp intersection: each face is cut back to `radius` (a
+    number, or one for each face) from the other's surface and a `blend`
+    is laid across. Unlike a rolling-ball fillet (an arc: tangent, with a
+    jump in curvature where it starts), the blend leaves each face with
+    that face's own curvature.
+
+    `keep`: a point near the part of each face to keep (default: each
+    face's larger side of the other). Returns (face a cut back, the blend
+    Surface, face b cut back); sew them."""
+    ra, rb = (float(radius), float(radius)) if np.isscalar(radius) else map(float, radius)
+    ka, ea = setback(face_a, face_b, ra, keep[0])
+    kb, eb = setback(face_b, face_a, rb, keep[1])
+    return ka, blend((ka, ea), (kb, eb), continuity, lead, tol=tol), kb

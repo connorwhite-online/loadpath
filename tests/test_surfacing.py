@@ -239,6 +239,26 @@ def test_blend_g2():
     print("blend ok", worst)
 
 
+def test_fillet_two_crossing_faces():
+    """A post standing through a sphere: both cut back 3 mm from the other
+    and joined G2, in place of the sharp intersection."""
+    s = _sphere_patch()
+    u, v = np.linspace(0, 1, 48, endpoint=False), np.linspace(0, 1, 8)
+    T = np.stack([np.c_[3 + 6 * np.cos(2 * np.pi * u), 2 + 6 * np.sin(2 * np.pi * u), np.full(48, 44 + 16 * vv)]
+                  for vv in v], 1)
+    post = S.fit_surface(T, (16, 5), uperiodic=True, fair=1e-9)
+    a, b, c = S.fillet(s, post, 3.0, keep=(None, (3.0, 2.0, 60.0)))
+    assert b.fit["G0"] < 5e-4, b.fit
+    assert S._area(a) < S._area(s.face()) - 150 and S.mesh(c, 0.05).bounds[0][2] > 51.0     # a hole in a; c above the skin
+    rows, summ = Q.edge_continuity(S.sew([a, b, c]))
+    assert summ["edges"] >= 2 and summ["worstG0"] < 1e-3 and summ["worstG1"] < 0.1 and summ["worstG2"] < 5e-4, summ
+    # the new edge of the sphere lies 3 mm from the post's surface (a cylinder of radius 6 about (3, 2))
+    kept, edges = S.setback(s, post, 3.0)
+    fr = S._edge_frames(kept, edges, np.linspace(0, 1, 40, endpoint=False))
+    assert np.abs(np.hypot(fr["P"][:, 0] - 3, fr["P"][:, 1] - 2) - 9.0).max() < 0.01
+    print("fillet ok", summ)
+
+
 def test_edit_stays_fair():
     g = np.linspace(-30, 30, 31)
     X, Z = np.meshgrid(g, g, indexing="ij")
