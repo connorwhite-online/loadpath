@@ -414,6 +414,14 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    a weaker direction, 2 g heavier and webbed. The centre of mass is
    read against the part's feet and its supports together
    (`comMarginUnsupported` keeps the bare reading).
+10. **A false "the mesh lost material" reading.** The comparison of the
+   delivered mesh with the optimized field read each cell a quarter cell
+   off its centre, toward the low side of every axis, so the whole low
+   face of a part that fills its envelope counted as lost. The arm link
+   reported 14% of its solid cells lost with 3% of their centres outside
+   the mesh. It is read at the cell centres. (The arm link's reported
+   1 mm pinholes are not in the run's part: it has 21 openings, none
+   under 4 mm across. They come from the surfacing step.)
 
 ## Rule for work under this document
 

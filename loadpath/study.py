@@ -1744,7 +1744,11 @@ def mesh_fidelity(domain, xphys, mesh) -> dict | None:
         solid = solid & ~domain.stock      # a bought member's cells are the member, not print (stock.py)
     if not solid.any() or mesh is None or len(getattr(mesh, "faces", ())) == 0:
         return None
-    step = domain.pitch / 2.0
+    # sampled on the optimizer's own grid: each voxel centre is a cell centre
+    # (at half the pitch a cell centre is a voxel corner, and the voxel read
+    # for it sat a quarter cell toward -x, -y, -z: the arm link read 14% lost
+    # with 3% of its centres outside the mesh, nearly all on the -z face)
+    step = float(domain.pitch)
     lo = np.asarray(domain.origin, float)
     hi = lo + np.asarray(domain.dims) * domain.pitch
     try:
@@ -1752,7 +1756,7 @@ def mesh_fidelity(domain, xphys, mesh) -> dict | None:
     except (MemoryError, ValueError):
         return None
     c = domain.mesh.elem_centers()
-    ijk = np.clip(np.floor((c - np.asarray(org)) / step).astype(int), 0, np.array(g.shape) - 1)
+    ijk = np.clip(np.rint((c - np.asarray(org)) / step).astype(int), 0, np.array(g.shape) - 1)
     inside = g[tuple(ijk.T)]
     at = tuple(domain.mesh.elem_ijk.T)
     grid = np.zeros(domain.dims, bool)

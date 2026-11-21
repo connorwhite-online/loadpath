@@ -1031,6 +1031,11 @@ def test_mesh_fidelity_counts_cells_the_mesh_dropped():
     half = trimesh.creation.box(bounds=[lo, [0.5 * (lo[0] + hi[0]), hi[1], hi[2]]])
     f = mesh_fidelity(d, xp, half)
     assert 0.4 < f["lostSolidCells"] < 0.6, f
+    # a cell is lost when its centre is outside: a face pulled in by less
+    # than half a cell on the low side of every axis loses none (read a
+    # quarter cell off-centre, the whole low layer of each counted as lost)
+    shy = trimesh.creation.box(bounds=[lo + 0.3 * d.pitch, hi])
+    assert mesh_fidelity(d, xp, shy)["lostSolidCells"] == 0.0
 
 
 def test_status_file_is_never_read_half_written():
