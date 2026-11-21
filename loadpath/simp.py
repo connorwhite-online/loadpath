@@ -282,6 +282,11 @@ class _Analysis:
         """Solve every load case for moduli e. Returns per-case displacement on
         the full node set. `loads` overrides the domain's (self-weight makes
         them depend on the design)."""
+        if getattr(self.domain, "seats", None):
+            return self._solve_seated(e, xp, us, rtol, loads)
+        return self._solve_safe(e, xp, us, rtol, loads)
+
+    def _solve_safe(self, e, xp, us, rtol, loads):
         try:
             return self._solve(e, xp, us, rtol, loads)
         except MemoryError:
@@ -289,6 +294,58 @@ class _Analysis:
             # iterative solvers take this design and the rest of the run
             self._direct_ok = False
             return self._solve(e, xp, us, rtol, loads)
+
+    # solves between two readings of the seats' own compliance
+    SEAT_EVERY = 8
+
+    def _solve_seated(self, e, xp, us, rtol, loads):
+        """The cases with the domain's seats pushing (pushseat.py). The
+        seats' forces are loads here, so every answer is in equilibrium with
+        them. Their compliance is read with the unit pushes every SEAT_EVERY
+        solves (the design moves a little between two) and the forces are
+        corrected against it in between: one more solve of a case only when
+        its forces moved."""
+        from . import pushseat
+
+        d = self.domain
+        loads = list(loads if loads is not None else d.loads)
+        st = self.__dict__.setdefault("_seat", {"n": 0, "ps": None, "ws": None, "lam": {}})
+        if st["ps"] is None:
+            st["ps"] = pushseat.patches(d.seats, d.mesh.node_xyz, d.mesh.n_dof)
+        ps = st["ps"]
+        pm = np.array(ps)
+        lam0 = [st["lam"].get(i, np.zeros(len(ps))) if len(st["lam"].get(i, ())) == len(ps) else np.zeros(len(ps))
+                for i in range(len(loads))]
+        fresh = st["ws"] is None or st["n"] % self.SEAT_EVERY == 0
+        st["n"] += 1
+        pushed = [f + lam @ pm for f, lam in zip(loads, lam0)]
+        if fresh:
+            out = self._solve_safe(e, xp, list(us) + (st["ws"] or [None] * len(ps)), rtol, pushed + ps)
+            us, st["ws"] = list(out[:len(loads)]), list(out[len(loads):])
+        else:
+            us = list(self._solve_safe(e, xp, list(us), rtol, pushed))
+        # each case's forces against the compliance in hand: u = (u - W lam0) + W lam
+        wm = np.array(st["ws"])
+        base = [u - lam @ wm for u, lam in zip(us, lam0)]
+        done = pushseat.resolve(base, st["ws"], ps)
+        again = []
+        for i, (u, lam) in enumerate(done):
+            st["lam"][i] = lam
+            if fresh:
+                us[i] = u          # exact: the compliance is this design's
+            elif np.abs(lam - lam0[i]).sum() > 0.02 * max(np.abs(lam).sum(), 1e-12):
+                again.append(i)
+        if again:
+            sub = self._solve_safe(e, xp, [done[i][0] for i in again], rtol,
+                                   [loads[i] + st["lam"][i] @ pm for i in again]) \
+                if len(again) == len(loads) else None
+            if sub is None:
+                full = self._solve_safe(e, xp, [done[i][0] if i in again else us[i] for i in range(len(loads))],
+                                        rtol, [f + st["lam"][i] @ pm for i, f in enumerate(loads)])
+                us = list(full)
+            else:
+                us = list(sub)
+        return us
 
     def _solve(self, e, xp, us, rtol=None, loads=None):
         d = self.domain

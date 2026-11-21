@@ -61,7 +61,7 @@ def commands(name):
 
 def _value(expr, r):
     return eval(expr, {"__builtins__": {"min": min, "max": max, "len": len, "sum": sum, "abs": abs,
-                                        "any": any, "all": all, "round": round}}, {"r": r})
+                                        "any": any, "all": all, "round": round, "str": str, "bool": bool}}, {"r": r})
 
 
 def check(name, work, tier):

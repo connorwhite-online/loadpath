@@ -58,6 +58,8 @@ class Domain:
     warnings: list = field(default_factory=list)
     # Pin supports as penalty springs at unit modulus (scale by E), or None.
     springs: object = None
+    # supports that only push (BoundaryConditions.seats, pushseat.py)
+    seats: list = field(default_factory=list)
     # Self-weight: N per mm^3 of solid, or None (see BoundaryConditions).
     gravity: np.ndarray | None = None
     # per case, directions.Spread or None (see BoundaryConditions)
@@ -260,6 +262,10 @@ class BoundaryConditions:
     # whether `springs` holds the part anywhere (a pin support); a bought member's stiffness is in
     # `springs` too (stock.py) and holds nothing
     pinned: bool = False
+    # seats (supports[].push, seats.py): (node indices, the unit push, each
+    # node's share of the face). Their nodes are free in `fixed`; a solve
+    # that honours them adds their forces (seats.solve)
+    seats: list = field(default_factory=list)
 
 
 def node_mass(mesh: HexMesh, density) -> np.ndarray:
@@ -464,6 +470,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     fixed = np.zeros(mesh.n_dof, bool)
     spring_blocks = []
     regions = []
+    seats = []
     wet = _wetted(study, mesh)
     for rid, (_, nodes) in wet.items():
         if not nodes.any():
@@ -490,6 +497,10 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         regions.append(nodes)
         support_nodes |= nodes
         idx = np.nonzero(nodes)[0]
+        if s.push is not None:
+            share = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)[idx].astype(float)
+            seats.append((idx, np.asarray(s.push, float), share / share.sum()))
+            continue
         for a in range(3):
             if s.fix[a]:
                 fixed[3 * idx + a] = True
@@ -645,8 +656,12 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     if study.inertia_relief:
         raw = [f.copy() for f in loads]
         loads = _inertia_relief(study, mesh, loads, fixed, tol_floor)
+    if seats and any(sp_ is not None for sp_ in spreads):
+        raise ValueError("a push support with a force of unknown direction (direction: any, or a cone) is not "
+                         "solved yet: a seat lets go where it is lifted, so the directions do not add up from "
+                         "unit loads. Give the force the directions that matter as separate load cases")
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
-                              case_wet, imbalance, spreads, raw, pinned=pinned)
+                              case_wet, imbalance, spreads, raw, pinned=pinned, seats=seats)
 
 
 def _near_cells(mesh: HexMesh, nodes: np.ndarray, layers: int = 2) -> np.ndarray:
@@ -1426,7 +1441,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     dom = Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
-                  springs=bc.springs, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
+                  springs=bc.springs, seats=bc.seats, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
                   volume_weights=_volume_weights(study, mesh, pres_el),
                   center_of_mass=(None if getattr(getattr(study, "mass_properties", None), "com_target", None) is None
                                   else (study.mass_properties.com_target, study.mass_properties.com_tolerance)),

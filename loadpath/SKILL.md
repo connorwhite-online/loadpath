@@ -136,11 +136,14 @@ buckling, printability) you can report to the user.
    tapped, so the part bolted to them gets clearance holes. Don't
    add a solid boss round a screw on your own (the fastener keeps what the
    joint needs), but a boss the user describes ("a 12 mm boss, 5 mm thick")
-   is an interface: preserve it as given, alongside the fastener. A bolted foot: hold the bores sideways
-   and the face's normal only on a washer-sized disc under each bolt; a
-   slab over the whole face glues the part down, and a load that lifts or
-   tips it then reads far too strong (a stepper bracket: SF 3.5 glued, 0.98
-   bolted).
+   is an interface: preserve it as given, alongside the fastener. A bolted foot: support the bores, and give
+   the face it sits on its own support with `"push": "+z"` (the way the
+   wall or table pushes the part): it carries pressure only and lets go
+   where the load lifts it, so the heel bears and the bolts pull, as they
+   do. A slab over the whole face with `fix` glues the part down, and a
+   load that lifts or tips it then reads far too strong (a stepper bracket:
+   SF 3.5 glued, 0.98 bolted; a shelf bracket on two screws: 5.0 g glued,
+   8.5 g on a seat, and no part at all on the screw pads alone).
 2. **Bound the design space** generously: the envelope the part may occupy,
    minus nothing (keep-outs are subtracted for you). Too tight a box is the
    most common reason a result looks like the box.
@@ -213,8 +216,9 @@ buckling, printability) you can report to the user.
    times longer; the mass form cannot take a plane, so write the force
    (kg x 9.81 x the dynamic factor).
 4. **Hold it where it is really held.** A bolted face: support on the bolt
-   holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
-   only pushes. A shaft in a bearing: support on the bore.
+   holes (keep-outs), plus `"push": "+x"` on the face it bears against
+   (a seat: pressure only; not yet with a force of unknown direction).
+   A shaft in a bearing: support on the bore.
    A part that hangs on a rod, hook or peg bears only where it touches:
    support the strip of the hole that carries the weight (`fix` on a
    narrow box over its top), not the whole hole, or the model hides the

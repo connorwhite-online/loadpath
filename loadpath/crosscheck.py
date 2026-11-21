@@ -129,6 +129,8 @@ def unsupported(study: Study) -> str | None:
         return "no supports (a self-equilibrated part)"
     if study.gravity is not None:
         return "gravity loads"
+    if any(getattr(sp, "push", None) is not None for sp in study.supports):
+        return "a support that only pushes (its contact is solved on the grid, pushseat.py)"
     if getattr(study, "stock", None):
         return "bought stock members (the tet mesh is the printed part alone)"
     if any(ld.pressure for c in study.load_cases for ld in c.loads):
