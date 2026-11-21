@@ -86,7 +86,11 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
    and both rectangles beside it take that same curve as their edge, so
    neighbours share edges exactly. Inside, the poles are fitted to the
    exact limit points and tangent planes (Halstead masks at the star
-   points). Face count goes with the star points, not the cage: a few
+   points). A rectangle that wraps round a member (the lines closed a
+   band round it, so two opposite sides meet) is cut across the middle:
+   as one face its 2-D curves are ambiguous at the seam and a reader that
+   rebuilds them by projection gets the face back invalid. Face count goes
+   with the star points, not the cage: a few
    hundred faces where face-by-face patches gave thousands. Where the
    layout does not come out (a line that closes on itself, a fit outside a
    third of the tolerance, neighbours meeting at more than 1 degree) the

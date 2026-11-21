@@ -159,6 +159,88 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None):
     def start(q, k):
         return int(Q[q, k])
 
+    # ---- rectangles between the lines
+    def find_pieces():
+        lab = np.full(m, -1)
+        pieces = []
+        for q0 in range(m):
+            if lab[q0] >= 0:
+                continue
+            lab[q0] = len(pieces)
+            stack, comp = [q0], []
+            while stack:
+                q = stack.pop()
+                comp.append(q)
+                for k in range(4):
+                    if not cut[QE[q, k]]:
+                        q2 = int(tq[q, k])
+                        if lab[q2] < 0:
+                            lab[q2] = lab[q0]
+                            stack.append(q2)
+            pieces.append(comp)
+        return pieces
+    def step(q, r, d):
+        side = (d + r) % 4
+        q2, k2 = int(tq[q, side]), int(tk[q, side])
+        return q2, (k2 - (d + 2)) % 4
+
+    def rect(comp):
+        cs = set(comp)
+        for q in comp:
+            for r in range(4):
+                if cut[QE[q, r]] and cut[QE[q, (r + 3) % 4]]:
+                    break
+            else:
+                continue
+            R, x = [], (q, r)
+            while True:
+                row, y = [x], x
+                while not cut[QE[y[0], (1 + y[1]) % 4]]:
+                    y = step(*y, 1)
+                    row.append(y)
+                    if len(row) > len(comp):
+                        return None
+                R.append(row)
+                if cut[QE[x[0], (2 + x[1]) % 4]]:
+                    break
+                x = step(*x, 2)
+                if len(R) > len(comp):
+                    return None
+            fs = [f for row in R for f, _ in row]
+            if len(set(len(row) for row in R)) != 1 or len(fs) != len(cs) or set(fs) != cs:
+                return None
+            return R
+        return None
+
+
+    # a rectangle that wraps round a member (two opposite sides share a
+    # cage vertex: the motorcycles closed a band round it with one line) is
+    # one face whose opposite edges meet; a reader rebuilding its 2-D curves
+    # by projection puts an edge on the wrong side of the seam and the face
+    # comes back invalid. Cut it across the middle (the new line ends on
+    # the two lines it runs between) and look again.
+    for _ in range(64):
+        pieces = find_pieces()
+        wrapped = 0
+        for comp in pieces:
+            R = rect(comp)
+            if R is None:
+                continue
+            b, a = len(R), len(R[0])
+            vs = lambda hs: {int(Q[q, k]) for q, k in hs} | {int(Q[q, (k + 1) % 4]) for q, k in hs}
+            v0 = vs([(q, r % 4) for q, r in R[0]])
+            v1 = vs([(q, (r + 2) % 4) for q, r in R[-1]])
+            u0 = vs([(q, (r + 3) % 4) for q, r in (row[0] for row in R)])
+            u1 = vs([(q, (r + 1) % 4) for q, r in (row[-1] for row in R)])
+            if v0 & v1 and b >= 2:
+                cut[[QE[q, (r + 2) % 4] for q, r in R[b // 2 - 1]]] = True
+                wrapped += 1
+            elif u0 & u1 and a >= 2:
+                cut[[QE[q, (r + 1) % 4] for q, r in (row[a // 2 - 1] for row in R)]] = True
+                wrapped += 1
+        if not wrapped:
+            break
+
     # ---- lines: maximal straight runs of drawn edges
     line_of = {}                              # edge -> (line, index, same direction as the line)
     lines = []
@@ -231,58 +313,6 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None):
     def evalc(L, t):
         br, Pc = curves[L]
         return basis(br, t) @ Pc
-
-    # ---- rectangles between the lines
-    lab = np.full(m, -1)
-    pieces = []
-    for q0 in range(m):
-        if lab[q0] >= 0:
-            continue
-        lab[q0] = len(pieces)
-        stack, comp = [q0], []
-        while stack:
-            q = stack.pop()
-            comp.append(q)
-            for k in range(4):
-                if not cut[QE[q, k]]:
-                    q2 = int(tq[q, k])
-                    if lab[q2] < 0:
-                        lab[q2] = lab[q0]
-                        stack.append(q2)
-        pieces.append(comp)
-
-    def step(q, r, d):
-        side = (d + r) % 4
-        q2, k2 = int(tq[q, side]), int(tk[q, side])
-        return q2, (k2 - (d + 2)) % 4
-
-    def rect(comp):
-        cs = set(comp)
-        for q in comp:
-            for r in range(4):
-                if cut[QE[q, r]] and cut[QE[q, (r + 3) % 4]]:
-                    break
-            else:
-                continue
-            R, x = [], (q, r)
-            while True:
-                row, y = [x], x
-                while not cut[QE[y[0], (1 + y[1]) % 4]]:
-                    y = step(*y, 1)
-                    row.append(y)
-                    if len(row) > len(comp):
-                        return None
-                R.append(row)
-                if cut[QE[x[0], (2 + x[1]) % 4]]:
-                    break
-                x = step(*x, 2)
-                if len(R) > len(comp):
-                    return None
-            fs = [f for row in R for f, _ in row]
-            if len(set(len(row) for row in R)) != 1 or len(fs) != len(cs) or set(fs) != cs:
-                return None
-            return R
-        return None
 
     from .subd import _oriented
     out = []
