@@ -37,7 +37,12 @@ on the part as delivered, not the optimizer's grid:
   exterior (nothing proud of it, every bit of it still there, openings
   aside);
 - the strength checks of `verify` (body-fitted cut cells or tets) per load
-  case, and that no component's keep-out or path is intruded on.
+  case, and that no component's keep-out or path is intruded on;
+- **every component is held** (retention.py): with the product closed,
+  each component nudged 2 mm every way and turned, and it must be blocked
+  every way or have its fastening declared (`held` on the component:
+  screw, glue, snap, press-fit, ...). A way in says a part gets there;
+  this says it stays.
 
 Nothing here edits the exterior. A component with no place, or no way in,
 is reported, with where it came closest, for the designer to resolve.
@@ -1658,6 +1663,52 @@ def paths_into_skin(study: dict, base_dir: str) -> dict:
             for r in st.keep_out if r.id in ins}
 
 
+def _retention_check(r: dict, halves: dict, out_dir: str) -> dict:
+    """retention.nudge_check on the product as delivered: each half's part
+    (declared held by `split.screws`, or, whole, fixed as the reference) and
+    every component placed inside, nudged against everything else. A
+    component's `held` in the brief declares its fastening (retention.
+    FASTENINGS); one installed on another is carried by it; one that is
+    neither and moves freely fails the product."""
+    import trimesh
+
+    from .retention import body_from_mesh, nudge_check
+    bodies, held, ways = [], {}, {}
+    for half, sp in halves.items():
+        raw = json.load(open(sp))
+        design = os.path.join(out_dir, "design" if half == "whole" else f"design-{half}")
+        part, _ = _delivered(design, raw["name"])
+        if part is None or not os.path.exists(part):
+            raise ValueError(f"no delivered part for the {half}")
+        bodies.append(body_from_mesh(f"shell-{half}", trimesh.load(part, force="mesh")))
+        held[f"shell-{half}"] = "screw"                  # the halves' own joint is checked by shells.py
+    study = r["study"]
+    base = os.path.dirname(os.path.abspath(r["studyPath"]))
+    brief = {c.get("id"): c for c in (r.get("brief") or {}).get("components") or []}
+    for k in study.get("keepOut") or []:
+        c = brief.get(k.get("id"))
+        if c is None or c.get("external"):
+            continue
+        sh = _fine_mesh_shape(k["shape"], base)
+        mesh = getattr(sh, "mesh", None)
+        if mesh is None:
+            from .retention import body_from_sdf
+            lo, hi = sh.bounds()
+            bodies.append(body_from_sdf(k["id"], sh.sdf, np.asarray(lo) - 1, np.asarray(hi) + 1))
+        else:
+            bodies.append(body_from_mesh(k["id"], mesh, sdf=sh.sdf))
+        if c.get("held"):
+            held[k["id"]] = c["held"]
+        elif c.get("installedOn"):
+            held[k["id"]] = "installed-on"
+        elif c.get("mount") == "holes" or (isinstance(c.get("mount"), dict) and c["mount"].get("type") == "holes"):
+            held[k["id"]] = "screw"
+        ins = k.get("insertFrom")
+        if isinstance(ins, str):
+            ways[k["id"]] = [-_axis_vec(ins)]
+    return nudge_check(bodies, held=held, ways=ways)
+
+
 def _delivered(design_dir: str, name: str):
     """The delivered STL of a design folder: `run`'s best outcome, or the
     switch/feel part (<name>.stl)."""
@@ -1879,6 +1930,13 @@ def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_
         chk["ok"] = bool(chk["ok"] and code in (0, None))
         parts[half] = chk
     out = {"ok": all(p.get("ok") for p in parts.values()), "parts": parts}
+    # every component held once the product is closed (retention.py): always
+    # run, on the delivered parts together, and part of `ok`
+    try:
+        out["retention"] = _retention_check(r, halves, out_dir)
+    except Exception as exc:                          # a check that cannot run has not passed
+        out["retention"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    out["ok"] = bool(out["ok"] and out["retention"]["ok"])
     with open(os.path.join(out_dir, "checks.json"), "w") as fh:
         json.dump(_jsonable(out), fh, indent=1, default=float)
     return out

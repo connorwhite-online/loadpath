@@ -3317,6 +3317,13 @@ ENCLOSURE_SCHEMA = {
                                                                       "placement.margin)"},
             "installedOn": {"type": "string", "description": "fitted to another component first and placed and "
                                                              "assembled with it; its CAD in that one's frame"},
+            "held": {"anyOf": [{"enum": ["screw", "bolt", "rivet", "pin", "glue", "tape", "snap", "press-fit", "weld",
+                                         "solder", "clamp", "magnet", "cable-tie", "installed-on", "cable"]},
+                               {"type": "object", "properties": {"by": {"type": "string"}, "note": {"type": "string"}},
+                                "required": ["by"], "additionalProperties": False}],
+                     "description": "what holds it once the product is closed, if geometry alone does not "
+                                    "(retention.py nudges every component 2 mm every way; a free one with "
+                                    "nothing declared fails the product). mount holes count as screws"},
             "mount": {"anyOf": [{"type": "boolean"}, {"enum": ["cradle", "holes"]}, {"type": "object", "properties": {
                 "type": {"enum": ["cradle", "holes"]}, "side": _AXIS, "thickness": _POS,
                 "holes": {"type": "array", "items": _MOUNT_HOLE,
