@@ -137,8 +137,10 @@ class DirectSolver:
     is checked against k: a residual over RTOL after one refinement step
     raises RuntimeError, as a CG that does not converge does."""
 
-    def __init__(self, node_ijk=None, rtol=None):
+    def __init__(self, node_ijk=None, rtol=None, refine=True):
         self.node_ijk = node_ijk     # SuperLU's nested-dissection order
+        # PARDISO's own iterative refinement on every solve (nonlinear._Pardiso)
+        self.refine = refine
         self.rtol = rtol             # (unused: the solve is exact; fem.Solver's attribute)
         self.last_iters = 0
         self._k = None
@@ -164,7 +166,7 @@ class DirectSolver:
                     fac = prev
                 else:
                     prev = None
-                    fac = _Pardiso(k, budget=budget)
+                    fac = _Pardiso(k, budget=budget, refine=self.refine)
             else:
                 from .nonlinear import _splu
 
@@ -231,6 +233,10 @@ def solve_many(k, fs, node_ijk=None):
     # thread and all the cores as it is: nothing is lost by the wait).
     with _ONE_SHOT:
         try:
-            return DirectSolver(node_ijk).solve_many(k, fs)
+            # PARDISO's two refinement steps per solve are half its solve
+            # time; solve_many measures the residual itself and refines once
+            # where it is over RTOL (a verify box of 127k dofs: 2e-15 without
+            # them, 0.33 -> 0.14 s)
+            return DirectSolver(node_ijk, refine=False).solve_many(k, fs)
         except (RuntimeError, MemoryError):
             return None
