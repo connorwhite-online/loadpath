@@ -235,3 +235,29 @@ def test_compiled_edt_is_scipys():
         a = rng.random(shape) < p
         a[0, 0] = False
         assert np.array_equal(edt(a), ndimage.distance_transform_edt(a))
+
+
+def test_compiled_feature_transform_is_scipys():
+    """edtops.edt(return_indices=True): scipy's nearest-zero indices to the
+    bit, ties included (regular lattices of zeros are all ties), with the
+    distances read from them, 2D and 3D."""
+    from scipy import ndimage
+
+    from loadpath.edtops import edt
+
+    rng = np.random.default_rng(1)
+    grids = []
+    for shape, p in [((5, 6, 7), 0.5), ((40, 30, 20), 0.9), ((32, 32, 32), 0.99), ((1, 50, 3), 0.7),
+                     ((30, 1, 1), 0.8), ((20, 20, 20), 0.3), ((7, 9), 0.5), ((175, 160), 0.995)]:
+        a = rng.random(shape) < p
+        a.flat[0] = False
+        grids.append(a)
+    for step in [(2, 3, 4), (4, 4, 4), (5, 3, 7)]:
+        a = np.ones((23, 19, 17), bool)
+        a[::step[0], ::step[1], ::step[2]] = False
+        grids += [a, a[:, :, 0]]
+    for a in grids:
+        d0, i0 = ndimage.distance_transform_edt(a, return_indices=True)
+        d1, i1 = edt(a, return_indices=True)
+        assert i1.dtype == i0.dtype and np.array_equal(i1, i0) and np.array_equal(d1, d0)
+        assert np.array_equal(edt(a, return_distances=False, return_indices=True), i0)

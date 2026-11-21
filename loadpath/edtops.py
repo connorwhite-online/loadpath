@@ -138,21 +138,158 @@ if nb is not None:
             for i in range(nx):
                 out[i, j, k] = np.sqrt(np.float64(d[i])) if d[i] < inf else np.inf
 
+    @nb.njit(cache=True, nogil=True, inline="always")
+    def _voronoi(ft, line, n, d, coor, f, g):
+        # scipy's _VoronoiFT (ni_morphology.c) on one line of ft, decision
+        # for decision: f holds each cell's feature (f[i, 0] < 0: none yet),
+        # g the sites still on the envelope. Every quantity is a whole
+        # number well inside float64's exact range, so these float64 sums
+        # and comparisons are scipy's to the bit.
+        for i in range(n):
+            for c in range(3):
+                f[i, c] = ft[c, line[0, i], line[1, i], line[2, i]]
+        lst = -1
+        for i in range(n):
+            if f[i, 0] < 0:
+                continue
+            fd = np.float64(f[i, d])
+            wr = 0.0
+            for c in range(3):
+                if c != d:
+                    tw = np.float64(f[i, c] - coor[c])
+                    wr += tw * tw
+            while lst >= 1:
+                i1 = g[lst]
+                i2 = g[lst - 1]
+                f1 = np.float64(f[i1, d])
+                a = f1 - np.float64(f[i2, d])
+                b = fd - f1
+                cc_ = a + b
+                ur = 0.0
+                vr = 0.0
+                for c in range(3):
+                    if c != d:
+                        tu = np.float64(f[i2, c] - coor[c])
+                        tv = np.float64(f[i1, c] - coor[c])
+                        ur += tu * tu
+                        vr += tv * tv
+                if cc_ * vr - b * ur - a * wr - a * b * cc_ <= 0.0:
+                    break
+                lst -= 1
+            lst += 1
+            g[lst] = i
+        mx = lst
+        if mx < 0:
+            return
+        lst = 0
+        for i in range(n):
+            d1 = 0.0
+            for c in range(3):
+                t = np.float64(f[g[lst], c] - (i if c == d else coor[c]))
+                d1 += t * t
+            while lst < mx:
+                d2 = 0.0
+                for c in range(3):
+                    t = np.float64(f[g[lst + 1], c] - (i if c == d else coor[c]))
+                    d2 += t * t
+                if d1 <= d2:
+                    break
+                d1 = d2
+                lst += 1
+            k = g[lst]
+            for c in range(3):
+                ft[c, line[0, i], line[1, i], line[2, i]] = f[k, c]
 
-def edt(a):
-    """ndimage.distance_transform_edt(a) for a 2D or 3D array: each nonzero
-    cell's Euclidean distance (in cells) to the nearest zero, float64."""
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _ft_pass(ft, d):
+        shp = ft.shape[1:]
+        n = shp[d]
+        a1 = 1 if d == 0 else 0
+        a2 = 2 if d != 2 else 1
+        n1, n2 = shp[a1], shp[a2]
+        for t in nb.prange(n1 * n2):
+            p, q = t // n2, t % n2
+            line = np.empty((3, n), np.int64)
+            coor = np.zeros(3, np.int64)
+            coor[a1] = p
+            coor[a2] = q
+            for i in range(n):
+                line[a1, i] = p
+                line[a2, i] = q
+                line[d, i] = i
+            f = np.empty((n, 3), np.int64)
+            g = np.empty(n, np.int64)
+            _voronoi(ft, line, n, d, coor, f, g)
+
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _ft_init(m, ft):
+        # scipy's first pass marks each zero cell its own feature and every
+        # other cell -1 (its other components left as they were: zero)
+        nx, ny, nz = m.shape
+        for i in nb.prange(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    if m[i, j, k]:
+                        ft[0, i, j, k] = -1
+                    else:
+                        ft[0, i, j, k] = i
+                        ft[1, i, j, k] = j
+                        ft[2, i, j, k] = k
+
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _ft_distance(ft, out):
+        # scipy: sqrt(add.reduce((ft - indices)^2 in float64, axis=0))
+        _, nx, ny, nz = ft.shape
+        for i in nb.prange(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    a = np.float64(ft[0, i, j, k] - i)
+                    b = np.float64(ft[1, i, j, k] - j)
+                    c = np.float64(ft[2, i, j, k] - k)
+                    out[i, j, k] = np.sqrt(a * a + b * b + c * c)
+
+
+def edt(a, return_distances=True, return_indices=False):
+    """ndimage.distance_transform_edt(a, return_distances=, return_indices=)
+    for a 2D or 3D array: each nonzero cell's Euclidean distance (in cells)
+    to the nearest zero, float64, and/or that zero's indices, int32 of shape
+    (a.ndim,) + a.shape. Returns what scipy returns, to the bit, ties
+    included."""
+    if not return_distances and not return_indices:
+        raise RuntimeError("at least one of return_distances/return_indices must be True")
     a = np.asarray(a)
     if a.ndim == 2 and available():
-        return edt(a[None])[0]
+        r = edt(a[None], return_distances, return_indices)
+        if not return_indices:
+            return r[0]
+        if not return_distances:
+            return np.ascontiguousarray(r[1:, 0])
+        return r[0][0], np.ascontiguousarray(r[1][1:, 0])
     if not available() or a.ndim != 3 or a.size == 0 or (a != 0).all():
         from scipy import ndimage
 
-        return ndimage.distance_transform_edt(a)
+        return ndimage.distance_transform_edt(a, return_distances=return_distances,
+                                              return_indices=return_indices)
     m = np.ascontiguousarray(a != 0)
+    if return_indices:
+        return _feature_transform(m, return_distances)
     g = np.empty(m.shape, np.int64)
     _pass_z(m, g, _INF)
     _pass_y(g, _INF)
     out = np.empty(m.shape, np.float64)
     _pass_x(g, out, _INF)
     return out
+
+
+def _feature_transform(m, return_distances):
+    # scipy's euclidean_feature_transform: Maurer's separable Voronoi passes
+    # along axis 0, then 1, then 2, each line's ties broken as scipy's are
+    ft = np.zeros((3,) + m.shape, np.int32)
+    _ft_init(m, ft)
+    for d in range(3):
+        _ft_pass(ft, d)
+    if not return_distances:
+        return ft
+    out = np.empty(m.shape, np.float64)
+    _ft_distance(ft, out)
+    return out, ft

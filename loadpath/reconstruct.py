@@ -154,7 +154,7 @@ def _surface_distance(fine, step, level=0.5, reach=None):
     band = (np.abs(fine - level) < 0.3) & (g > 1e-6) & (np.abs(lin) < 0.75 * step)
     if not band.any():
         return _field_distance(fine, step, level)
-    _, idx = ndimage.distance_transform_edt(~band, return_indices=True)
+    _, idx = edt(~band, return_indices=True)
     # the surface point each band cell sees along its gradient, and the
     # distance to the one nearest
     shape = fine.shape
@@ -231,7 +231,7 @@ def _hold_members(fine, step, min_member, level=0.5, floor=MEMBER_FLOOR, tol=OPE
     core = e <= 0.0
     if not core.any():
         return np.zeros_like(fine)
-    far, idx = ndimage.distance_transform_edt(~core, return_indices=True)
+    far, idx = edt(~core, return_indices=True)
     # from outside the core: to its nearest cell, plus that cell's own
     # (sub-cell) distance to the core's surface
     de = np.where(core, e, far * step + e[tuple(idx)])
@@ -344,7 +344,7 @@ def _grid_min_sdf(shapes, grid_shape, step, pts):
         if _boolean_in(sh):
             occ = (d <= 0.0).reshape(grid_shape)
             if occ.any() and not occ.all():
-                e = ndimage.distance_transform_edt(~occ).ravel() * step - 0.5 * step
+                e = edt(~occ).ravel() * step - 0.5 * step
                 d = np.where(d > 0.0, np.maximum(d, e), d)
         out = d if out is None else np.minimum(out, d, out=out)
     return out
@@ -393,7 +393,7 @@ def _member_room(sdfs: "_GridSDF", design, preserve, keep_out, r: float, step: f
             core = (sd < -r).reshape(sdfs.shape)
             if not core.any():
                 return np.full(sd.shape, np.inf)
-            e, idx = ndimage.distance_transform_edt(~core, return_indices=True)
+            e, idx = edt(~core, return_indices=True)
             q = np.ravel_multi_index(tuple(i.ravel() for i in idx), sdfs.shape)
             return e.ravel() * step + sd[q]
 
@@ -418,7 +418,7 @@ def _member_room(sdfs: "_GridSDF", design, preserve, keep_out, r: float, step: f
         # none it is gone on both sides.
         inside = (dk < 0.0).reshape(sdfs.shape)
         if inside.any() and not inside.all():
-            idx = ndimage.distance_transform_edt(inside, return_distances=False, return_indices=True)
+            idx = edt(inside, return_distances=False, return_indices=True)
             q = np.ravel_multi_index(tuple(i.ravel() for i in idx), sdfs.shape)
             val = np.where(inside.ravel() & near, val[q], val)
         val = np.clip(ndimage.gaussian_filter(val.reshape(sdfs.shape), 0.7).ravel(), 0.0, 1.0)
@@ -817,9 +817,9 @@ def _drop_unformed_once(part, study, cut_ko, min_wall):
     # on past it: 8 mm of the wrist yoke's 13 mm of crease on one part, 38
     # of 50 mm on the part its eval failed on.)
     r = 0.5 * min_wall / p
-    core = ndimage.distance_transform_edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1] > r
-    far = ndimage.distance_transform_edt(~core).astype(np.float32) - r
-    away = ndimage.distance_transform_edt(~cut).astype(np.float32)
+    core = edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1] > r
+    far = edt(~core).astype(np.float32) - r
+    away = edt(~cut).astype(np.float32)
     f = np.pad(np.clip(far, -2.0, 2.0) - np.maximum(away - 1.0, 0.0), 2, constant_values=-2.0)
     if f.max() <= 0.0:
         return part, []
@@ -1069,7 +1069,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             # face square.
             band = (d < clearance).reshape(fine.shape)
             if band.any() and not band.all():
-                idx = ndimage.distance_transform_edt(band, return_distances=False, return_indices=True)
+                idx = edt(band, return_distances=False, return_indices=True)
                 # (the nearest cell changes in steps: smoothed over a cell,
                 # or the carried surface is terraced)
                 through = ndimage.gaussian_filter(fine[tuple(idx)], 1.0)
@@ -1444,7 +1444,7 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
     w = 1.0
     if keep_thin:
         grid = domain.full_grid(np.asarray(xphys, float)) > 0.5
-        half = ndimage.maximum_filter(ndimage.distance_transform_edt(grid), size=5)
+        half = ndimage.maximum_filter(edt(grid), size=5)
         ijk = np.floor((np.asarray(iso.vertices) - domain.origin) / domain.pitch).astype(int)
         ijk = np.clip(ijk, 0, np.array(grid.shape) - 1)
         w = np.clip((half[ijk[:, 0], ijk[:, 1], ijk[:, 2]] - THIN[0]) / (THIN[1] - THIN[0]), 0.0, 1.0)[:, None]
@@ -1643,11 +1643,11 @@ def _keep_joints(before, opened, step: float, min_member: float, level: float = 
         return opened
     neck = joint[rl]
     # the neck's ridge, and a tube of the minimum member's radius round it
-    depth = ndimage.distance_transform_edt(before >= level)
+    depth = edt(before >= level)
     ridge = neck & (depth >= ndimage.maximum_filter(depth, size=3))
     if not ridge.any():
         ridge = neck
-    d = ndimage.distance_transform_edt(~ridge) * step
+    d = edt(~ridge) * step
     tube = np.clip(level - (d - 0.5 * min_member) / (2.0 * step), 0.0, 1.0)
     tube = np.where(ndimage.binary_dilation(neck, iterations=int(np.ceil(0.5 * min_member / step)) + 2), tube, 0.0)
     return np.maximum(opened, np.maximum(np.where(neck, before, 0.0), tube))
