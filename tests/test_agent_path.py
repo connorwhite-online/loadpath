@@ -67,6 +67,11 @@ def test_check_flags_keepout_eating_a_preserve_but_not_a_bore():
     s["keepOut"].append({"id": "driver", "shape": {"type": "cylinder", "p0": [8.5, 0, -6], "p1": [8.5, 0, 6], "r": 4}})
     w = [w for w in check_study(s)["warnings"] if "removes" in w]
     assert w and "'driver'" in w[0] and "'boss-a'" in w[0], w
+    # a clearance volume that leaves what is drawn (cutsPreserve false: a
+    # latch tooth in the phone's way in) removes nothing, so says nothing
+    s["keepOut"][-1]["cutsPreserve"] = False
+    s["keepOut"][-1]["bore"] = False
+    assert not [w for w in check_study(s)["warnings"] if "removes" in w]
 
 
 def test_check_flags_a_moment_in_newton_metres():

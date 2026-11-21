@@ -642,6 +642,8 @@ def _preserve_cut(s) -> list[str]:
                 pm = _union([p])
                 vol = float(pm.volume())
                 for k in s.keep_out:
+                    if not getattr(k, "cuts", True):
+                        continue    # a clearance volume (cutsPreserve false) leaves what is drawn
                     kid, rid = str(k.id), str(r.id)
                     if "-" in kid and "-" in rid and kid.rsplit("-", 1)[0] == rid.rsplit("-", 1)[0]:
                         continue    # one fastener's own tap through its own seat or sleeve
