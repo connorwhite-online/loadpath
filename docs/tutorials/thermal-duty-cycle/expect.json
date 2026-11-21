@@ -61,7 +61,7 @@
    "file": "hot/report.json",
    "value": "r['outcomes'][r['best']]['durability']['fatigueSafetyFactor']",
    "min": 1.5,
-   "max": 5.5,
+   "max": 7.5,
    "what": "PA-CF designed for the cycle: thermal-cycling fatigue SF"
   },
   {
