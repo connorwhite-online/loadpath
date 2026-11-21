@@ -155,17 +155,18 @@ fields. Same pitch, same checks, designed grooves left out:
 ## Example: a pod where every join carries curvature
 
 `examples/freeform/pod.py` lofts a body from six sections, closes both
-ends with caps, blends a mount boss into an opening cut in the top, and
+ends with caps, fillets a mount boss standing through the top, and
 blends a recessed flat seat down from a second opening. Eight faces, a
 closed solid, 17 s. Built tangent-only and then curvature-continuous:
 
 | Largest over every shared edge | G1 | G2 |
 |---|---|---|
-| Gap | 0.0002 mm | 0.0002 mm |
-| Angle between tangent planes | 0.02° | 0.03° |
+| Gap | 0.0004 mm | 0.0004 mm |
+| Angle between tangent planes | 0.04° | 0.04° |
 | Jump in curvature across the edge | 0.069 /mm | 0.0002 /mm |
 
 Known limits: a cap's boundary has to project onto its best plane as a
-simple loop; `cut` does not cross a periodic surface's seam; the blend's
-lead is found section by section, and between unlike loops (a round post
-on an oval opening) the blend's own curvature still varies round the loop.
+simple loop; `cut` does not cross a periodic surface's seam. A `blend`
+between unlike loops (a round post over an oval opening) is wider where
+the gap is wider, so its curvature varies round the loop; where an even
+join is wanted, `fillet` cuts both faces back by the same distance.
