@@ -147,6 +147,25 @@ def test_split_chooses_a_cut_that_captures():
         assert not errs, errs
 
 
+
+def test_plug_way_across_a_long_product_stays_small():
+    """A socket's plug way is the socket swept out across the whole exterior
+    (shells._capture_prep: reach = the exterior's diagonal). On the socket's
+    own fine mesh grid a 9 mm part swept 180 mm was billions of cells and
+    ran a 160 mm handheld out of memory; the sweep's grid is now held to a
+    few times the part's own cells along it, and still reads the sweep."""
+    import resource
+    import trimesh
+    from loadpath.shapes import MeshShape, sweep
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    w = sweep(MeshShape(trimesh.creation.box((7.5, 9.0, 3.3))), [-1, 0, 0], 180.0)
+    P = np.array([[-50, 0, 0], [-50, 6.0, 0], [0, 0, 0], [10, 0, 0], [-185, 0, 0]])
+    d = w.sdf(P)
+    grew = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before) / 1024   # MB on Linux
+    assert grew < 1500, grew
+    assert d[0] < -1.2 and d[2] < -1.2                   # inside the swept plug
+    assert abs(d[1] - 1.5) < 0.4 and abs(d[3] - 6.25) < 0.4 and abs(d[4] - 1.25) < 0.4
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

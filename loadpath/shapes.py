@@ -885,8 +885,15 @@ class Sweep(Shape):
         if m._grid is None:
             m._build_grid()
         dist, origin, pitch = m._grid
+        # a small part swept a long way (a USB-C plug's way out across a
+        # 160 mm product) on the part's own fine grid is billions of cells:
+        # hold the cells along the sweep to a few times the base's own
+        span = self.length + float(np.max(m.mesh.extents))
+        coarse = span / pitch > 4 * m._GRID_CELLS
+        if coarse:
+            pitch = span / (4 * m._GRID_CELLS)
         n = int(round(self.length / pitch))
-        if np.max(np.abs(self.direction)) <= 1 - 1e-9:
+        if coarse or np.max(np.abs(self.direction)) <= 1 - 1e-9:
             # along a slant (a tilted board's slide): the same smear in a
             # frame whose first axis is the direction, the mesh read once
             # at that frame's cells. The copies point by point were 2.5 s
