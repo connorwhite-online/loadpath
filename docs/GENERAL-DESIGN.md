@@ -432,6 +432,29 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    1 mm pinholes are not in the run's part: it has 21 openings, none
    under 4 mm across. They come from the surfacing step.)
 
+### Open: parts left heavier than they need to be
+
+Read from the search logs of the 2026-11-21 re-run (not fixed here; it is
+the search's time, not the shape):
+
+- **The constrained stage ends on its time box while well over target.**
+  The tool clip's three constrained runs read 1.30, 1.32 and 1.26 times
+  the target at 4.7, 4.7 and 4.5 g, then the ten-minute box closed. The
+  limit is relaxed by the square root of each reading (a guard against
+  the wall bracket's wild first readings), a run takes 3 to 5 minutes at
+  0.8 mm on a 4 g part, and the first 14% relaxation moved neither the
+  mass nor the reading. A step sized by the measured response (the slope
+  of reading against limit over the runs so far) would get there in the
+  runs the box allows.
+- **The 40-minute limit lands mid-bisection.** The caster fork passed at
+  22.2 g, failed at 15.7 g and stopped; its build-direction settle then
+  ran another 15 minutes past the limit.
+- **A part whose envelope barely carries the load cannot be searched.**
+  The corner bracket as a solid block reads 1.11 times its target; the
+  readings between 30% and 55% fill wander between 0.89 and 0.98 with
+  no trend (a hot spot at a bolt seat sets them), and 20 of its 40
+  minutes went to fills that could not pass.
+
 ## Rule for work under this document
 
 Fix the general cause, never the case. A change is kept only if it follows
