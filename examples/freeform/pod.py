@@ -6,8 +6,8 @@ One lofted body, then what a surfacing artist adds by hand and this does in
 code (docs/FREEFORM.md):
 
 - both ends closed by G2 caps (domes that continue the body's curvature);
-- a mount boss blended into an opening cut in the top (G2 on both joins),
-  its top capped G2;
+- a mount boss standing through the top, filleted in (both faces cut back
+  3 mm and blended G2), its top capped G2;
 - a recessed flat (a sensor window's seat) blended down from a second
   opening, G2 where it leaves the body.
 
@@ -69,13 +69,13 @@ def build(continuity="G2"):
     f = s.face()
     zmid = lambda e: BRepAdaptor_Curve(e).Value(0.3).Z()      # noqa: E731
     ends = sorted(S.boundary_edges(f), key=zmid)
-    # the mount boss: an opening on top, a short round post above it
+    # the mount boss: a round post standing through the top, filleted in
     p, n, x, y = frame_at(s, 0.5, 0.36)
-    f = S.cut(f, on_body(s, 0.5, 0.36, 0.085, 0.10))
-    post = S.fit_surface(np.stack([ring(p + n * h, x, y, 4.5, 48) for h in np.linspace(6.0, 10.0, 6)], 1), (16, 4),
+    post = S.fit_surface(np.stack([ring(p + n * h, x, y, 4.5, 48) for h in np.linspace(-4.0, 10.0, 8)], 1), (16, 5),
                          uperiodic=True, fair=1e-9).face()
-    post_ends = sorted(S.boundary_edges(post), key=lambda e: float(np.array(
+    top = max(S.boundary_edges(post), key=lambda e: float(np.array(
         [BRepAdaptor_Curve(e).Value(0.3).X(), BRepAdaptor_Curve(e).Value(0.3).Y(), BRepAdaptor_Curve(e).Value(0.3).Z()]) @ n))
+    f, boss_blend, post = S.fillet(f, post, 3.0, continuity, keep=(None, p + 9.0 * n))
     # the window seat: a second opening, a flat 2.2 mm below the skin
     p2, n2, x2, y2 = frame_at(s, 0.5, 0.74)
     f = S.cut(f, on_body(s, 0.5, 0.74, 0.11, 0.085))
@@ -84,15 +84,12 @@ def build(continuity="G2"):
                                    for b_ in np.linspace(-1.3, 1.3, 8)]).reshape(8, 8, 3), (4, 4), fair=0.0)
     t = np.linspace(0, 2 * np.pi, 64, endpoint=False)
     seat_in = S.cut(seat, seat_c + 7.5 * np.cos(t)[:, None] * x2 + 6.0 * np.sin(t)[:, None] * y2, keep="inside")
-    holes = S.hole_edges(f)
-    assert len(holes) == 2
-    hz = [np.mean([zmid(e) for e in h]) for h in holes]
-    boss_hole, seat_hole = holes[int(np.argmin(hz))][0], holes[int(np.argmax(hz))][0]
+    seat_hole = max(S.hole_edges(f), key=lambda h: np.mean([zmid(e) for e in h]))[0]
     parts = {"body": f, "post": post, "seat": seat_in}
-    parts["boss blend"] = S.blend((f, boss_hole), (post, post_ends[0]), continuity)
+    parts["boss blend"] = boss_blend
     parts["seat blend"] = S.blend((f, seat_hole), (seat_in, S.boundary_edges(seat_in)[0]), (continuity, "G1"), lead=(1.0, 0.7))
     report = {"continuity": continuity, "blends": {k: parts[k].fit for k in ("boss blend", "seat blend")}, "caps": {}}
-    for name, e, on in (("tail cap", ends[0], f), ("head cap", ends[1], f), ("post cap", post_ends[1], post)):
+    for name, e, on in (("tail cap", ends[0], f), ("head cap", ends[1], f), ("post cap", top, post)):
         parts[name], err = S.cap([(e, on, continuity)])
         report["caps"][name] = {k: err[k] for k in ("G0", "G1", "G2", "poles")}
     solid = S.sew_solid(list(parts.values()))
