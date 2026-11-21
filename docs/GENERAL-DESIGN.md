@@ -302,8 +302,38 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 12a | A sound design failed because the floor of a blind tapped hole is read as a blocked hole | 5 | 2 of 17, any thread in a thick part | **Fixed** |
 | 12b | A skin or duct wall under two cells: warned about, then designed on anyway | 4 | 4 of 6 in the second batch, every skinned part given a cell budget | **Fixed**: the wall sets the cell, up to four times the budget |
 | 12c | A bolted face held over its whole area against a load that lifts it | 2 | 2 of 6 in the second batch | **Open**: named by `check`; a support that only pushes would remove the mistake |
+| 12d | Parts come out lumpy, beaded along edges and lopsided | 8 | all 12 rendered parts, worst on small ones | **Fixed** in four places, each found on development parts (see "Why parts looked misshapen" below) |
 | 13 | Physical ground truth | 9 | all | **Open**: calibration prints (calibration/) |
 
+
+## Why parts looked misshapen
+
+The held-out parts rendered on 2026-11-21 were lumpy, beaded and lopsided.
+Four causes, none of them in the meshing's smoothing, all found and fixed
+on development parts (a rod holder, a shelf bracket, a reducer duct):
+
+1. **Loads on empty cells.** A load on a face that lines a keep-out (a
+   rod's saddle, a shaft's seat) was pinned solid only when its region
+   touched under 3% of the cells. On a small part it touches more, so the
+   load sat on cells the optimizer was free to empty: the rod holder's
+   compliance rose 80x as the projection sharpened, and the design it
+   ended on was ragged. The cells behind loaded nodes are now pinned one
+   minimum member deep at any size. Same grid, same 30% of the envelope:
+   SF 2.3 before, 4.5 after.
+2. **Symmetric problems, lopsided parts.** Where two layouts tie, round-off
+   picks one and every later iteration builds on the pick. A problem that
+   is its own mirror image is now held to that plane
+   (`domain._found_symmetry`).
+3. **A staircase handed to the mesher.** The delivered field is solid or
+   void, so its surface followed the cells and the smoothing turned steps
+   into ripples. The mesh is now drawn from the filtered field the
+   projection was cut from, which says where in each cell the surface is
+   (`simp.boundary_field`).
+4. **Beads on every edge.** Delivery returned thin members the opening had
+   lost by bringing the blueprint back in a ball round each lost cell.
+   Edges and sheets at the opening's cut came back in patches: 594 stray
+   surface cells on a 40k-cell part, a row along every edge. The blueprint
+   now comes back round the whole analysed design, one surface.
 
 ## Rule for work under this document
 

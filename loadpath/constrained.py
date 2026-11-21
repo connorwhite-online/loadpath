@@ -707,12 +707,18 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
     # MMA walks along the limit with every few steps a little over it.
     if best is not None:
         x = best[0]
-    xp = _project((h @ x) / hs, beta, opts.eta)
+    xt = (h @ x) / hs
+    xp = _project(xt, beta, opts.eta)
     xp[pres] = 1.0
     xp = printed(am_b, xp)
     if buck is not None:
         buck.keep()     # the study's next run on this grid starts from these modes
-    return SimpResult(x=x, xphys=xp, compliance=float("nan"), case_compliance=[],
+    from .simp import boundary_field
+
+    return SimpResult(x=x, xphys=xp,
+                      xlevel=boundary_field(xp, [(xt, opts.eta)], opts.filter_radius / domain.pitch,
+                                            getattr(domain, "level_hint", None)),
+                      compliance=float("nan"), case_compliance=[],
                       volume_fraction=float(xp[design].mean()), iterations=it,
                       converged=converged, seconds=time.time() - t0, history=history,
                       delivered=best[1] if best is not None else None)

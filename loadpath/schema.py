@@ -1956,8 +1956,13 @@ STUDY_SCHEMA = {
             "description": "Escape holes into voids the optimizer sealed: 'auto' (default) for powder and resin "
                            "processes and LPBF, true, false, or options. The holes are drilled where the "
                            "wall is thin and the strain energy low, then the design re-converges round them."},
-        "symmetry": {"type": "array", "items": {"enum": ["x", "y", "z"]},
-                     "description": "Planes through the design-space centre, by normal axis."},
+        "symmetry": {"oneOf": [{"type": "array", "items": {"enum": ["x", "y", "z"]}}, {"const": False}],
+                     "description": "Mirror planes through the design-space centre, by normal axis, to hold on "
+                                    "top of the ones the run finds itself: a problem that is its own mirror image "
+                                    "(same shape, pinned regions, supports and load cases) is designed "
+                                    "mirror-symmetric without being asked. A one-way sideways load is not "
+                                    "symmetric; give it as \"direction\": \"any\" or add the opposite case. "
+                                    "false: hold none and do not look."},
         "mesh": {"type": "object",
                  "description": "How the delivered surface is drawn from the optimized field. Larger radii give "
                                 "joints that read as grown rather than assembled; both only ever add material.",

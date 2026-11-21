@@ -415,6 +415,15 @@ def test_delivery_keeps_every_analysed_member():
     assert not (out[sheet] > 0).any(), "a sheet with no analysed core stays out"
     whole = np.where(col, 1.0, 0.0)
     assert _keep_cores(dom, whole, analysed, blueprint, radius=4.0) is whole, "nothing lost: delivered as opened"
+    # The blueprint comes back round the whole analysed design, not only
+    # round the cells the opening missed: one surface. Round the missed cells
+    # alone it came back in patches, a bead on every edge of every part.
+    body = (ijk[:, 0] <= 4) & (ijk[:, 1] <= 4)
+    edge = (ijk[:, 0] == 4) & (ijk[:, 1] == 4)
+    wide = np.where(ijk[:, 0] <= 6, 1.0, 0.0)
+    out = _keep_cores(dom, np.where(body & ~edge, 1.0, 0.0), body.astype(float), wide, radius=4.0)
+    skin = body | ((ijk[:, 0] == 5) & (ijk[:, 1] <= 4)) | ((ijk[:, 0] <= 4) & (ijk[:, 1] == 5))
+    assert np.array_equal(out > 0.5, skin), "the blueprint within reach of the analysed body, all the way round"
 
 
 def test_constrained_stress_limit_reads_the_layer_bond_as_verification_does():

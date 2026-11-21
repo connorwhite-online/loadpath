@@ -290,6 +290,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         "ok": True, "name": s.name, "pitch": d.pitch, "threadingLayer": layer, "peakMemoryGB": round(mem, 1), "cells": d.n_elem, "dims": list(d.dims),
         "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.length_scale, s.min_hole),
         "supportNodes": int(d.support_nodes.sum()), "loadNodes": int(d.load_nodes.sum()),
+        # mirror planes the design will be held to (declared and found), and
+        # why each other plane is not one: {"x": "load case 2"} is a one-way push
+        "symmetry": sorted(d.mirror), "symmetryNotHeld": dict(getattr(s, "symmetry_missed", None) or {}),
         "regions": [r.id for r in s.preserve] + [r.id for r in s.keep_out],
         "loadCases": [c.name for c in s.load_cases], "material": s.material.name,
         # what each case resolves to (mass, 'at', fasteners and in-plane

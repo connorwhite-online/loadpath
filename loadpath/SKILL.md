@@ -1231,6 +1231,19 @@ coordinates). Preserved geometry is kept as drawn, so a preserved overhang
 (a platform, a ring's underside) still needs support: chamfer it in the
 preserve or accept the supports `deliver` → `print` reports.
 
+## Symmetry
+
+A problem that is its own mirror image is designed mirror-symmetric without
+being asked: the run checks each plane through the design space's centre
+(same shape, pinned regions, supports, and every load case's mirror image
+also a load case) and holds the ones it finds. `check` lists them as
+`symmetry` and says why each other plane is not one (`symmetryNotHeld`:
+`{"x": "load case 2"}`). A sideways push written one way only is not
+symmetric, and the part will lean against it: give it as
+`"direction": "any"`, add the opposite case, or declare `"symmetry": ["x"]`.
+A part grown to print without supports is not mirrored across the bed.
+`"symmetry": false` turns the search off.
+
 ## Resolution
 
 `resolution.maxElements` trades detail for time: 20k for a first look,
