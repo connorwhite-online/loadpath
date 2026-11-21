@@ -312,9 +312,18 @@ because the run meshed the wall's whole cells as part of the organic body
 and the exact wall went in under it. With the wall off the field the
 delivered wall is the drawn one. The constrained method keeps whole cells
 on the refined grid (its stress limit is read per cell), so where `auto`
-runs it the run's total time drops less than its search's. Open: a
-midsurface shell for housings past the size above; cut walls for the
-constrained method, pressure and thermal studies.
+runs it the run's total time drops less than its search's.
+
+Measured afterwards on the held-out fan duct (-c), never tuned on: first
+try, 9.6 g at safety factor 17.6 in 28 minutes, against 15.3 g in 65 before.
+Pressure studies and studies with bought stock take the cut walls too.
+The constrained method is wired for them (`LOADPATH_WALL_CONSTRAINED=1`) but
+held off: its stress reading at a cell's quarter points reads a 1.5 mm
+plate's bending 20 to 45% under beam theory whichever element it uses
+(the points sit inside the wall, not on its faces), and on the ribbed lid
+it delivered nothing passing. Open: read a wall cell's stress on the wall's
+faces for the constrained method; thermal studies (their expansion load is
+per whole cell); a midsurface shell for housings past the size above.
 
 ## Gaps, ranked by how many users they hit
 
