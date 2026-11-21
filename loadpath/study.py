@@ -2403,6 +2403,9 @@ _RELAX_AIM = 1.06
 # ... with the ratio's measured response to the limit taken as no weaker than
 # this power of it (a reading that did not move is noise, not a law)
 _RELAX_SLOPE = -0.25
+# the failing side sized the same way (_tighten_step); LOADPATH_FAIL_STEP=ratio
+# keeps the step of the ratio alone
+_FAIL_STEP_MEASURED = os.environ.get("LOADPATH_FAIL_STEP", "measured") != "ratio"
 
 
 def _relax_step(reads: list) -> float:
@@ -2429,6 +2432,26 @@ def _relax_step(reads: list) -> float:
     slope = float(((x - x.mean()) * (y - y.mean())).sum() / var) if var > 1e-12 else 0.0
     slope = min(slope, _RELAX_SLOPE) if np.isfinite(slope) else _RELAX_SLOPE
     return float(np.clip((_RELAX_AIM / r) ** (1.0 / slope), 1.0, 4.0))
+
+
+def _tighten_step(reads: list) -> float:
+    """The factor the limit scale t is tightened by next while every run so
+    far failed: reads = [(t, ratio)], ratio under 1. The first step takes
+    the ratio itself (a stress limit acts roughly in proportion), between
+    0.25 and 0.9. From the second on, the step is the one the measured
+    response says lands on _RELAX_AIM, as _relax_step sizes the passing
+    side: a part's ratio rose 0.73 -> 0.88 -> 0.97 on a corner bracket while
+    t went 1 -> 0.73 -> 0.64 (slope -0.6), so a step of the ratio alone
+    undershoots and costs a part. Between 0.25 and 0.97."""
+    _, r = reads[-1]
+    if len(reads) < 2:
+        return float(min(max(r, 0.25), 0.9))
+    x = np.log([q[0] for q in reads])
+    y = np.log([q[1] for q in reads])
+    var = float(((x - x.mean()) ** 2).sum())
+    slope = float(((x - x.mean()) * (y - y.mean())).sum() / var) if var > 1e-12 else 0.0
+    slope = min(slope, _RELAX_SLOPE) if np.isfinite(slope) else _RELAX_SLOPE
+    return float(np.clip((_RELAX_AIM / r) ** (1.0 / slope), 0.25, 0.97))
 
 
 def _probe_settled(won: bool, start: float, deadline: float, done: int, now: float | None = None) -> bool:
@@ -3687,6 +3710,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         fails = []
         t, t_pass, t_fail, x_pass = 1.0, None, None, None
         relaxed = []    # (t, ratio) of the passing runs while none has failed (_relax_step)
+        tightened = []  # (t, ratio) of the failing runs while none has passed (_tighten_step)
         for _ in range(_MAX_CONSTRAINED_RUNS):
             if should_stop is not None and should_stop() or no_room():
                 break
@@ -3747,8 +3771,10 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 t = (t_pass * t_fail) ** 0.5
             elif t_fail is not None:
                 # a stress limit acts roughly in proportion; never more than
-                # 4x a step, so one wild reading cannot overshoot far
-                t *= min(max(ratio, 0.25), 0.9)
+                # 4x a step, so one wild reading cannot overshoot far; from
+                # the second failing run, sized by the measured response
+                tightened.append((t, ratio))
+                t *= _tighten_step(tightened) if _FAIL_STEP_MEASURED else min(max(ratio, 0.25), 0.9)
             else:
                 relaxed.append((t, ratio))
                 t *= _relax_step(relaxed)

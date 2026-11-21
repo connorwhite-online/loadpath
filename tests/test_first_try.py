@@ -623,3 +623,19 @@ def test_a_block_that_barely_passes_draws_the_search_up_to_it():
     assert _toward_block(nxt, 0.9, (0.3, 0.9), 12.0) == nxt
     assert _toward_block(nxt, 0.9, (0.3, 0.9), None) == nxt
     assert _toward_block(nxt, 0.9, (0.3, 0.9), 0.8) == nxt     # a failing block says nothing here
+
+
+def test_the_failing_side_steps_by_its_measured_response():
+    """While every constrained run fails, the first step tightens the limit
+    by the ratio itself (0.25-0.9); later steps by what the measured slope
+    says lands on the aim, as the passing side does."""
+    from loadpath.study import _RELAX_AIM, _tighten_step
+
+    assert abs(_tighten_step([(1.0, 0.734)]) - 0.734) < 1e-12
+    assert _tighten_step([(1.0, 0.97)]) == 0.9 and _tighten_step([(1.0, 0.1)]) == 0.25
+    # a proportional response (slope -1) steps straight to the aim
+    s = _tighten_step([(1.0, 0.5), (0.6, 0.5 / 0.6)])
+    assert abs(0.5 / 0.6 / s - _RELAX_AIM) < 1e-9, s
+    # a corner bracket's weak response (slope -0.57) steps further than the ratio
+    assert _tighten_step([(1.0, 0.734), (0.734, 0.876)]) < 0.876
+    assert 0.25 <= _tighten_step([(1.0, 0.5), (0.99, 0.5)]) <= 0.97
