@@ -150,12 +150,14 @@ def hold(ps, xyz, pitch: float):
     return np.array(ks), s
 
 
-def resolve(u0s, ws, ps, ks, strict: bool = True):
+def resolve(u0s, ws, ps, ks, strict: bool = True, share=None):
     """Displacements with the seats pushing: for each u0 (the answer on the
     springs `ks`, N/mm per patch, alone), (u, lambda, mu) with lambda (N per
     patch) the seats' forces and mu the pushes that give u on the sprung
     stiffness (u = u0 + mu . w). `strict`: a load that lifts the part off
-    its seats with nothing else to hold it raises ValueError."""
+    its seats with nothing else to hold it raises ValueError. `share`: when
+    `ps` are pieces of the patches the springs are on (refine), each piece's
+    share of each sprung patch (pieces x patches)."""
     from scipy.optimize import nnls
 
     p = np.array(ps)
@@ -164,7 +166,8 @@ def resolve(u0s, ws, ps, ks, strict: bool = True):
     c = p @ w.T
     c = 0.5 * (c + c.T)
     a = np.linalg.pinv(c, hermitian=True)
-    h = a - np.diag(ks)
+    kd = np.diag(ks) if share is None else (share * ks) @ share.T
+    h = a - kd
     d, v = np.linalg.eigh(0.5 * (h + h.T))
     dc = np.maximum(d, FLOOR * float(ks.mean()))
     m = np.sqrt(dc)[:, None] * v.T                       # m'm = the stiffness, floored
@@ -180,18 +183,78 @@ def resolve(u0s, ws, ps, ks, strict: bool = True):
                 raise ValueError("a load lifts the part off its seat (supports[].push) with nothing else to hold it: "
                                  "a seat only pushes. Hold the part where its fasteners are.")
         mu = a @ (g - g0)
-        lam = np.maximum(mu - ks * g, 0.0)
+        lam = np.maximum(mu - kd @ g, 0.0)
         out.append((u0 + mu @ w, lam, mu))
     return out
 
 
-def solve(inner, rhs, ps, ks, strict: bool = True):
+def _split(p, xyz):
+    """A patch's unit push cut in up to four across its two widest
+    directions: [(unit push of the piece, its share of the patch)]."""
+    dof = np.nonzero(p)[0]
+    nodes = np.unique(dof // 3)
+    if len(nodes) < 8:
+        return []
+    pts = xyz[nodes]
+    wide = np.argsort(-np.ptp(pts, axis=0))[:2]
+    part = np.zeros(len(nodes), int)
+    for k, ax in enumerate(wide):
+        if np.ptp(pts[:, ax]) > 0:
+            part += (pts[:, ax] > np.median(pts[:, ax])).astype(int) << k
+    weight = np.linalg.norm(p.reshape(-1, 3)[nodes], axis=1)
+    out = []
+    for k in np.unique(part):
+        m = part == k
+        q = np.zeros_like(p)
+        own = (3 * nodes[m][:, None] + np.arange(3)).ravel()
+        frac = float(weight[m].sum() / weight.sum())
+        q[own] = p[own] / frac
+        out.append((q, frac))
+    return out if len(out) > 1 else []
+
+
+# rounds of cutting the patches that bear, and the most unit pushes a round may add
+REFINE_ROUNDS = 2
+REFINE_MOST = 32
+
+
+def solve(inner, rhs, ps, ks, strict: bool = True, xyz=None):
     """`inner(rhs) -> (stiffness, displacements)` on the sprung stiffness
     (hold) with the seats' forces absent; returns the same with the seats
     pushing (`ps` their patches, `ks` the springs in N/mm), and their forces
-    per rhs."""
+    per rhs (per patch of `ps`).
+
+    With `xyz` (node positions) the patches that bear are cut in four and
+    solved again, REFINE_ROUNDS times: a part pressed on its seat near a rim
+    bears on a band there, and one coarse patch beside it would let it tilt
+    about the band. The springs stay on the patches given (the stiffness is
+    the same one), each piece taking its share."""
     rhs = list(rhs)
-    stiff, us = inner(rhs + list(ps))
+    ps = list(ps)
+    stiff, us = inner(rhs + ps)
     us = list(us)
-    done = resolve(us[:len(rhs)], us[len(rhs):], ps, ks, strict)
-    return stiff, [d[0] for d in done], [d[1] for d in done]
+    u0s, ws = us[:len(rhs)], us[len(rhs):]
+    share = np.eye(len(ps))
+    done = resolve(u0s, ws, ps, ks, strict)
+    for _ in range(REFINE_ROUNDS if xyz is not None else 0):
+        bear = np.max([d[1] for d in done], axis=0)
+        cut = {}
+        for j in np.argsort(-bear):
+            if bear[j] <= 1e-6 * bear.sum() or 4 * (len(cut) + 1) > REFINE_MOST:
+                break
+            pieces = _split(ps[j], xyz)
+            if pieces:
+                cut[int(j)] = pieces
+        if not cut:
+            break
+        new = [q for j in cut for q, _ in cut[j]]
+        _, wn = inner(new)
+        keep = [j for j in range(len(ps)) if j not in cut]
+        rows = [share[j] for j in keep] + [frac * share[j] for j in cut for _, frac in cut[j]]
+        ps = [ps[j] for j in keep] + new
+        ws = [ws[j] for j in keep] + list(wn)
+        share = np.array(rows)
+        done = resolve(u0s, ws, ps, ks, strict, share=share)
+    # the forces on the patches given: each piece's go to the patch it was cut from
+    back = (share > 0).astype(float)
+    return stiff, [d[0] for d in done], [d[1] @ back for d in done]
