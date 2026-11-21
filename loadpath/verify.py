@@ -1348,23 +1348,57 @@ def _thin_preserves(study: Study, pitch: float) -> dict:
 
 
 def _clearance_nodes(study: Study, hm, pitch: float, report: dict) -> list:
-    """Per goal.clearances entry, the analysis nodes it covers (an empty
-    array, with a warning, when the part does not reach it)."""
+    """Per goal.clearances entry, (the analysis nodes it covers, the nodes
+    its travel is counted against or None): an empty array, with a
+    warning, when the part does not reach it."""
     from .domain import _region_nodes
+
+    def nodes_of(region, shape, label):
+        try:
+            return np.flatnonzero(_region_nodes(study, hm, region, shape, label, tol_floor=pitch))
+        except ValueError as exc:
+            report.setdefault("warnings", []).append(str(exc))
+            return np.zeros(0, int)
 
     out = []
     for i, c in enumerate(getattr(study.goal, "clearances", None) or []):
         if c.region is None and c.shape is None:
             # goal.maxDisplacement: the whole part
-            out.append(np.arange(len(hm.node_xyz)))
+            out.append((np.arange(len(hm.node_xyz)), None))
             continue
-        try:
-            out.append(np.flatnonzero(_region_nodes(study, hm, c.region, c.shape, f"goal.clearances[{i}]",
-                                                    tol_floor=pitch)))
-        except ValueError as exc:
-            out.append(np.zeros(0, int))
-            report.setdefault("warnings", []).append(str(exc))
+        ref = None
+        if c.relative_region is not None or c.relative_shape is not None:
+            lab = f"goal.clearances[{i}].relativeTo"
+            if c.relative_region is not None and c.relative_shape is not None:
+                ref = np.intersect1d(nodes_of(c.relative_region, None, lab), nodes_of(None, c.relative_shape, lab))
+            else:
+                ref = nodes_of(c.relative_region, c.relative_shape, lab)
+        out.append((nodes_of(c.region, c.shape, f"goal.clearances[{i}]"), ref))
     return out
+
+
+def rigid_relative(xyz, disp, nodes, ref):
+    """disp at `nodes` less the best-fit (small) rigid motion of the `ref`
+    nodes, u = t + w x (x - c) by least squares: the travel the ref's own
+    frame sees. Fewer than 3 ref nodes: their mean translation only."""
+    d = np.asarray(disp, float)[nodes]
+    if ref is None:
+        return d
+    if len(ref) < 3:
+        return d - (np.asarray(disp, float)[ref].mean(axis=0) if len(ref) else 0.0)
+    X = np.asarray(xyz, float)
+    c = X[ref].mean(axis=0)
+    r = X[ref] - c
+    n = len(ref)
+    A = np.zeros((3 * n, 6))
+    A[:, :3] = np.tile(np.eye(3), (n, 1))
+    # w x r = -[r]x w
+    A[0::3, 4], A[0::3, 5] = r[:, 2], -r[:, 1]
+    A[1::3, 3], A[1::3, 5] = -r[:, 2], r[:, 0]
+    A[2::3, 3], A[2::3, 4] = r[:, 1], -r[:, 0]
+    sol = np.linalg.lstsq(A, np.asarray(disp, float)[ref].reshape(-1), rcond=None)[0]
+    t, w = sol[:3], sol[3:]
+    return d - (t + np.cross(w, X[nodes] - c))
 
 
 def _clearance_rows(study: Study, case_name: str, xyz, disp, nodes_per) -> list:
@@ -1372,13 +1406,13 @@ def _clearance_rows(study: Study, case_name: str, xyz, disp, nodes_per) -> list:
     case, the most any of its nodes travels (along its direction, when it
     has one), against its limit."""
     rows = []
-    for c, nodes in zip(getattr(study.goal, "clearances", None) or [], nodes_per):
+    for c, (nodes, ref) in zip(getattr(study.goal, "clearances", None) or [], nodes_per):
         if c.cases and case_name not in c.cases:
             continue
-        if not len(nodes):
+        if not len(nodes) or (ref is not None and not len(ref)):
             rows.append({"name": c.name, "travel": None, "maxTravel": c.max_travel})
             continue
-        d = disp[nodes]
+        d = rigid_relative(xyz, disp, nodes, ref)
         t = d @ c.direction if c.direction is not None else np.linalg.norm(d, axis=1)
         k = int(np.argmax(t))
         rows.append({"name": c.name, "travel": max(float(t[k]), 0.0), "maxTravel": c.max_travel,

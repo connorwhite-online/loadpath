@@ -210,6 +210,9 @@ _KEEP_OUT = {
                        "abuse": {"type": "boolean"},
                        "maxShift": {**_POS, "description": "mm the socket may move on its legs before a face "
                                                            "takes the force (default 0.1)"},
+                       "surround": {"type": "object", "description": "what the socket's shift is counted "
+                                    "against (goal.clearances[].relativeTo; loadpath enclosure: the skin around "
+                                    "its port)"},
                        "retention": {"type": "object", "additionalProperties": _POS,
                                      "description": "N the socket's legs are rated for, per force (insert, "
                                                     "withdraw, side-thin+, ...) or 'all': its datasheet"},
@@ -497,6 +500,12 @@ _GOAL = {
                                              "e.g. '-z' for a fan under the deck); default: any direction"},
                 "cases": {"type": "array", "items": {"type": "string"},
                           "description": "load case names it applies in (default: every case)"},
+                "relativeTo": {"type": "object", "description":
+                               "count travel against these nodes' best-fit rigid motion, not the supports "
+                               "(a socket against the opening around it: the shell flexing or swinging on far "
+                               "supports moves both together); region and shape both: the region's nodes inside the shape",
+                               "properties": {"region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"}},
+                               "x-requireOne": [["region"], ["shape"]], "additionalProperties": False},
                 "name": {"type": "string"}},
             "x-requireOne": [["region"], ["shape"]], "required": ["maxTravel"], "additionalProperties": False}},
         "maxMass": {**_POS, "description": "g: a cap the delivered part is checked against (deliver.passes is "

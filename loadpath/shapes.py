@@ -662,8 +662,13 @@ class Boolean(Shape):
         import manifold3d as m3d
         mans = [s.to_manifold() for s in self.parts]
         if self.kind == "intersect":
-            return m3d.Manifold.batch_boolean(mans, m3d.OpType.Intersect)
-        return mans[0] - m3d.Manifold.batch_boolean(mans[1:], m3d.OpType.Add)
+            out = m3d.Manifold.batch_boolean(mans, m3d.OpType.Intersect)
+        else:
+            out = mans[0] - m3d.Manifold.batch_boolean(mans[1:], m3d.OpType.Add)
+        # slivers where cut faces nearly meet fold through each other once
+        # an STL rounds them to float32 (a skin cut by a USB-C port): collapse
+        # edges under 10 nm, which moves no surface
+        return out.simplify(_SWEEP_FLAT * 1e-2)
 
     def to_spec(self):
         return {"type": self.kind, "shapes": [s.to_spec() for s in self.parts]}
@@ -839,6 +844,9 @@ def shrink(shape: Shape, t: float, open=()) -> Shape:
 
 
 # boundary triangles Sweep.to_manifold unions per batch (exact either way)
+# mm: a swept triangle's prism thinner than this is skipped (a wall along
+# the motion; see Sweep.to_manifold)
+_SWEEP_FLAT = 1e-3
 _SWEEP_PRISMS = 20_000
 
 
@@ -990,13 +998,23 @@ class Sweep(Shape):
         # 29k triangles sliding into a cradle) took past 13 GB in the union.
         L = self.length * self.direction
         n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
-        front = tri[n @ self.direction > 1e-9 * np.linalg.norm(n, axis=1).clip(1e-30)]
+        # a wall running along the motion (a port's prism swept along its
+        # axis) sweeps a prism of no thickness lying on the wall itself:
+        # its faces cross the wall's and the union folds (132 crossing faces
+        # at a scanner's USB-C opening). A triangle whose prism is thinner
+        # than _SWEEP_FLAT mm adds nothing the two copies do not.
+        front = tri[n @ self.direction > max(_SWEEP_FLAT / max(self.length, 1e-9), 1e-9)
+                    * np.linalg.norm(n, axis=1).clip(1e-30)]
         mans = [base, base.translate(tuple(L))]
         for i in range(0, len(front), _SWEEP_PRISMS):
             # in batches, so a dense mesh's union stays within memory
             prisms = [m3d.Manifold.hull_points(np.vstack([t, t + L])) for t in front[i:i + _SWEEP_PRISMS]]
             mans = [m3d.Manifold.batch_boolean(mans + prisms, m3d.OpType.Add)]
-        return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
+        out = m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
+        # the prisms' joins leave slivers an STL's float32 folds through each
+        # other (13 crossing faces on a swept USB-C port): collapse edges
+        # under _SWEEP_FLAT / 100 (10 nm), which moves no surface
+        return out.simplify(_SWEEP_FLAT * 1e-2)
 
     def to_spec(self):
         raise ValueError("a sweep is derived from a keep-out's insertFrom and has no JSON form of its own")

@@ -1872,7 +1872,9 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             case = {"name": f"{cid}-{r['name']}", "loads": [{"region": pid, "force": _r(float(r["force"]) * d, 4)}]}
             pad_cases[sd].append(case)
             pad_limits[sd].append({"name": f"{pid}-travel", "region": pid,
-                                   "maxTravel": float(P["connector"].get("maxShift", 0.1)), "cases": [case["name"]]})
+                                   "maxTravel": float(P["connector"].get("maxShift", 0.1)), "cases": [case["name"]],
+                                   **({"relativeTo": copy.deepcopy(P["connector"]["surround"])}
+                                      if P["connector"].get("surround") else {})})
             made.append({"id": pid, "half": sd, "load": r["name"], "face": r["face"],
                          "volume": round(float(abs(m.volume)), 2)})
         cap_report[cid] = {**{k: v for k, v in pl.items()}, "faces": made}

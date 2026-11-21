@@ -560,17 +560,25 @@ def _clearance_nodes(study, pts, tol):
     for goal.maxDisplacement (no region), else the points within `tol` of
     its region (a keep-out region: the points lining it), as verify reads
     them on voxels. An entry that reaches no point gets none."""
+    def near(region, shape):
+        if shape is not None:
+            shape, kind = shape, "inline"
+        else:
+            shape, kind = study.region_shape(region)
+        d = shape.sdf(pts)
+        return np.nonzero(d <= (2.0 * tol if kind == "keepOut" else tol))[0]
+
     out = []
     for c in getattr(study.goal, "clearances", None) or []:
         if c.region is None and c.shape is None:
-            out.append(np.arange(len(pts)))
+            out.append((np.arange(len(pts)), None))
             continue
-        if c.shape is not None:
-            shape, kind = c.shape, "inline"
-        else:
-            shape, kind = study.region_shape(c.region)
-        d = shape.sdf(pts)
-        out.append(np.nonzero(d <= (2.0 * tol if kind == "keepOut" else tol))[0])
+        ref = None
+        if c.relative_region is not None and c.relative_shape is not None:
+            ref = np.intersect1d(near(c.relative_region, None), near(None, c.relative_shape))
+        elif c.relative_region is not None or c.relative_shape is not None:
+            ref = near(c.relative_region, c.relative_shape)
+        out.append((near(c.region, c.shape), ref))
     return out
 
 
@@ -579,13 +587,15 @@ def _clearance_rows(study, name, pts, u, nodes_per):
     `name`, the most any of its points travels (along its direction, when
     it has one), in verify's row shape."""
     rows = []
-    for c, nodes in zip(getattr(study.goal, "clearances", None) or [], nodes_per):
+    from .verify import rigid_relative
+
+    for c, (nodes, ref) in zip(getattr(study.goal, "clearances", None) or [], nodes_per):
         if c.cases and name not in c.cases:
             continue
-        if not len(nodes):
+        if not len(nodes) or (ref is not None and not len(ref)):
             rows.append({"name": c.name, "travel": None, "maxTravel": c.max_travel})
             continue
-        d = u[nodes]
+        d = rigid_relative(pts, u, nodes, ref)
         t = d @ c.direction if c.direction is not None else np.linalg.norm(d, axis=1)
         k = int(np.argmax(t))
         rows.append({"name": c.name, "travel": max(float(t[k]), 0.0), "maxTravel": c.max_travel,

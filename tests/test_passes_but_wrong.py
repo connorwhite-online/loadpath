@@ -165,3 +165,23 @@ def test_a_four_way_edge_is_not_sound():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_clearance_relative_to_its_surround_ignores_rigid_motion():
+    # a socket read against the opening around it: the whole shell swinging
+    # on far supports moves both together, so only the socket's own shift counts
+    from loadpath.crosscheck import _clearance_nodes, _clearance_rows
+
+    s = study_from_dict({**BAR, "goal": {"safetyFactor": 2, "clearances": [
+        {"shape": {"type": "box", "min": [45, -1, -1], "max": [55, 11, 11]}, "maxTravel": 0.2, "name": "port",
+         "relativeTo": {"shape": {"type": "box", "min": [30, -1, -1], "max": [70, 11, 11]}}},
+        {"shape": {"type": "box", "min": [45, -1, -1], "max": [55, 11, 11]}, "maxTravel": 0.2, "name": "abs"}]}})
+    rng = np.random.default_rng(0)
+    pts = np.c_[rng.uniform(30, 70, 200), rng.uniform(0, 10, 200), rng.uniform(0, 10, 200)]
+    w, t = np.array([0.0, 0.002, 0.01]), np.array([0.3, -0.5, 0.8])
+    u = t + np.cross(w, pts - [50, 5, 5])
+    port = np.flatnonzero((pts[:, 0] >= 45) & (pts[:, 0] <= 55))
+    u[port] += [0, 0, 0.05]   # the socket's own give
+    rows = {r["name"]: r for r in _clearance_rows(s, "c", pts, u, _clearance_nodes(s, pts, 0.5))}
+    assert rows["abs"]["travel"] > 0.8
+    assert 0.02 < rows["port"]["travel"] < 0.06

@@ -60,6 +60,10 @@ from .handoff import _axis_name, _axis_vec, _fine_mesh_shape, _shape_spec
 __all__ = ["enclosure", "run_enclosure", "exterior_check", "check_delivered", "design_and_check"]
 
 _FACES = ["-z", "+z", "-x", "+x", "-y", "+y"]
+# mm of skin around a port its socket's shift is counted against (a USB-C
+# opening's surround: enough skin to fix the opening's own frame, local
+# enough that the shell bending on the hand is left out)
+SURROUND_MM = 10.0
 
 
 def _inner_centre(exterior, lo, hi, n: int = 28):
@@ -686,11 +690,18 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         ext = bhi - blo
         across = [j for j in range(3) if j != k]
         wide = np.eye(3)[max(across, key=lambda j: ext[j])]
+        # the socket's shift is what its opening sees: counted against the
+        # skin around the port (its best-fit rigid motion), not the far
+        # face the hand holds, so the whole shell bending on the hand does
+        # not read as the plug binding in its opening
+        R = max(SURROUND_MM, float(np.max(ext)))
+        surround = {"region": "skin", "shape": {"type": "box", "min": _r(blo - R), "max": _r(bhi + R)}}
         cc, clear = connector_cases(
             cn.get("type", "usb-c"), region=region, mouth=mouth, out=out, wide=wide,
             hold={"shape": face_slab(_axis_name(-out), t_skin + 0.5)}, name=cn.get("name", cid),
             insert=cn.get("insert"), withdraw=cn.get("withdraw"), side=cn.get("side"), lever=cn.get("lever"),
-            abuse=bool(cn.get("abuse", False)), wrench=cn.get("wrench"), max_shift=cn.get("maxShift", 0.1))
+            abuse=bool(cn.get("abuse", False)), wrench=cn.get("wrench"), max_shift=cn.get("maxShift", 0.1),
+            relative=surround)
         cases += cc
         if clear:
             shift_limits.append(clear)
@@ -699,7 +710,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         for k_ in keep:
             if k_.get("id") == cid:
                 k_["connector"] = {"type": cn.get("type", "usb-c"), "out": _r(out), "wide": _r(wide),
-                                   "maxShift": float(cn.get("maxShift", 0.1)),
+                                   "maxShift": float(cn.get("maxShift", 0.1)), "surround": surround,
                                    **{f: cn[f] for f in ("insert", "withdraw", "side", "abuse", "retention")
                                       if cn.get(f) is not None}}
     # rattle: every mounted component held still in the hand (feel.py

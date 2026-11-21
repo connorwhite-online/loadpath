@@ -70,6 +70,13 @@ class Clearance:
     direction: np.ndarray | None = None
     cases: list = field(default_factory=list)
     name: str = ""
+    # relativeTo: travel counted against the best-fit rigid motion of these
+    # nodes (a region id or inline shape), not the supports: what a socket
+    # must hold is its place in the opening around it, and a whole shell
+    # flexing or swinging on far supports carries both along together.
+    # Both given: the region's nodes inside the shape (the skin around a port)
+    relative_region: str | None = None
+    relative_shape: object = None
 
 
 @dataclass
@@ -1402,8 +1409,18 @@ def _clearances(items, base_dir):
         cases = it.get("cases") or []
         if isinstance(cases, str):
             cases = [cases]
+        rr = rs = None
+        if it.get("relativeTo") is not None:
+            if not isinstance(it["relativeTo"], dict):
+                raise ValueError(f"{label}.relativeTo is {{region}} or {{shape}}: what the travel is counted against")
+            rel = it["relativeTo"]
+            if "region" not in rel and "shape" not in rel:
+                raise ValueError(f"{label}.relativeTo needs a 'region' id, an inline 'shape', or both (the "
+                                 "region's nodes inside the shape)")
+            rr = str(rel["region"]) if "region" in rel else None
+            rs = shape_from_spec(rel["shape"], base_dir) if "shape" in rel else None
         out.append(Clearance(region, shape, float(mt), direction, [str(c) for c in cases],
-                             str(it.get("name") or region or f"clearance {i + 1}")))
+                             str(it.get("name") or region or f"clearance {i + 1}"), rr, rs))
     return out
 
 

@@ -71,7 +71,7 @@ def _r(v, n=4):
 def connector_cases(kind: str = "usb-c", *, region, mouth, out, wide=None, hold=None, name: str | None = None,
                     insert: float | None = None, withdraw: float | None = None, side: dict | None = None,
                     lever: float | None = None, abuse: bool = False, wrench: dict | None = None, abuse_factor: float = 1.0,
-                    max_shift: float | None = None):
+                    max_shift: float | None = None, relative: dict | None = None):
     """Load cases for a plug in a socket.
 
     region: what the socket is fixed to, a region id (a board's mount, the
@@ -85,7 +85,9 @@ def connector_cases(kind: str = "usb-c", *, region, mouth, out, wide=None, hold=
     Returns (cases, clearance): the load cases, named <name>-insert,
     -withdraw, -side-thin, -side-wide (and -wrench-thin, -wrench-wide with
     abuse), and a goal clearance on `region` in those cases when max_shift
-    is given (else None)."""
+    is given (else None). relative: what that shift is counted against
+    (goal.clearances[].relativeTo, e.g. the skin around the port), else the
+    study's supports."""
     base = dict(CONNECTORS.get(kind) or {})
     if not base and None in (insert, withdraw):
         raise ValueError(f"connector type {kind!r}: not one of {sorted(CONNECTORS)}; give insert and withdraw")
@@ -134,5 +136,5 @@ def connector_cases(kind: str = "usb-c", *, region, mouth, out, wide=None, hold=
     clearance = None
     if max_shift:
         clearance = {"name": f"{name}-shift", **target, "maxTravel": float(max_shift),
-                     "cases": [c["name"] for c in cases]}
+                     "cases": [c["name"] for c in cases], **({"relativeTo": dict(relative)} if relative else {})}
     return cases, clearance
