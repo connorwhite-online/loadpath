@@ -90,5 +90,16 @@ def test_thin_keeps_half_of_a_parallel_family_and_every_crossing_line():
 
     xs = [np.array([[x, -40, 0], [x, 40, 0]], float) for x in np.arange(-33, 34, 11)]
     ys = [np.array([[-40, 40, 0], [40, 40, 0]], float)]
-    kept, _, idx = thin([*(np.linspace(a, b, 40) for a, b in xs), np.linspace(*ys[0], 40)], spacing=22.0)
+    _kept, _, idx = thin([*(np.linspace(a, b, 40) for a, b in xs), np.linspace(*ys[0], 40)], spacing=22.0)
     assert len(idx) == 5 and 7 in idx
+
+
+def test_tidy_smooths_a_wandering_line_and_drops_short_ones():
+    from loadpath.ridges import tidy
+
+    x = np.arange(0, 80, 1.0)
+    wiggle = np.column_stack([x, 0.6 * (-1.0) ** np.arange(len(x)), np.zeros_like(x)])
+    short = np.array([[0, 10, 0], [20, 10, 0]], float)
+    L, W = tidy([wiggle, short], [np.ones(len(x)), np.ones(2)])
+    assert len(L) == 1 and len(W) == 1
+    assert np.abs(L[0][5:-5, 1]).max() < 0.1
