@@ -433,3 +433,30 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
     print("all surfacing tests passed")
+
+
+def test_sdf_far_band_and_cubic():
+    """A blend reads the field far from the skin: with a wide band and cubic
+    interpolation it is the true distance there and smooth between nodes;
+    the default (3 mm band, trilinear) steps."""
+    import trimesh
+    ball = trimesh.creation.icosphere(subdivisions=5, radius=20.0)
+    P = np.column_stack([np.linspace(30.0, 31.0, 41), np.full(41, 3.1), np.full(41, 2.3)])
+    true = trimesh.proximity.closest_point(ball, P)[1]                # outside: distance to the mesh
+    coarse = S.sdf(ball, pitch=0.5, bounds=((-36.0,) * 3, (36.0,) * 3))(P)
+    box = ((-36.0, -36.0, -36.0), (36.0, 36.0, 36.0))                 # the grid must reach the blend too
+    good = S.sdf(ball, pitch=0.5, bounds=box, band=15.0, interp="cubic")(P)
+    assert np.abs(good - true).max() < 0.02
+    # second differences: the cubic field's curvature along the line is smooth
+    d2 = lambda v: np.abs(np.diff(v, 2)).max()                         # noqa: E731
+    assert d2(good) < 5 * d2(true) + 1e-5, (d2(good), d2(true))
+    assert np.abs(coarse - true).max() > 3 * np.abs(good - true).max()
+
+
+def test_basis_cache_keeps_no_large_evaluations():
+    from loadpath import surfacing as SF
+    SF._BASIS_CACHE.clear()
+    t = np.linspace(0.0, 1.0, 200_000)
+    SF.basis(12, 3, False, t)
+    SF.basis(12, 3, False, t[:50])
+    assert len(SF._BASIS_CACHE) == 1
