@@ -1410,6 +1410,8 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
         mesh.stock_density = phi if prev is None else prev + phi
         mesh.wall_share = phi
         sub = dataclasses.replace(wall_cells, ind=wall_cells.ind[on], phi=wall_cells.phi[on])
+        # the wall's own sub-cells, for reading its stress (constrained._Averaged)
+        mesh.wall_sub = (el[on], sub.ind)
         wall_k = _wall_operator(sub, mesh, el[on], study.elastic(design=True), bc.fixed)
         bc.springs = wall_k if bc.springs is None else (bc.springs + wall_k).tocsr()
         if bc.raw_loads:

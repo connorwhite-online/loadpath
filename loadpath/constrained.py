@@ -163,22 +163,78 @@ class _Averaged:
         nat = (CORNERS - 0.5) if rho <= 1.5 else np.zeros((1, 3))      # natural coordinates
         self.ns = len(nat)
         c0 = elastic_c(1.0, nu)
+        self.c0 = c0
+        self.pitch = pitch
         self.cbs = [c0 @ hex8_b(a, b, cz, nu) / pitch for a, b, cz in nat]
         ne = mesh.n_elem
         xs = ((mesh.elem_ijk[:, None, :] + 0.5 + 0.5 * nat[None, :, :]) * pitch).reshape(-1, 3)
+        self.n_elem = ne
+        self.w0 = pitch ** 3 / self.ns
+        self.radius = float(radius)
+        self.wall = None
+        sub = getattr(mesh, "wall_sub", None)
+        if sub is not None and len(sub[0]):
+            # A thin wall's cells (thinwall.py) are read as the verification
+            # reads a cut cell (cutcell.CutGrid._samples): the wall's own
+            # stress, from its cut-cell kinematics (nodes and the condensed
+            # bubbles that carry its bending), at the centre of each of its
+            # sub-cells, weighted by the wall's share of it. The cell's eight
+            # quarter points then carry only what the design fills of the
+            # rest. Read at the quarter points with the whole-cell element, a
+            # 1.5 mm plate's bending stress came out 20-45% under beam theory.
+            from .cutcell import SubcellRule, b_bubbles, b_nodes
+            from .thinwall import SUB
+
+            el, ind = sub
+            rule = SubcellRule(nu, SUB)
+            _, r, mbar = rule.matrices(ind)
+            cell, k = np.nonzero(ind > 0)
+            xi = np.asarray(rule.centers, float)
+            self._edof = mesh.edof[np.asarray(el)]
+            self.wall = dict(el=np.asarray(el), r=r, mbar=mbar, cell=cell, k=k,
+                             w=ind[cell, k] * pitch ** 3 / len(xi), bu=b_nodes(xi), ba=b_bubbles(xi))
+            xw = (mesh.elem_ijk[el[cell]] + 0.5 * (xi[k] + 1.0)) * pitch
+            xs = np.concatenate([xs, xw])
+        self.n_base = ne * self.ns
         nodes = np.flatnonzero(readable)
         pairs = cKDTree(mesh.node_ijk[nodes] * pitch).sparse_distance_matrix(
             cKDTree(xs), radius, output_type="coo_matrix")
         self.nodes = nodes
-        # (read nodes, samples), sample s = cell s // ns, point s % ns
-        self.ball = sp.csr_matrix((np.ones(len(pairs.row)), (pairs.row, pairs.col)), shape=(len(nodes), ne * self.ns))
+        # (read nodes, samples), sample s < n_base = cell s // ns, point s % ns; past it, the walls' sub-cells
+        self.ball = sp.csr_matrix((np.ones(len(pairs.row)), (pairs.row, pairs.col)), shape=(len(nodes), len(xs)))
         self.ballT = self.ball.T.tocsr()
-        self.n_elem = ne
-        self.w0 = pitch ** 3 / self.ns
-        self.radius = float(radius)
 
     def cell_sum(self, per_sample):
-        return per_sample.reshape(self.n_elem, self.ns).sum(axis=1)
+        return per_sample[:self.n_base].reshape(self.n_elem, self.ns).sum(axis=1)
+
+    def wall_stress(self, u):
+        """The walls' stress at their sub-cell samples (unit modulus), (samples, 6)."""
+        w = self.wall
+        ue = u[self._edof]
+        alpha = np.einsum("eij,ej->ei", w["r"], ue)
+        off = np.einsum("eij,ej->ei", w["mbar"], alpha)
+        eps = np.empty((len(w["cell"]), 6))
+        for k in np.unique(w["k"]):
+            on = np.flatnonzero(w["k"] == k)
+            c = w["cell"][on]
+            eps[on] = ue[c] @ w["bu"][k].T + alpha[c] @ w["ba"][k].T - off[c]
+        return eps @ self.c0.T / self.pitch
+
+    def wall_rhs(self, h, n_dof):
+        """d(sum_s h_s . sigma_s)/du for the walls' samples' weights h (samples, 6)."""
+        w = self.wall
+        g = h @ self.c0 / self.pitch                       # (samples, 6): d/d strain
+        ne = len(w["el"])
+        gu = np.zeros((ne, 24))
+        ga = np.zeros((ne, 9))
+        for k in np.unique(w["k"]):
+            on = np.flatnonzero(w["k"] == k)
+            c = w["cell"][on]
+            np.add.at(gu, c, g[on] @ w["bu"][k])
+            np.add.at(ga, c, g[on] @ w["ba"][k])
+            np.add.at(ga, c, -np.einsum("si,sij->sj", g[on], w["mbar"][c]))
+        gu += np.einsum("ei,eij->ej", ga, w["r"])
+        return np.bincount(self._edof.ravel(), weights=gu.ravel(), minlength=n_dof)
 
 
 def _normalize(prev: float, smax: float, pm: float, it: int) -> float:
@@ -435,12 +491,24 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
             adj_rhs, partials = [], []
             bond_limit = limits.stress * bond_ratio if bond is not None else None
             nc = max(len(avg.nodes), 1) * (2 if bond is not None else 1)
-            mat, dmat = material(np.maximum(xe, 0.0))
+            if avg.wall is None:
+                mat, dmat = material(np.maximum(xe, 0.0))
+                dens = mat
+            else:
+                # a wall cell's quarter points carry the design in the rest of
+                # it ((1 - phi) of the cell at density xe); the wall is read at
+                # its own samples, solid and fixed
+                dens = np.maximum(xe, 0.0)
+                dmat = 1.0 - share
+                mat = dmat * dens
             v = np.repeat(avg.w0 * mat, avg.ns)                             # sample weights: material
+            xs_ = np.repeat(dens, avg.ns)
+            if avg.wall is not None:
+                v = np.concatenate([v, avg.wall["w"]])
+                xs_ = np.concatenate([xs_, np.ones(len(avg.wall["w"]))])
             dn = avg.ball @ v
             on = dn > 0
             dinv = np.where(on, 1.0 / np.where(on, dn, 1.0), 0.0)
-            xs_ = np.repeat(mat, avg.ns)
             rho_n = (avg.ball @ (v * xs_)) * dinv                         # density round the node
             for c in stress_cases:
                 moved = np.flatnonzero(us[c].reshape(-1, 3).any(axis=1)[mesh.enode].any(axis=1))
@@ -450,6 +518,8 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
                 for k, cbk in enumerate(avg.cbs):
                     ss[moved, k] = ue @ cbk.T
                 ss = ss.reshape(-1, 6)
+                if avg.wall is not None:
+                    ss = np.concatenate([ss, avg.wall_stress(us[c])])
                 sig = (avg.ball @ (v[:, None] * ss)) * dinv[:, None]      # (read nodes, 6) averaged
                 parts = []
                 sv = sig @ _VM
@@ -481,8 +551,11 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
                     - avg.ballT @ (np.einsum("ij,ij->i", gsig, sig) * dinv)
                 t_rho = 2.0 * xs_ * (avg.ballT @ (grho * dinv)) - avg.ballT @ (grho * rho_n * dinv)
                 g_xe = avg.w0 * avg.cell_sum(t_sig + t_rho) * dmat
-                h_s = h_s.reshape(n, avg.ns, 6)
                 rhs = np.zeros(mesh.n_dof)
+                if avg.wall is not None:
+                    rhs += avg.wall_rhs(h_s[avg.n_base:], mesh.n_dof)
+                    h_s = h_s[:avg.n_base]
+                h_s = h_s.reshape(n, avg.ns, 6)
                 for k, cbk in enumerate(avg.cbs):
                     rhs += np.bincount(edof.ravel(), weights=(h_s[moved, k] @ cbk).ravel(), minlength=mesh.n_dof)
                 rhs[domain.fixed] = 0.0

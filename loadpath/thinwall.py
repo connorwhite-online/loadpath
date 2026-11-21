@@ -42,8 +42,11 @@ How the wall enters the optimizer (the way bought stock does, stock.py):
 The delivered part takes the wall exactly (reconstruct unions preserved
 shapes), and the verification reads it on its own cut cells as before.
 
-The constrained method keeps the refined whole-cell grid unless
-LOADPATH_WALL_CONSTRAINED is set (CONSTRAINED, below). A pressure on a
+The constrained method reads a wall cell's stress as the verification
+reads a cut cell (constrained._Averaged): the wall's own stress from its
+cut-cell kinematics at its solid sub-cell centres, the quarter points
+carrying only the design in the rest. LOADPATH_WALL_CONSTRAINED=0 keeps the
+refined whole-cell grid for it. A pressure on a
 keep-out acts on the nodes lining it, the wall cells' among them. A bought
 member's cell stays the member's. Not for studies with a thermal block:
 its expansion load and derating are assembled per whole cell, and the
@@ -73,13 +76,12 @@ MIN_CELLS = 1.0
 ALPHA = 1e-4
 
 
-# The constrained method on cut walls (constrained.py reads a wall cell's
-# stress over its material). Off: on a ribbed lid at 1.4 mm cells it
-# delivered nothing passing (tet safety factor 0.6-1.2 for a limit of 2)
-# where the search on the same walls passed at 2.36: a wall cell's stress
-# read at its quarter points with the whole-cell element misses the wall's
-# own bending. LOADPATH_WALL_CONSTRAINED=1 turns it on to work on it.
-CONSTRAINED = os.environ.get("LOADPATH_WALL_CONSTRAINED", "").strip() in ("1", "true", "yes", "on")
+# The constrained method on cut walls. Read at the quarter points with the
+# whole-cell element (as first wired), a ribbed lid's best passing part was
+# 22.4 g (tet safety factor 2.33 for a limit of 2) where the search on the
+# same walls delivered 20.7 g; read at the wall's own sub-cells, 19.9 g (tet
+# 2.14). LOADPATH_WALL_CONSTRAINED=0 turns it off.
+CONSTRAINED = os.environ.get("LOADPATH_WALL_CONSTRAINED", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def model() -> str:

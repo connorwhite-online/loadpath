@@ -310,20 +310,26 @@ The duct's "before" is all wall: its load needed nothing behind the wall,
 and the drawn 1.6 mm wall came out 2.5 mm (205 mm^2 of section for 129),
 because the run meshed the wall's whole cells as part of the organic body
 and the exact wall went in under it. With the wall off the field the
-delivered wall is the drawn one. The constrained method keeps whole cells
-on the refined grid (its stress limit is read per cell), so where `auto`
-runs it the run's total time drops less than its search's.
+delivered wall is the drawn one. (At first the constrained method kept whole cells on the refined grid; see
+below.)
 
 Measured afterwards on the held-out fan duct (-c), never tuned on: first
 try, 9.6 g at safety factor 17.6 in 28 minutes, against 15.3 g in 65 before.
 Pressure studies and studies with bought stock take the cut walls too.
-The constrained method is wired for them (`LOADPATH_WALL_CONSTRAINED=1`) but
-held off: its stress reading at a cell's quarter points reads a 1.5 mm
-plate's bending 20 to 45% under beam theory whichever element it uses
-(the points sit inside the wall, not on its faces), and on the ribbed lid
-it delivered nothing passing. Open: read a wall cell's stress on the wall's
-faces for the constrained method; thermal studies (their expansion load is
-per whole cell); a midsurface shell for housings past the size above.
+The constrained method now runs on the cut walls too. It reads a wall
+cell's stress as the verification reads a cut cell: the wall's own stress
+from the cut cell's kinematics (its bending is carried by the condensed
+bubbles) at each solid sub-cell centre, weighted by the wall's share there,
+inside the same material-length average; the cell's quarter points carry
+only what the design fills of the rest. Read the first way (whole-cell
+element at the quarter points, weighted by the wall's share) the ribbed lid's
+best passing constrained part was 22.4 g (tet safety factor 2.33 for 2).
+Read at the sub-cells, its part loop passed at 19.9 g (tet 2.14), lighter
+than the search's 20.7 g on the same walls. On a cantilever plate the
+reading at mid-span sits within 0.8-1.25x of beam theory at 1 and 1.4 mm
+cells. `LOADPATH_WALL_CONSTRAINED=0` keeps the refined whole-cell grid for
+it. Open: thermal studies (their expansion load is per whole cell); a
+midsurface shell for housings past the size above.
 
 ## Gaps, ranked by how many users they hit
 

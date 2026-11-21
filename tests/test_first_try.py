@@ -283,10 +283,50 @@ def test_a_thin_wall_is_cut_cells_on_the_studys_own_grid():
     assert not _thin_warnings(check_study(_lid(1.5, pitch=1.2)))
     assert build_domain(st).walls is None          # the other solves keep whole cells
     constrained = study_from_dict(dict(_lid(1.5), goal={"safetyFactor": 2, "method": "constrained"}))
-    assert wall_pitch(constrained) <= 0.75 + 1e-9                # whole cells, two through (thinwall.CONSTRAINED)
+    assert wall_pitch(constrained) is None           # cut walls too (thinwall.CONSTRAINED)
     st6 = study_from_dict(_lid(0.6))
     assert wall_pitch(st6) < 0.7                    # a cell through it, within 4x the budget
     assert _thin_warnings(check_study(_lid(0.6)))   # ... which still leaves it under a cell
+
+
+def test_the_constrained_method_reads_a_cut_wall_at_its_own_sub_cells():
+    """constrained._Averaged reads a thin wall's stress where the wall is,
+    from the cut cell's own kinematics (its bending lives in the condensed
+    bubbles), as the verification reads a cut cell: a cantilever plate's
+    bending at mid-span comes out near beam theory's, and the adjoint of
+    the reading is its transpose."""
+    from loadpath.constrained import _VM, _Averaged
+    from loadpath.domain import build_domain
+    from loadpath.simp import E_MIN, _Analysis
+
+    L, b, t = 60.0, 20.0, 1.5
+    d = {"name": "plate", "designSpace": {"type": "box", "min": [0, -b / 2, -7.63], "max": [L, b / 2, 2.37]},
+         "skin": {"thickness": t, "open": ["-z", "+x", "-x", "+y", "-y"]},
+         "supports": [{"shape": {"type": "box", "min": [0, -b / 2, -8], "max": [0.5, b / 2, 3]}}],
+         "loadCases": [{"name": "tip", "loads": [{"shape": {"type": "box", "min": [L - 0.5, -b / 2, -8],
+                                                            "max": [L, b / 2, 3]}, "force": [0, 0, -1]}]}],
+         "material": "pla", "goal": {"volumeFraction": 0.2}, "minMember": 2.0, "resolution": {"pitch": 1.4}}
+    st = study_from_dict(d)
+    nu = st.elastic(design=True)
+    dom = build_domain(st, cut_walls=True)
+    mesh = dom.mesh
+    x = dom.preserve.astype(float)
+    u = _Analysis(dom, nu, 1e-10).solve(E_MIN + (1 - E_MIN) * x ** 3, x, [None])[0]
+    av = _Averaged(mesh, nu, 0.86, np.ones(mesh.n_nodes, bool))
+    assert av.wall is not None
+    rng = np.random.default_rng(0)
+    h, uu = rng.normal(size=(len(av.wall["w"]), 6)), rng.normal(size=mesh.n_dof)
+    a, b_ = float(np.sum(h * av.wall_stress(uu))), float(av.wall_rhs(h, mesh.n_dof) @ uu)
+    assert abs(a - b_) <= 1e-9 * abs(a)
+    ss = np.concatenate([np.zeros((av.n_base, 6)), av.wall_stress(u)])
+    v = np.concatenate([np.zeros(av.n_base), av.wall["w"]])
+    dn = av.ball @ v
+    sig = (av.ball @ (v[:, None] * ss)) / np.maximum(dn, 1e-30)[:, None]
+    vm = np.sqrt(np.einsum("ij,ij->i", sig @ _VM, sig))
+    xyz = mesh.node_ijk * mesh.pitch
+    mid = (np.abs(xyz[:, 0] - 30) < mesh.pitch) & (np.abs(xyz[:, 1]) < 5) & (dn > 0)
+    beam = 6 * 30.0 / (b * t ** 2)
+    assert 0.8 * beam < vm[mid].max() < 1.25 * beam, (vm[mid].max(), beam)
 
 
 def _plate_tip(pitch, cut, t=1.5):
