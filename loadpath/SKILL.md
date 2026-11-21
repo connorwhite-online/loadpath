@@ -58,7 +58,7 @@ powder-bed layers, a CLI file of contours and hatches; `loadpath nest a.stl:6 b.
 --process sls --material pa12` packs a job into one build volume; `loadpath fe-export study.json part.stl --out part.bdf`
 hands the part to Nastran or Abaqus with its loads and supports; `loadpath external-flow part.stl --speed 15
 --direction -x --study study.json` puts it in a wind or water tunnel and adds the surface forces as a load case; a field
-graph's `ribs` node stiffens a face with ribs along curves, a grid or the face's stress lines). Every report
+graph's `ribs` node stiffens a face with ribs along curves, a grid or the face's stress lines). For a printed part, `loadpath.ridges.Ridges` draws those lines as ridges instead of moulded ribs: a web with a teardrop bulb on top (45 degree chin, so it prints without support), lofted along each line with the stress, diamond truss windows in deep, lightly loaded webs, crossings blended; `ridges.section` compares a ridge and a plain wall per gram. At the same height and mass a ridge is about 1.15-1.2x stiffer and 1.2-1.27x stronger in bending than a wall; with room to spare a taller plain wall wins, so reach for ridges where the height is capped (an enclosure's internals). `loadpath.members` redraws a raw density as clean capsule members and flat webs. Every report
 also says what each support carries (`report.reactions`), the bolt or bearing
 load to size hardware from; cap one with `maxForce` on the support. Its edge over drawing the part yourself is that every
 result comes with an independent check (safety factor, deflection,
