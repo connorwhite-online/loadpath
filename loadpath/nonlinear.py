@@ -511,14 +511,20 @@ class _Pardiso:
     # Newton iteration made one)
     _pool: list = []
 
-    def __init__(self, k, symmetric=True, budget=None):
+    def __init__(self, k, symmetric=True, budget=None, refine=True):
         """`budget` (bytes): where the factor would take more, MemoryError
-        before any of it is allocated. PARDISO's analysis, a tenth of the
+        before any of it is allocated. `refine` False: a Cholesky factor's
+        solves skip PARDISO's iterative refinement (two steps by default,
+        each a product with K and another pair of triangular solves: 2.4x
+        the solve; without them the answer is K's to ~1e-12 relative, which
+        is all an eigensolver's tolerance of 1e-3 asks). An indefinite
+        factor, whose pivots may be perturbed, keeps it. PARDISO's analysis, a tenth of the
         work, says what the numeric factorization will hold, to a few
         percent: a solid block of 212k dofs 2.38 GB (2.26 measured), of
         300k dofs 3.76 GB (3.61)."""
         self._s = None
         self.bytes = None           # what the factor holds, by PARDISO's analysis
+        self._refine = refine
         on_mkl_thread(self._factor, k, symmetric, budget)
 
     def _factor(self, k, symmetric, budget=None):
@@ -552,6 +558,8 @@ class _Pardiso:
                 s.free_memory(everything=True)
                 continue
             s.set_phase(33)
+            if not self._refine and mtype == 2:
+                s.iparm[7] = 0
             self._s, self._a, self.bytes, self._mtype = s, a, need, mtype
             break
         if self._s is None:

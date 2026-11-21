@@ -61,8 +61,12 @@ def _factor(k: sp.csr_matrix, node_ijk=None):
         # positive definite, else symmetric indefinite (a zero pivot: a
         # hinge in the live cells), both on the upper triangle. The handle
         # comes from nonlinear's pool: a new one looks for MKL with a
-        # recursive glob, 0.3-0.5 s of every evaluation
-        fac = _Pardiso(k)
+        # recursive glob, 0.3-0.5 s of every evaluation. No iterative
+        # refinement: the modes are wanted to BLOCK_TOL, the static and
+        # adjoint solves far past any optimizer step's need, and refinement
+        # is 60% of each solve (2026-11-21: block solves were 441 of a
+        # corner bracket's 1570 s constrained run)
+        fac = _Pardiso(k, refine=False)
     except RuntimeError:
         fac = _Pardiso(k, symmetric=False)      # pivoting LU: twice the factor
     return fac.solve, fac.close
