@@ -92,6 +92,38 @@ def test_blob_to_step():
     assert rep["stepFaces"] < 0.5 * rep["cageFaces"], rep
     assert rep["patches"]["layout"] == "lines", rep["patches"]
     assert rep["stepFaces"] < 0.25 * rep["cageFaces"], rep      # 24 of 142 (52 face by face)
+    # the worst point, not just the 99th percentile: every place within the
+    # process accuracy, patches included, and no hole closed over
+    w = rep["worst"]
+    assert w["within"] and w["patchesMax"] <= w["bound"] and not w["holesClosed"], w
+    assert w["eulerNumber"]["mesh"] == w["eulerNumber"]["cage"] == 2, w
+
+
+def test_closed_holes_told_from_surface_misses():
+    """A surface that spans a through-hole is a closed hole, sized from
+    its miss, printable or not by the process's smallest hole; elsewhere
+    it is within."""
+    import manifold3d as mf
+    import trimesh
+
+    def body(hole):
+        b = mf.Manifold.cube([20.0, 20.0, 4.0], True)
+        if hole:
+            b = b - mf.Manifold.cylinder(10.0, hole / 2, hole / 2, 64, True)
+        o = b.to_mesh()
+        return trimesh.Trimesh(o.vert_properties[:, :3], o.tri_verts, process=False)
+    # a plain plate's surface against the same plate drilled through
+    plate = body(0)
+    cage = subd.quad_cage(plate, 600)
+    cage, H = subd.fit_cage(cage, plate)
+    for d, printable in ((1.2, False), (3.0, True)):
+        drilled = body(d)
+        dev, (d1, d2, X) = subd.deviation(H, cage.V, drilled)
+        places, kind = subd.misses(H, cage.V, drilled, d1, d2, X, 0.3, subd.MIN_HOLE)
+        holes = [p for p in places if p["kind"] == "hole"]
+        assert holes and all(p["printable"] == printable for p in holes), places
+        assert abs(max(p["diameter"] for p in holes) - d) < 0.35 * d, places
+        assert all(np.hypot(*p["at"][:2]) < d for p in holes), places
 
 
 def test_regular_rectangles_pack_into_one_face():

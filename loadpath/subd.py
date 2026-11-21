@@ -488,12 +488,14 @@ def _samples(mesh, n, seed=0):
 
 
 def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge=None, data=None, fair=0.0, H=None,
-             settle=None):
+             settle=None, weights=None):
     """Move the cage's control points so its limit surface lies on `mesh`
     (two-way closest-point least squares, a membrane term on the cage).
     A round stops early once no control point moves more than `settle`
-    mm in an iteration (the closest points no longer change). Returns
-    (cage, hierarchy) with the fitted control points in cage.V."""
+    mm in an iteration (the closest points no longer change). `weights`
+    (one per fine limit point, one per data sample) scale each point's
+    pull (`bound_worst`). Returns (cage, hierarchy) with the fitted
+    control points in cage.V."""
     from scipy.spatial import cKDTree
     from scipy.sparse.linalg import factorized
 
@@ -505,6 +507,7 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
     if data is None:
         data = _samples(mesh, min(4 * M.shape[0], 400_000))
     X, NX = data
+    wP, wX = weights if weights is not None else (np.ones(M.shape[0]), np.ones(len(X)))
     # membrane: each control point near the mean of its neighbours
     E = cage.E
     W = sp.csr_matrix((np.ones(2 * len(E)), (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n))
@@ -538,17 +541,17 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
             # sample rows gather onto the limit points they pull, so it is
             # M^T diag(1 + w2 count) M, and M[j] (as many rows as samples)
             # is never formed
-            cnt = w2 * np.bincount(j, minlength=len(P))
+            cnt = wP + w2 * np.bincount(j, weights=wX, minlength=len(P))
             acc = np.zeros_like(P)
-            np.add.at(acc, j, t2)
-            rhs = MT @ (t1 + w2 * acc)
+            np.add.at(acc, j, wX[:, None] * t2)
+            rhs = MT @ (wP[:, None] * t1 + w2 * acc)
             if pre is None:
                 # factor once a round, at the mean pull; conjugate gradients
                 # from there (the counts move a little each round)
-                pre = factorized((MtM * (1.0 + float(cnt.mean())) + Reg).tocsc())
+                pre = factorized((MtM * float(cnt.mean()) + Reg).tocsc())
 
             def K(x, cnt=cnt):
-                return MtM @ x + MT @ (cnt[:, None] * (M @ x)) + Reg @ x
+                return MT @ (cnt[:, None] * (M @ x)) + Reg @ x
             C0 = C
             C = _pcg(K, pre, rhs, C)
             if settle is not None and it >= 2 and float(np.abs(C - C0).max()) < settle:
@@ -646,6 +649,82 @@ def deviation(H, C, mesh, data=None, edge=None):
             "max": round(float(max(d1.max(), d2.max())), 4)}, (d1, d2, X)
 
 
+def _closest_limit(H, C, X):
+    """Closest points on the fine limit mesh to X."""
+    import trimesh
+
+    P = H.M @ C
+    Q = H.fine.Q
+    lm = trimesh.Trimesh(P, np.concatenate([Q[:, [0, 1, 2]], Q[:, [0, 2, 3]]]), process=False)
+    return _closest(lm, X, _edge_for(lm))[0]
+
+
+def misses(H, C, mesh, d1, d2, X, bound, min_hole):
+    """Where the limit surface misses the mesh by more than `bound` mm,
+    grouped into places (limit points and mesh samples within 1 mm of
+    each other). Each place is a "hole" when the surface there spans air:
+    a ray from its limit points along the surface normal, either way,
+    travels farther than four times the miss before it meets the mesh (the
+    cage closed a through-hole: Instant Meshes drops handles smaller than
+    its faces); else a "surface" miss (a feature narrower than the cage
+    follows). A hole's `diameter` is twice its largest miss (the membrane
+    sits a radius from the wall: only the surface's own points count, a
+    bore's walls miss by its depth) or, with none of those, the median
+    width across it along the missed walls' normals; one under the process's `min_hole`
+    could not be printed open anyway. Returns (places, kind of each limit
+    point: 0 within, 1 surface miss, 2 hole), places worst first."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    P = H.M @ C
+    kind = np.zeros(len(P), np.int8)
+    i1 = np.flatnonzero(d1 > bound)
+    i2 = np.flatnonzero(d2 > bound)
+    if not len(i1) and not len(i2):
+        return [], kind
+    # a mesh sample that misses stands for its nearest limit point
+    near = cKDTree(P).query(X[i2], workers=-1)[1] if len(i2) else np.zeros(0, np.int64)
+    pts = np.r_[P[i1], X[i2]]
+    d = np.r_[d1[i1], d2[i2]]
+    li = np.r_[i1, near]
+    NP = _limit_normals(H, P)
+    o, n = P[li], NP[li]
+
+    def reach(o, dirs):
+        loc, ri, _ = mesh.ray.intersects_location(o + 1e-4 * dirs, dirs, multiple_hits=False)
+        w = np.full(len(o), np.inf)
+        w[ri] = np.linalg.norm(loc - o[ri], axis=1)
+        return w
+    air = np.minimum(reach(o, n), reach(o, -n)) > 4.0 * d
+    # across: from a missed mesh sample along its own outward normal to the
+    # far wall (inf on an open face)
+    across = np.full(len(pts), np.inf)
+    if len(i2):
+        _, nx = _closest(mesh, X[i2], _edge_for(mesh))
+        across[len(i1):] = reach(X[i2], nx)
+    pr = cKDTree(pts).query_pairs(1.0, output_type="ndarray")
+    k, lab = connected_components(coo_matrix((np.ones(len(pr)), (pr[:, 0], pr[:, 1])), shape=(len(pts),) * 2),
+                                  directed=False)
+    out = []
+    for g in range(k):
+        s = lab == g
+        hole = bool(air[s].mean() > 0.5)
+        kind[li[s]] = 2 if hole else 1
+        m = float(d[s].max())
+        c = pts[s][np.argmax(d[s])]
+        pl = {"at": np.round(c, 2).tolist(), "miss": round(m, 3), "kind": "hole" if hole else "surface"}
+        if hole:
+            own = s[:len(i1)]
+            w = across[s][np.isfinite(across[s])]
+            dia = 2.0 * d[:len(i1)][own].max() if own.any() else (float(np.median(w)) if len(w) else 2.0 * m)
+            pl["diameter"] = round(float(dia), 2)
+            pl["printable"] = bool(pl["diameter"] >= min_hole)
+        out.append(pl)
+    out.sort(key=lambda p: -p["miss"])
+    return out, kind
+
+
 def noise(mesh, n=20000, rings=2):
     """The scatter the mesh carries at its own sampling scale, mm: the
     median RMS distance of vertices' neighbourhoods (`rings` edges out
@@ -679,6 +758,7 @@ def noise(mesh, n=20000, rings=2):
 
 
 ACCURACY = 0.3      # mm: FDM's typical +- (dfm_reference: PLA/PETG/ABS/nylon), loadpath's first process
+MIN_HOLE = 2.0      # mm: FDM's smallest hole that prints open (spec.PROCESSES)
 
 
 def pick_tolerance(accuracy=None, noise=None):
@@ -698,12 +778,18 @@ def pick_tolerance(accuracy=None, noise=None):
 
 
 def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, level=LEVEL, progress=None,
-                 crease=None, accuracy=None, source=None):
+                 crease=None, accuracy=None, source=None, min_hole=None):
     """Fit a Catmull-Clark surface to a closed mesh. The cage gets denser
     until the two-way deviation's 99th percentile is within `tolerance` mm
     (default `pick_tolerance`: from the process `accuracy` and the noise
-    of `source`, the mesh as it came in before any repair, else `mesh`).
-    Returns (cage, hierarchy, report)."""
+    of `source`, the mesh as it came in before any repair, else `mesh`)
+    and no hole the process could print (`min_hole`, mm) is closed over.
+    Then the worst point is bounded too: every place that misses by more
+    than three times the tolerance (the process's own error, so the print
+    is off there by at most sqrt(2) of what the process gives anyway)
+    pulls harder until it is within (`misses`). Holes under `min_hole`
+    the cage closed are reported, not chased: the printer would not have
+    left them open. Returns (cage, hierarchy, report)."""
     t0 = time.time()
     ext = float(np.linalg.norm(mesh.bounds[1] - mesh.bounds[0]))
     nz = noise(source if source is not None else mesh)
@@ -711,6 +797,8 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
         tol, why = float(tolerance), "given"
     else:
         tol, why = pick_tolerance(accuracy, nz)
+    bound = 3.0 * tol
+    min_hole = MIN_HOLE if min_hole is None else float(min_hole)
     area = float(mesh.area)
     # a face no wider than the part's thin walls and members: a cage
     # coarser than a member cannot follow it (Instant Meshes then bridges
@@ -740,14 +828,20 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
                     raise RuntimeError("no closed quad cage")
                 n = int(min(max_faces, n * 2.5))
         cage, H = fit_cage(cage, mesh, level=level, data=data, settle=tol / 50)
-        dev, _ = deviation(H, cage.V, mesh, data=check)
+        dev, (d1, d2, Xc) = deviation(H, cage.V, mesh, data=check)
+        places, _ = misses(H, cage.V, mesh, d1, d2, Xc, bound, min_hole)
+        open_holes = [p for p in places if p.get("printable")]
+        # a miss twice the bound is a feature narrower than the faces: the
+        # pull below cannot bring it in without moving its neighbours
+        coarse = [p["miss"] for p in places if p["kind"] == "surface" and p["miss"] > 2.0 * bound]
         tries.append({"faces": len(cage.Q), "irregularVertices": int((cage.valence != 4).sum()),
-                      "p99": dev["p99"], "max": dev["max"]})
+                      "p99": dev["p99"], "max": dev["max"], "printableHolesClosed": len(open_holes),
+                      "coarseMiss": max(coarse, default=0.0)})
         if progress:
             progress(f"cage {len(cage.Q)} faces: p99 {dev['p99']:.4f} mm, max {dev['max']:.4f} mm "
-                     f"(tolerance {tol:.4f})")
+                     f"(tolerance {tol:.4f}), {len(open_holes)} printable holes closed")
         best = (cage, H, dev)
-        if dev["p99"] <= tol or len(cage.Q) >= max_faces or faces:
+        if (dev["p99"] <= tol and not open_holes and not coarse) or len(cage.Q) >= max_faces or faces:
             break
         # bicubic error falls as h^4 on smooth parts, as h^2 where a feature is
         # narrower than a face; the last two tries say which rate this part
@@ -759,6 +853,13 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
             rate = 2.0 * np.log(tries[-2]["p99"] / dev["p99"]) / np.log(len(cage.Q) / tries[-2]["faces"])
             rate = float(np.clip(rate, 2.5, 4.0))
         grow = (dev["p99"] / (0.9 * tol)) ** (2.0 / rate)
+        if coarse:
+            grow = max(grow, (max(coarse) / bound) ** (2.0 / rate))
+        if open_holes:
+            # a closed hole opens once four or so edges go round it (edge
+            # under 0.7 of its diameter: pi d / 4)
+            h = np.sqrt(area / len(cage.Q))
+            grow = max(grow, (h / (0.7 * min(p["diameter"] for p in open_holes))) ** 2)
         n = int(min(max_faces, len(cage.Q) * min(4.0, max(1.3, grow))))
     cage, H, dev = best
     # the smoothest surface the tolerance allows: raise the bending weight
@@ -766,7 +867,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
     fair, fairs = 0.0, []
     if dev["p99"] <= tol:
         V0 = cage.V.copy()
-        f = 1e-3
+        f = 4e-3
         while f < 1e3:
             c2 = Cage(V0.copy(), cage.Q)
             c2, _ = fit_cage(c2, mesh, level=level, data=data, fair=f, iterations=6, H=H, settle=tol / 50)
@@ -777,12 +878,50 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
             if d2["p99"] > tol:
                 break
             fair, V0, dev = f, c2.V.copy(), d2
-            f *= 4
+            f *= 8
         cage.V = V0
+    # the worst point: places that miss by more than `bound` pull harder
+    # (Lawson's minimax reweighting, sharpened: each point's weight grows
+    # with (miss / 0.75 aim)^6 a round, at most x17, once it is within a
+    # quarter of the aim, holes aside), so the fit spends its freedom only where the
+    # shape is tight, while the 99th percentile stays within the tolerance
+    wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
+    dev, (d1, d2, Xc) = deviation(H, cage.V, mesh, data=check)
+    # the patches are held within a third of the tolerance of the limit
+    # surface (lay_out), so the limit aims that much under the bound
+    aim = bound - tol / 3.0
+    places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
+    pulls = 0
+    from scipy.spatial import cKDTree
+    while (kind == 1).any() and pulls < 4:
+        j = cKDTree(H.M @ cage.V).query(data[0], workers=-1)[1]
+        wP *= np.where(kind != 2, np.clip(d1 / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
+        dX = np.linalg.norm(data[0] - _closest_limit(H, cage.V, data[0]), axis=1)
+        wX *= np.where(kind[j] != 2, np.clip(dX / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
+        c2, _ = fit_cage(Cage(cage.V.copy(), cage.Q), mesh, level=level, data=data, fair=fair, iterations=8, H=H,
+                         settle=tol / 50, weights=(wP, wX))
+        d2v, (e1, e2, Xc) = deviation(H, c2.V, mesh, data=check)
+        if d2v["p99"] > tol:
+            break
+        cage.V, dev, pulls, d1, d2 = c2.V, d2v, pulls + 1, e1, e2
+        places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
+        if progress:
+            progress(f"worst-point pull {pulls}: max {dev['max']:.4f} mm, "
+                     f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
+    P = H.M @ cage.V
+    surface = [p for p in places if p["kind"] == "surface"]
+    holes = [p for p in places if p["kind"] == "hole"]
+    worst = {"bound": round(bound, 4), "aim": round(aim, 4), "minHole": min_hole, "pulls": pulls,
+             "surfaceMax": round(float(max(d1[kind != 2].max(initial=0.0),
+                                           d2[kind[cKDTree(P).query(Xc, workers=-1)[1]] != 2].max(initial=0.0))), 4),
+             "surfacePlaces": surface[:10], "holesClosed": holes[:20],
+             "printableHolesClosed": int(sum(p["printable"] for p in holes)),
+             "eulerNumber": {"mesh": int(mesh.euler_number), "cage": int(cage.n - len(cage.E) + len(cage.Q))}}
+    worst["within"] = bool(not surface and not worst["printableHolesClosed"])
     rep = {"bending": fair, "fairing": fairs, "folds": int(len(_folds(H, cage.V))), "tolerance": round(tol, 4),
            "noise": round(nz, 5), "tolerancePicked": why, "cageFaces": len(cage.Q),
            "irregularVertices": int((cage.valence != 4).sum()),
-           "deviation": dev, "within": bool(dev["p99"] <= tol), "tries": tries, "seconds": round(time.time() - t0, 1)}
+           "deviation": dev, "within": bool(dev["p99"] <= tol), "worst": worst, "tries": tries, "seconds": round(time.time() - t0, 1)}
     return cage, H, rep
 
 
@@ -1426,6 +1565,11 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
         if packed:
             b = pack(Hp, cage.V, b, lay)
             rep["patches"]["packedSurfaces"] = int(sum(1 for x in b if x[0] == "bspline"))
+    # the written patches sit within patchToLimit of the limit surface, so
+    # their worst point away from closed holes is within this
+    w = rep["worst"]
+    w["patchesMax"] = round(w["surfaceMax"] + rep["patches"]["patchToLimit"]["max"], 4)
+    w["within"] = bool(w["within"] and w["patchesMax"] <= w["bound"])
     shape, free = to_brep(b)
     valid = bool(BRepCheck_Analyzer(shape).IsValid())
     # points as OpenCascade writes them: rounding the poles of a degree-7
