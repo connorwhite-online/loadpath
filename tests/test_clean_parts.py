@@ -125,3 +125,10 @@ def test_boundary_field_keeps_a_pinned_strap_whole():
     hint = np.array([np.nan, np.nan, 0.8, 0.3])
     lev = boundary_field(xp, [(xt, 0.5)], 2.0, hint)
     assert lev[2] == 0.8 and lev[3] == 0.3 and lev[0] == 1.0
+
+
+def test_boundary_field_leaves_pinned_cells_full():
+    xt = np.array([0.9, 0.2, 0.1])
+    xp = np.array([1.0, 1.0, 0.0])                     # second cell: a boss, pinned over a void design
+    lev = boundary_field(xp, [(xt, 0.5)], 2.0, None, np.array([False, True, False]))
+    assert lev[1] == 1.0, "a drawn solid's cells are full: its surface is the drawn shape's"

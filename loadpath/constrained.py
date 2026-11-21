@@ -717,7 +717,7 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
 
     return SimpResult(x=x, xphys=xp,
                       xlevel=boundary_field(xp, [(xt, opts.eta)], opts.filter_radius / domain.pitch,
-                                            getattr(domain, "level_hint", None)),
+                                            getattr(domain, "level_hint", None), pres),
                       compliance=float("nan"), case_compliance=[],
                       volume_fraction=float(xp[design].mean()), iterations=it,
                       converged=converged, seconds=time.time() - t0, history=history,

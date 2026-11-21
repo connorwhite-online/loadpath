@@ -605,7 +605,7 @@ def binding_weights(binding, case_c, power: float) -> tuple[np.ndarray, float]:
     return beta * (b / j) ** (power - 1.0), j
 
 
-def boundary_field(xp, fields, cells: float, hint=None):
+def boundary_field(xp, fields, cells: float, hint=None, pinned=None):
     """The delivered design with its boundary placed inside the cells it
     crosses: a density that is `xp` away from the surface and passes 0.5
     where the filtered field it was cut from passes its threshold.
@@ -631,17 +631,24 @@ def boundary_field(xp, fields, cells: float, hint=None):
     gain = max(float(cells), 1.0)
     ramps = [np.clip(0.5 + gain * (np.asarray(src, float) - float(at)), 0.0, 1.0) for src, at in fields]
     have = np.isfinite(hint) if hint is not None else np.zeros(len(xp), bool)
-    pinned = have & (np.nan_to_num(hint, nan=0.0) >= 0.5) if hint is not None else have
     lev = np.where(solid, 0.75, 0.25)
     done = np.zeros(len(xp), bool)
     for r in ramps:
         ok = ~done & ((r >= 0.5) == solid)
         lev[ok] = r[ok]
         done |= ok
+    if pinned is not None:
+        # A cell the problem pins (a boss, a pad, a drawn solid) is full: its
+        # surface is the drawn shape's, which meshing restores exactly. Read
+        # off a ramp or left a quarter short, the surface cut from this
+        # field ran a fraction of a cell inside the drawn one in places and
+        # outside in others, and the two together made a torn skin of
+        # slivers round every boss (a latch hook's two screw bosses).
+        lev[np.asarray(pinned, bool) & ~have] = 1.0
     if hint is not None:
-        # the pinned strap and the design are one body: as full as either says
-        lev[pinned & ~done] = ramps[0][pinned & ~done]
-        lev[have] = np.maximum(lev[have], hint[have])
+        # the strap under a load has its own surface (domain.level_hint):
+        # it and the design are one body, as full as either says
+        lev[have] = np.maximum(np.where(done[have], lev[have], 0.0), hint[have])
     return lev
 
 
@@ -2030,7 +2037,7 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         energy += weights[ci] * stiff * sum(m * fe.strain_energy(v) for m, v in wc.energy)
     warp = _warp_report(domain, xp) if domain.warp is not None else None
     return SimpResult(x=x, xphys=xp, xlevel=boundary_field(xp, lev_fields, opts.filter_radius / domain.pitch,
-                                             getattr(domain, "level_hint", None)),
+                                             getattr(domain, "level_hint", None), pres),
                       compliance=comp, case_compliance=case_c,
                       volume_fraction=float(xp[design].mean()), iterations=it,
                       converged=converged, seconds=time.time() - t0, history=history,
