@@ -24,7 +24,9 @@ import numpy as np
 try:
     import numba as nb
 
-    from . import meshops as _meshops  # noqa: F401 - caps numba's threads (LOADPATH_THREADS)
+    from . import (
+        meshops as _meshops,  # noqa: F401 - caps numba's threads (LOADPATH_THREADS)
+    )
 except ImportError:  # pragma: no cover - numba is a dependency
     nb = None
 
@@ -100,8 +102,7 @@ if nb is not None:
                     last = k
                 elif last >= 0:
                     dd = (last - k) * (last - k)
-                    if dd < g[i, j, k]:
-                        g[i, j, k] = dd
+                    g[i, j, k] = min(g[i, j, k], dd)
 
     @nb.njit(cache=True, parallel=True, nogil=True)
     def _pass_y(g, inf):
