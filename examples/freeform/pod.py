@@ -107,6 +107,8 @@ if __name__ == "__main__":
         tag = "" if c == "G2" else "-g1"
         S.write_step(solid, os.path.join(out, f"pod{tag}.step"))
         m.export(os.path.join(out, f"pod{tag}.stl"))
+        report["joins"] = [{k: j[k] for k in ("faces", "grade", "G0", "G1", "G2")}
+                           for j in Q.join_sheet(solid, os.path.join(out, f"pod{tag}-joins.png"), mesh=m)]
         report["watertight"] = bool(m.is_watertight)
         report["faces"] = len(parts)
         with open(os.path.join(out, f"pod{tag}.json"), "w") as fh:

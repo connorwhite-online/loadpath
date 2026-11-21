@@ -231,6 +231,13 @@ def test_blend_g2():
         assert summ["edges"] >= 2 and summ["worstG1"] < 0.01, summ
         worst[c] = summ["worstG2"]
     assert worst["G2"] < 2e-4 and worst["G1"] > 0.01, worst       # the sphere's curvature is 0.02 /mm
+    # joins: every pair of faces graded, with a close-up of each
+    g1 = Q.joins(S.sew([outer, S.blend((outer, hole), (tube, bot), "G1"), tube]))
+    assert len(g1) == 2 and g1[0]["grade"] == "tangent" and g1[0]["G2"] > 0.01, g1
+    with tempfile.TemporaryDirectory() as tmp:
+        g2 = Q.join_sheet(S.sew([outer, b, tube]), os.path.join(tmp, "joins.png"))
+        assert os.path.getsize(os.path.join(tmp, "joins.png")) > 20000
+    assert len(g2) == 2 and all(j["grade"] == "curvature" for j in g2) and all(3.0 < j["radius"] < 20.0 for j in g2), g2
     # the lead: how far each face's shape carries into the blend
     near, far = S.blend((outer, hole), (tube, bot), lead=0.6), S.blend((outer, hole), (tube, bot), lead=(1.0, 1.5))
     assert near.fit["lead"][0] < 0.7 * b.fit["lead"][0] and far.fit["lead"][1] > 1.4 * b.fit["lead"][1]
@@ -346,6 +353,79 @@ def test_sketch_match():
         SM.match_sheet([m, m2], os.path.join(tmp, "s.png"))
         assert os.path.getsize(os.path.join(tmp, "s.png")) > 10_000
     print("sketch match ok")
+
+
+def _corner(kind, n, R=3.0):
+    """An extruded 90 degree corner, flat - round - flat, as a strip mesh:
+    an arc, or a round whose curvature grows from zero and falls back."""
+    import trimesh
+    s = np.linspace(0, 1, 4001)
+    th = (np.pi / 2) * (s if kind == "arc" else s - np.sin(2 * np.pi * s) / (2 * np.pi))
+    L = R * np.pi / 2 * (1 if kind == "arc" else 2)
+    x, z = np.cumsum(np.cos(th)) * L / 4000, -np.cumsum(np.sin(th)) * L / 4000
+    i = np.linspace(0, 4000, n + 1).astype(int)
+    prof = np.r_[[[-15, 0]], np.c_[x[i], z[i]], [[x[-1], z[-1] - 15]]]
+    ys = np.linspace(0, 40, 9)
+    V = np.array([[px, y, pz] for px, pz in prof for y in ys])
+    m = len(ys)
+    F = [t for i in range(len(prof) - 1) for j in range(m - 1)
+         for t in ([i * m + j, i * m + m + j, i * m + j + 1], [i * m + j + 1, i * m + m + j, i * m + m + j + 1])]
+    return trimesh.Trimesh(V, F, process=False)
+
+
+def test_mesh_joins_tell_an_arc_from_a_round_that_eases_in():
+    import trimesh
+    # a sharp box: one crease, every edge of it
+    js = Q.mesh_joins(trimesh.creation.box(extents=(40, 30, 12)))
+    assert [j["grade"] for j in js] == ["crease"] and abs(js[0]["angle"] - 90) < 1e-6 and abs(js[0]["length"] - 328) < 1e-6
+    for n in (8, 16, 32):
+        arc, = Q.mesh_joins(_corner("arc", n), min_radius=20)
+        assert arc["grade"] == "tangent" and abs(arc["roundRadius"] - 3.0) < 0.05 and arc["rim"] > 0.95, arc
+        eased, = Q.mesh_joins(_corner("eased", n), min_radius=20)
+        assert eased["grade"] == "curvature" and eased["rim"] < 0.3, eased
+    coarse, = Q.mesh_joins(_corner("arc", 4), min_radius=20)        # three facets across: the mesh cannot say
+    assert coarse["grade"] == "unresolved", coarse
+    with tempfile.TemporaryDirectory() as tmp:
+        Q.mesh_join_sheet(_corner("arc", 16), os.path.join(tmp, "j.png"), min_radius=20)
+        assert os.path.getsize(os.path.join(tmp, "j.png")) > 10_000
+    print("mesh joins ok")
+
+
+def test_freeform_document_builds_a_closed_g2_solid_and_audits():
+    import json
+
+    from loadpath import freeform, mcp_server
+    from loadpath.schema import lint
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    with open(os.path.join(root, "examples", "freeform", "pod.json")) as fh:
+        assert not lint(json.load(fh), "freeform")
+    doc = {"name": "capsule", "closed": True,
+           "surfaces": {"tube": {"loft": [{"centre": [0, 0, z], "radii": [r, 0.8 * r]}
+                                          for z, r in ((0, 8), (12, 10), (26, 10), (38, 7))], "poles": [16, 8]}},
+           "steps": [{"op": "edit", "surface": "tube", "moves": [{"at": [10, 0, 19], "by": [1.5, 0, 0]}]},
+                     {"op": "cap", "edges": [{"surface": "tube", "edge": [8, 0, 0]}], "as": "foot"},
+                     {"op": "cap", "edges": [{"surface": "tube", "edge": [7, 0, 38]}], "as": "head"}]}
+    assert not lint(doc, "freeform")
+    bad = lint({"surfaces": {"a": {"loft": [{"centre": [0, 0, 0]}]}}, "steps": [{"op": "weld"}]}, "freeform")
+    assert len([i for i in bad if i["level"] == "error"]) >= 2, bad
+    with tempfile.TemporaryDirectory() as tmp:
+        r = mcp_server.guarded(mcp_server.freeform)(doc, "out", tmp)
+        assert r["ok"] and r["closed"] and r["watertight"] and r["faces"] == 3, r
+        assert r["grades"] == {"curvature": 2}, r["joins"]
+        assert r["steps"][0]["handleError"] < 1e-6 and all(s["G0"] < 5e-4 and s["G2"] < 2e-3 for s in r["steps"][1:]), r["steps"]
+        for k in ("step", "stl", "sheet", "report"):
+            assert os.path.getsize(r[k]) > 300, k
+        a = mcp_server.guarded(mcp_server.check_joins)("out/capsule.step", base_dir=tmp)       # the STEP read back
+        assert a["ok"] and a["kind"] == "brep" and a["grades"] == {"curvature": 2}, a
+        m = mcp_server.guarded(mcp_server.check_joins)("out/capsule.stl", base_dir=tmp)
+        assert m["ok"] and m["kind"] == "mesh" and "crease" not in m["grades"], m["grades"]
+        # an edge left open: built and written, but not ok when the document says closed
+        doc["steps"].pop()
+        r = freeform.build(doc, "open", tmp)
+        assert not r["ok"] and not r["closed"] and "open" in r["error"], r
+        e = mcp_server.guarded(mcp_server.check_joins)("nope.step", base_dir=tmp)
+        assert e["ok"] is False and "no such file" in e["error"], e
+    print("freeform document ok")
 
 
 if __name__ == "__main__":

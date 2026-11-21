@@ -89,6 +89,18 @@
    "plugs"
   ]
  },
+ "loadpath_check_joins": {
+  "effect": "write",
+  "required": [
+   "path"
+  ],
+  "optional": [
+   "base_dir",
+   "limit",
+   "min_radius",
+   "out"
+  ]
+ },
  "loadpath_check_printability": {
   "effect": "read",
   "required": [
@@ -205,6 +217,16 @@
   ],
   "optional": [
    "base_dir"
+  ]
+ },
+ "loadpath_freeform": {
+  "effect": "write",
+  "required": [
+   "spec"
+  ],
+  "optional": [
+   "base_dir",
+   "out_dir"
   ]
  },
  "loadpath_guide": {

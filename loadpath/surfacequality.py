@@ -112,6 +112,13 @@ def edge_continuity(shape, samples=24, skip_seams=True):
     m = _edge_face_map()
     TopExp.MapShapesAndAncestors_s(_as_face(shape), TopAbs_EDGE, TopAbs_FACE, m)
     out = []
+    all_faces = []
+    from OCP.TopExp import TopExp_Explorer
+    ex = TopExp_Explorer(_as_face(shape), TopAbs_FACE)
+    while ex.More():
+        if not any(ex.Current().IsSame(g) for g in all_faces):
+            all_faces.append(ex.Current())
+        ex.Next()
     for i in range(1, m.Extent() + 1):
         fl = list(m.FindFromIndex(i))
         e = TopoDS.Edge(m.FindKey(i))
@@ -156,17 +163,253 @@ def edge_continuity(shape, samples=24, skip_seams=True):
             g1 = float(np.degrees(np.arccos(np.clip(abs(na @ nb), -1, 1))))
             g2 = float(abs(ka - kb))
             share = g2 / max(abs(ka), abs(kb), 1e-9)
-            rows.append((g0, g1, g2, share, pa))
+            rows.append((g0, g1, g2, share, pa, na))
         r = np.array([x[:4] for x in rows])
         w = int(np.argmax(r[:, 1]))
+        pts = np.array([x[4] for x in rows])
+        nrm = np.mean([x[5] for x in rows], axis=0)
         out.append({"edge": i, "G0": float(r[:, 0].max()), "G1": float(r[:, 1].max()), "G2": float(r[:, 2].max()),
-                    "G2share": float(r[:, 3].max()), "point": np.round(rows[w][4], 2).tolist()})
+                    "G2share": float(r[:, 3].max()), "point": np.round(rows[w][4], 2).tolist(),
+                    "faces": sorted(next((k for k, g in enumerate(all_faces) if g.IsSame(f)), -1) for f in (fa, fb)),
+                    "centre": pts.mean(0).tolist(), "normal": (nrm / max(np.linalg.norm(nrm), 1e-30)).tolist(),
+                    "points": pts})
     summ = {"edges": len(out),
             "worstG0": max((x["G0"] for x in out), default=0.0),
             "worstG1": max((x["G1"] for x in out), default=0.0),
             "worstG2": max((x["G2"] for x in out), default=0.0),
             "worstG2share": max((x["G2share"] for x in out), default=0.0)}
     return out, summ
+
+
+def joins(shape, g1=0.5, g2=0.002, samples=24):
+    """Every join of a B-rep (the shared edges between one pair of faces,
+    taken together: a boss's root, an opening's lip, a cap's rim), graded:
+    [{"faces", "G0", "G1", "G2", "grade", "centre", "normal", "radius"}],
+    worst first. grade is "crease" (tangent planes differ by more than `g1`
+    degrees: an edge meant to be seen, or a mistake), "tangent" (planes
+    agree, curvature jumps by more than `g2` /mm: a reflection bends
+    there) or "curvature" (continuous to both). A designer's STEP exterior
+    or a surfaced part reads the same way."""
+    rows, _ = edge_continuity(shape, samples)
+    by = {}
+    for r in rows:
+        by.setdefault(tuple(r["faces"]), []).append(r)
+    out = []
+    for fc, rs in by.items():
+        pts = np.vstack([r["points"] for r in rs])
+        c = pts.mean(0)
+        n = np.mean([r["normal"] for r in rs], axis=0)
+        w1, w2 = max(r["G1"] for r in rs), max(r["G2"] for r in rs)
+        out.append({"faces": list(fc), "G0": max(r["G0"] for r in rs), "G1": w1, "G2": w2,
+                    "grade": "crease" if w1 > g1 else "tangent" if w2 > g2 else "curvature",
+                    "centre": c.tolist(), "normal": (n / max(np.linalg.norm(n), 1e-30)).tolist(),
+                    "radius": float(np.linalg.norm(pts - c, axis=1).max())})
+    rank = {"crease": 0, "tangent": 1, "curvature": 2}
+    out.sort(key=lambda j: (rank[j["grade"]], -j["G1"], -j["G2"]))
+    return out
+
+
+def join_sheet(shape, path, mesh=None, limit=12, stripes=16, size=520, **grade):
+    """A close-up of every join (`joins`), zebra-striped, each framed on
+    its own edge and titled with its grade and numbers: the check a
+    surfacing artist makes by eye, for every opening and mount at once.
+    Returns the joins."""
+    from .surfacing import mesh as _mesh
+    js = joins(shape, **grade)
+    m = mesh if mesh is not None else _mesh(shape, 0.01, 0.05)
+    titles = [f"faces {j['faces'][0]}-{j['faces'][1]}: {j['grade']}\n"
+              f"gap {j['G0']:.4f} mm, {j['G1']:.2f} deg, curvature jump {j['G2']:.4f} /mm" for j in js[:limit]]
+    _closeups(m, js[:limit], titles, path, stripes, size)
+    return js
+
+
+def _closeups(m, items, titles, path, stripes=16, size=520, overview=False):
+    """One zebra close-up per item ({"centre", "normal", "radius"}), each
+    seen from outside and off its normal so the stripes cross it.
+    `overview`: two views of the whole part first, each item numbered
+    where it is (on the side that faces the view)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from .raster import Camera, render, shade_image
+    n0 = 2 if overview else 0
+    cols = min(4, max(1, len(items) + n0))
+    rws = int(np.ceil((len(items) + n0) / cols)) or 1
+    fig, axes = plt.subplots(rws, cols, figsize=(3.6 * cols, 3.9 * rws), squeeze=False)
+    for ax in axes.ravel():
+        ax.set_axis_off()
+    if overview:
+        mid, span = m.bounds.mean(0), float(np.linalg.norm(np.ptp(m.bounds, axis=0)))
+        for ax, d in zip(axes.ravel(), ((1.0, -1.0, 0.8), (-1.0, 1.0, -0.8))):
+            d = np.asarray(d) / np.linalg.norm(d)
+            cam = Camera(position=mid + 2.0 * span * d, look_at=mid, ortho=1.08 * span, width=size, height=size)
+            ax.imshow(shade_image(render(m, cam)))
+            for i, j in enumerate(items):
+                if np.asarray(j["normal"]) @ d > 0.15:
+                    x, y, _ = cam.project(j["centre"])[0]
+                    ax.text(x, y, str(i + 1), fontsize=7, ha="center", va="center", color="white",
+                            bbox={"boxstyle": "circle,pad=0.15", "fc": "#c0392b", "ec": "none"})
+            ax.set_title("from above" if d[2] > 0 else "from below", fontsize=7.5)
+    for i, (ax, j, title) in enumerate(zip(axes.ravel()[n0:], items, titles)):
+        c, n = np.asarray(j["centre"]), np.asarray(j["normal"])
+        if not j.get("outward") and n @ (c - m.centroid) < 0:
+            n = -n
+        side = np.cross(n, [0.0, 0.0, 1.0] if abs(n[2]) < 0.9 else [1.0, 0.0, 0.0])
+        side /= np.linalg.norm(side)
+        view = n + 0.8 * side + 0.45 * np.cross(n, side)
+        r = max(j["radius"], 1.0)
+        cam = Camera(position=c + 6.0 * r * view / np.linalg.norm(view), look_at=c, ortho=3.4 * r, width=size, height=size)
+        near = m
+        if overview:                # only what is near: a recess's edge is not hidden behind the wall round it
+            keep = np.linalg.norm(np.asarray(m.triangles_center) - c, axis=1) < 2.6 * r
+            near = m.submesh([np.nonzero(keep)[0]], append=True, repair=False)
+        ax.imshow(zebra_image(near, cam, stripes))
+        ax.set_title((f"{i + 1}. " if overview else "") + title, fontsize=7.5)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+
+
+def mesh_joins(mesh, min_radius=None, crease=40.0, min_size=None):
+    """The edges and rounds of a mesh exterior (a designer's STL, where no
+    faces say where one surface ends), graded as `joins` grades a B-rep.
+
+    A mesh turns only across its edges: an edge's dihedral angle over the
+    mean height of its two triangles is the curvature across it. Edges
+    that turn more than `crease` degrees at once are creases (or rounds
+    finer than the mesh shows). Faces whose curvature is over
+    1/`min_radius` (default: the part's smallest extent, so the body's own
+    form is not counted) gather into rounds; each is read across its
+    width: a round whose curvature is already at its full value at the rim
+    is a constant radius (an arc: "tangent", the curvature jumps where it
+    starts), one whose curvature grows in from the rim is "curvature".
+    Under four facets across, the mesh cannot tell: "unresolved".
+
+    Returns [{"grade", "kind": "crease" | "round", "concave", "centre",
+    "normal", "radius" (to frame it), "angle" (degrees turned), and for a
+    round "roundRadius" (mm, median), "width" (mm), "facets" (across),
+    "rim" (rim curvature / peak), "area"; "length" (mm it runs)}], longest
+    first. A round is as tight as half `min_radius` somewhere and reaches
+    out to where the radius passes `min_radius`. `min_size` (mm, default 2 % of the longest
+    extent) drops shorter creases and smaller rounds."""
+    from scipy import sparse
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+    V, F = np.asarray(mesh.vertices, float), np.asarray(mesh.faces)
+    ext = np.ptp(V, axis=0)
+    thr = 1.0 / float(min_radius if min_radius is not None else ext.min())
+    size0 = float(min_size if min_size is not None else 0.02 * ext.max())
+    fa = np.asarray(mesh.area_faces, float)
+    FN = np.asarray(mesh.face_normals, float)
+    C = np.asarray(mesh.triangles_center, float)
+    adj = np.asarray(mesh.face_adjacency)
+    ang = np.asarray(mesh.face_adjacency_angles, float)
+    ed = np.asarray(mesh.face_adjacency_edges)
+    convex = np.asarray(mesh.face_adjacency_convex, bool)
+    el = np.linalg.norm(V[ed[:, 0]] - V[ed[:, 1]], axis=1)
+    h = 2.0 * fa[adj] / np.maximum(el[:, None], 1e-12)             # each triangle's height off the shared edge
+    kap = 2.0 * ang / np.maximum(h.sum(1), 1e-12)
+    is_crease = ang > np.radians(crease)
+    turning = ~is_crease & (kap > thr) & (ang > np.radians(0.5))
+    out = []
+    # creases: chains of sharp edges joined at their ends
+    ce = np.nonzero(is_crease)[0]
+    if len(ce):
+        g = sparse.coo_matrix((np.ones(len(ce)), (ed[ce, 0], ed[ce, 1])), shape=(len(V), len(V)))
+        _, lab = connected_components(g, directed=False)
+        for k in np.unique(lab[ed[ce, 0]]):
+            e = ce[lab[ed[ce, 0]] == k]
+            length = float(el[e].sum())
+            if length < size0:
+                continue
+            P = 0.5 * (V[ed[e, 0]] + V[ed[e, 1]])
+            i = e[np.argmax(ang[e])]
+            n = FN[adj[i]].sum(0)
+            out.append({"grade": "crease", "kind": "crease", "concave": bool(not convex[i]),
+                        "centre": (0.5 * (V[ed[i, 0]] + V[ed[i, 1]])).tolist(),
+                        "normal": (n / max(np.linalg.norm(n), 1e-30)).tolist(), "outward": True,
+                        "radius": float(min(np.linalg.norm(P - P.mean(0), axis=1).max(), 0.12 * ext.max()) or 1.0),
+                        "angle": float(np.degrees(np.median(ang[e]))), "length": length})
+    # rounds: faces that turn, gathered across the edges they share
+    kf = np.zeros(len(F))
+    hf = np.zeros(len(F))
+    df = np.zeros((len(F), 3))                    # each face's turning edge: the round runs along it
+    edir = (V[ed[:, 1]] - V[ed[:, 0]]) / np.maximum(el[:, None], 1e-12)
+    for i in np.nonzero(turning)[0][np.argsort(kap[turning])]:      # the strongest edge of each face wins
+        for s in (0, 1):
+            f = adj[i, s]
+            kf[f], hf[f], df[f] = kap[i], h[i, s], edir[i]
+    band = kf > 0
+    smooth = adj[~is_crease]
+    for _ in range(2):          # a facet inside a round with no turning edge of its own (two neighbours in) is in
+        cnt = np.zeros(len(F), int)
+        np.add.at(cnt, smooth[:, 0], band[smooth[:, 1]])
+        np.add.at(cnt, smooth[:, 1], band[smooth[:, 0]])
+        fill = ~band & (cnt >= 2)
+        if not fill.any():
+            break
+        for a, b in ((smooth[:, 0], smooth[:, 1]), (smooth[:, 1], smooth[:, 0])):
+            t = fill[a] & band[b] & (kf[b] > kf[a])
+            kf[a[t]], hf[a[t]], df[a[t]] = kf[b[t]], hf[b[t]], df[b[t]]
+        band |= fill & (kf > 0)
+    link = ~is_crease & band[adj[:, 0]] & band[adj[:, 1]]
+    g = sparse.coo_matrix((np.ones(link.sum()), (adj[link, 0], adj[link, 1])), shape=(len(F), len(F)))
+    _, lab = connected_components(g, directed=False)
+    rimedge = is_crease | (band[adj[:, 0]] != band[adj[:, 1]])
+    for k in np.unique(lab[band]):
+        f = np.nonzero(band & (lab == k))[0]
+        area = float(fa[f].sum())
+        if area < size0 ** 2:
+            continue
+        inb = np.zeros(len(F), bool)
+        inb[f] = True
+        re_ = np.nonzero(rimedge & (inb[adj[:, 0]] | inb[adj[:, 1]]))[0]
+        mine = np.where(inb[adj[re_, 0]], adj[re_, 0], adj[re_, 1])
+        along = np.abs((edir[re_] * df[mine]).sum(1)) > 0.5          # a rim the round runs along, not one of its ends
+        re_ = re_[along]
+        rim_len = float(el[re_].sum())
+        if rim_len < 1e-9:
+            continue                # no rim to start from: the body's own form, or a bore's wall (its ends are creases)
+        width = 2.0 * area / rim_len
+        w = fa[f]
+        order = np.argsort(kf[f])
+        cw = np.cumsum(w[order]) / w.sum()
+        med = float(kf[f][order][np.searchsorted(cw, 0.5)])
+        facets = width / max(float((w * hf[f]).sum() / w.sum()), 1e-12)
+        if facets < 1.0 or kf[f][order][min(np.searchsorted(cw, 0.9), len(f) - 1)] < 2.0 * thr:
+            continue                # stray edges, or the form grazing the threshold: a round is twice as tight
+        rimf = np.unique(np.r_[adj[re_, 0], adj[re_, 1]])
+        rimf = rimf[inb[rimf]]
+        tree = cKDTree(C[f])
+        peak = np.array([kf[f][nb].max() for nb in tree.query_ball_point(C[rimf], max(width, 1e-9))])
+        rim = float(np.average(kf[rimf] / peak, weights=fa[rimf]))
+        e_in = turning & inb[adj[:, 0]] & inb[adj[:, 1]]
+        grade = "unresolved" if facets < 4 else "tangent" if rim >= 0.75 else "curvature" if rim <= 0.5 else "unresolved"
+        i = f[np.argmin(np.abs(kf[f] - med))]
+        out.append({"grade": grade, "kind": "round",
+                    "concave": bool(convex[e_in].mean() < 0.5) if e_in.any() else False,
+                    "centre": C[i].tolist(), "normal": FN[i].tolist(), "outward": True,
+                    "radius": float(np.clip(3.0 * width, 0.05 * ext.max(), 0.25 * ext.max())),
+                    "angle": float(np.degrees(width * (w * kf[f]).sum() / w.sum())),
+                    "roundRadius": 1.0 / med, "width": width, "facets": float(facets), "rim": rim, "area": area,
+                    "length": 0.5 * rim_len})
+    out.sort(key=lambda j: -j["length"])
+    return out
+
+
+def mesh_join_sheet(mesh, path, limit=12, stripes=16, size=520, **grade):
+    """`join_sheet` for a mesh: a zebra close-up of each of `mesh_joins`."""
+    js = mesh_joins(mesh, **grade)
+    titles = []
+    for j in js[:limit]:
+        if j["kind"] == "crease":
+            titles.append(f"crease, {'concave' if j['concave'] else 'convex'}\n{j['angle']:.0f} deg, {j['length']:.0f} mm long")
+        else:
+            titles.append(f"round: {j['grade']}, {'concave' if j['concave'] else 'convex'}\nR {j['roundRadius']:.1f} mm, turns {j['angle']:.0f} deg, "
+                          f"{j['width']:.1f} mm wide ({j['facets']:.0f} facets), rim/peak {j['rim']:.2f}")
+    _closeups(mesh, js[:limit], titles, path, stripes, size, overview=True)
+    return js
 
 
 # ---- meshes ---------------------------------------------------------------
