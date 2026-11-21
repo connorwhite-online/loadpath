@@ -2047,7 +2047,7 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             sprung = held if bc.springs is None else (bc.springs + held).tocsr()
             gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=sprung)})
             stiff, us, lam = pushseat.solve(lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r), rhs,
-                                            ps, mat.E * ks)
+                                            ps, mat.E * ks, xyz=hm.node_xyz)
             seat_forces[:] = lam
             return stiff, us
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)

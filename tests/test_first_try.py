@@ -354,8 +354,11 @@ def test_a_part_that_only_its_seat_stops_is_solved_and_one_that_lifts_off_is_ref
     finally:
         pushseat.HOLD = was
     assert abs(seat[0] / seat[1] - 1) < 5e-3, seat                      # the solves' own accuracy
-    rows = verify_part(study(False, -50.0), m)["reactions"]            # lying on the seat, pressed down
+    rep = verify_part(study(False, -50.0), m)                          # lying on the seat, pressed down at one end
+    rows = rep["reactions"]
     assert abs(rows[-1]["cases"][0]["force"][2] + 50.0) < 0.05, rows[-1]
+    # it bears on a band under the load (the patches there are cut finer), so the far end stays down
+    assert rep["cases"][0]["deflection"] < 0.25, rep["cases"][0]["deflection"]
     try:
         verify_part(study(False, 50.0), m)
         raise AssertionError("a plate lifted off its seat was solved")
