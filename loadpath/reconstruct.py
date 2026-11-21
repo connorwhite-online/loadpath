@@ -907,7 +907,7 @@ def _drop_unformed_once(part, study, cut_ko, min_wall):
 # adds nothing) and the fillet meets the shape's exact face, drawn
 # DRAWN_INSET fine cells inside it so the mesh leaves the face at an angle.
 DRAWN_CARRY = os.environ.get("LOADPATH_DRAWN_CARRY", "1") != "0"
-DRAWN_INSET = 0.6
+DRAWN_INSET = float(os.environ.get("LOADPATH_DRAWN_INSET", "0.6"))
 DRAWN_TOUCH = float(os.environ.get('LOADPATH_DRAWN_TOUCH', '0.05'))
 DRAWN_CARRY_MAX = os.environ.get('LOADPATH_DRAWN_CARRY_MAX', '1') != '0'
 
@@ -923,18 +923,32 @@ FILLET_SHARE = float(os.environ.get("LOADPATH_FILLET_SHARE", "0.25"))
 FILLET_KMAX = 12.0   # mm: the widest blend, whatever the member
 
 
-def _stress_sized_k(dm, step, k0):
+def _stress_sized_k(dm, step, k0, sd=None):
     """Per fine cell, the blend width k (mm) whose tightest radius (0.2526 k,
-    _g2_union) is FILLET_SHARE of the thickness of the member nearest it."""
+    _g2_union) is FILLET_SHARE of the thickness of the member nearest it.
+
+    Only where the member's surface crosses the drawn one at an angle (a
+    corner to fill): where the two run side by side (a body wrapping a
+    drawn ring) a smooth union inflates the pair by up to 0.2 k, so a wide
+    blend there stood the body proud of the ring and left a ledge at its
+    ends (arm link shoulder boss). There it keeps the base blend."""
     depth = np.clip(-dm, 0.0, None)
     kmax = max(float(k0), FILLET_KMAX)
     rad = int(np.ceil(kmax / step))
     thick = 2.0 * ndimage.maximum_filter(depth, size=2 * rad + 1, mode="constant")
     k = np.clip(FILLET_SHARE * thick / 0.2526, float(k0), kmax)
+    if sd is not None:
+        ga, gb = np.gradient(dm, step), np.gradient(sd, step)
+        dot = sum(a * b for a, b in zip(ga, gb))
+        na = np.sqrt(sum(a * a for a in ga)) * np.sqrt(sum(b * b for b in gb))
+        cos = np.where(na > 1e-9, dot / np.maximum(na, 1e-9), 0.0)
+        # side by side (cos near 1) -> base blend; crossing at 60 deg or more -> full
+        w = ndimage.gaussian_filter(np.clip((0.95 - cos) / 0.45, 0.0, 1.0), 2.0)
+        k = float(k0) + w * (k - float(k0))
     return k
 
 
-def _clear_free_faces(du, dm, preserve, pts, step, inset, level=0.5):
+def _clear_free_faces(du, dm, preserve, pts, step, inset, level=0.5, design=()):
     """Keep a drawn shape's flat faces that no member stands on clear of the
     fillet: a boss's end face is a seat (a washer, a screw head, a mating
     part), and a blend into a member below it rose over the rim and buried
@@ -942,12 +956,17 @@ def _clear_free_faces(du, dm, preserve, pts, step, inset, level=0.5):
     plane; past its rim it may, along a 45 degree slope, so the fillet runs
     up to the rim in a ramp and no lip stands over the face. A face a member
     stands on (member material lying on it) is left alone: the fillet there
-    is the member's shoulder on the face."""
+    is the member's shoulder on the face. Nor is a face on the design
+    space's boundary: nothing can stand over it, and clearing it only
+    pulled the material wrapping the shape back from its rim in a ledge
+    (arm link shoulder boss)."""
     shape = du.shape
     member = (dm < 0).reshape(-1)
     du = du.reshape(-1).copy()
     for sh in preserve:
         for at, n, lateral in _flat_faces(sh):
+            if design and float(_min_sdf(design, (np.asarray(at, float) + step * np.asarray(n, float))[None])[0]) > 0:
+                continue
             s = (pts - at) @ n
             near = (s > -inset - 2.0 * step) & (s < 12.0)
             if not near.any():
@@ -1125,10 +1144,10 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         inset = DRAWN_INSET * step if DRAWN_CARRY else 0.0
         dm = _field_distance(fine, step, o.level)
         if DRAWN_CARRY and FILLET_SHARE > 0:
-            k = _stress_sized_k(dm, step, k)
+            k = _stress_sized_k(dm, step, k, sd)
         du = _g2_union(dm, sd + inset, k)
         if DRAWN_CARRY:
-            du = _clear_free_faces(du, dm, preserve, sdfs.pts, step, inset, o.level)
+            du = _clear_free_faces(du, dm, preserve, sdfs.pts, step, inset, o.level, design)
         # back to density, over the same width the smoothing gave the field
         width = 2.0 * step
         filleted = np.clip(o.level - du / (2.0 * width), 0.0, 1.0)
