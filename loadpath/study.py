@@ -36,7 +36,7 @@ from .manufacture import report as manufacturing_report
 from .reconstruct import ReconstructOptions, reconstruct
 from .simp import SimpOptions, filter_radius, optimize
 from .spec import Study
-from .verify import verify_part
+from .verify import SEARCH_SHELL_CELLS, verify_part
 
 __all__ = ["Outcome", "StudyResult", "run_study", "design_at"]
 
@@ -2678,8 +2678,9 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         mesh, rinfo = reconstruct(study, domain, xphys, ReconstructOptions())
         emit({"stage": "verify", "volumeFraction": vf})
         try:
+            # the search's own reading: its pick is read again (_confirm, tet_confirm)
             report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=contact_band(study, domain),
-                                 max_pitch=domain.pitch)
+                                 max_pitch=domain.pitch, shell_cells=SEARCH_SHELL_CELLS)
         except (RuntimeError, ValueError) as exc:
             # one outcome verification cannot solve (or a load pad the
             # design let go of: the robot arm's wrist link at 5% after 43 g at 6%) (a piece the supports do

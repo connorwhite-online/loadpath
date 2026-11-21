@@ -219,6 +219,65 @@ study or the grid. What the batch showed:
   candidate has the same skin, and only the one delivered needs the
   finest reading.
 
+### Thin walls: cells through the wall, or a shell on the spline surface
+
+The question behind that cost: a pinned wall is a surface with a thickness,
+and since the freeform work it can be a spline surface (docs/FREEFORM.md).
+A shell model on that surface has unknowns in proportion to the wall's
+area, not its volume. Is counting cells through the wall the wrong model?
+
+What was measured, on parts that are not in the held-out set (a ribbed lid
+with a 1.5 mm skin, a tray with 2 mm walls, a curved duct with a 1.6 mm
+wall, and a cantilever plate against plate theory, which is what a shell
+element would return):
+
+| Cells through the wall (cut cells) | 6 | 4 | 3 | 2.5 | 2 | 1.5 |
+|---|---|---|---|---|---|---|
+| Lid, safety factor | 2.00 | 1.88 | 1.93 | 1.87 | 2.09 | 2.01 |
+| Tray, safety factor | 5.31 | 5.44 | 5.13 | 5.75 | 5.38 | 5.99 |
+| Duct, safety factor | 1.68 | 1.55 | 1.49 | 1.71 | 1.75 | 2.10 |
+| Duct, deflection (mm) | 0.524 | 0.521 | 0.525 | 0.529 | 0.527 | 0.499 |
+| Lid, seconds for the solve and read | 82 | 45 | 34 | 17 | 10 | 7 |
+
+- **The four-cell rule answers a problem cut cells do not have.** It was
+  written for whole cells, where a wall rounds to a cell (a 2 mm wall read
+  2.4 mm). A cut cell integrates the wall's true thickness, and its
+  element (incompatible modes) carries linear bending strain in a single
+  layer, which is the assumption a shell element makes. Down to two cells
+  the readings move by the scatter of the peak reading (6 to 8%), with no
+  trend; deflection holds to 1 to 5%, and the plate to 2 to 4% of plate
+  theory. Below about 1.5 cells both fall off. On whole cells the same lid
+  at three cells read 2.0 where 3.1 was right, so pressure and thermal
+  studies, which use whole cells, keep four.
+- **What a shell would add is small here, because the limit is not in the
+  skin.** On the tray and the duct the governing stress sits where the
+  wall meets the floor or the material that mounts it, a three-dimensional
+  junction a shell cannot read (the lid's peak was not located); a
+  shell skin would still need solid ribs tied to it and a solid reading at
+  every junction. Its saving over two cut cells is in unknowns that are
+  no longer the cost: at two cells a wall has 8 A / t² cells (area A,
+  thickness t), which fits the 400k budget until A / t² passes 50,000. A
+  1.2 mm wall reaches that at 720 cm², a housing some 190 mm on a side.
+  Past that size a shell on the spline midsurface is the right model and
+  cells are not; under it they read the same thing.
+- **Where the spline surface does pay today** is under 1.5 cells: there the
+  error is in knowing where the wall is inside a cell, and the surface's own
+  signed distance gives that exactly where a meshed copy sampled four times
+  a cell does not. `switch._thin_skin` already integrates a skin from its
+  signed distance in the click, feel and cooling pipelines. Brought into
+  `loadpath run` it would let the design grid stay at the user's cell
+  budget, in place of refining to half the wall (gap 12b's cost).
+
+Done: a search's own reading of a candidate takes two cells through the
+wall where cut cells are on (`verify.SEARCH_SHELL_CELLS`); the part it picks
+is still read again at four, or on tetrahedra. On the lid the candidate's
+check went from 251k cells and 38 s to 71k and 19 s, reading 2.08 for 2.02,
+and the run delivered the same part (15.0 g, tets 2.38 for 2.32). The
+saving is half the check, not the fifth the solve alone suggests: reading
+stress on the surface and the submodels at hotspots do not shrink with the
+grid. Open: the signed-distance skin in `run`; a midsurface shell for
+housings past the size above.
+
 ## Gaps, ranked by how many users they hit
 
 "Hits" is the share of the held-out parts where the gap decided the
