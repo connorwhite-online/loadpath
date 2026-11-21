@@ -1608,6 +1608,8 @@ def main(argv=None):
                 _progress({"stage": "warning", "message": f"time limit {limit:g} min reached: delivering the "
                                                           "best outcome verified so far"}, None)
             return True
+        # (the stages plan by it: study._deadline)
+        should_stop.deadline = deadline
     try:
         result = run_study(study, on_progress=_tracked, should_stop=should_stop)
     except BaseException as exc:

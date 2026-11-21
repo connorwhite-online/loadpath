@@ -16,7 +16,13 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from loadpath.spec import study_from_dict  # noqa: E402
-from loadpath.study import _envelope_first, _pieces_again, bound_note  # noqa: E402
+from loadpath.study import (  # noqa: E402
+    _BOUND_KEY,
+    StudyResult,
+    _envelope_first,
+    _pieces_again,
+    bound_note,
+)
 from loadpath.tasks import check_study  # noqa: E402
 
 
@@ -191,7 +197,10 @@ def test_an_impossible_limit_is_found_on_the_block_before_any_search():
     r = _envelope_first(study_from_dict({**arm, "goal": {"safetyFactor": 2, "maxDeflection": 0.001}}), None, None)
     assert r is not None and len(r.outcomes) == 1 and r.best is None
     assert any("no shape in it meets the limit" in w for w in r.warnings), r.warnings
-    assert _envelope_first(study_from_dict({**arm, "goal": {"safetyFactor": 2, "maxDeflection": 5.0}}), None, None) is None
+    ok = _envelope_first(study_from_dict({**arm, "goal": {"safetyFactor": 2, "maxDeflection": 5.0}}), None, None)
+    # in reach: the study goes on to the searches, carrying the block's margin
+    assert ok is not None and not isinstance(ok, StudyResult)
+    assert ok.raw[_BOUND_KEY]["margin"] >= 1.0 and ok.raw[_BOUND_KEY]["passes"]
 
 
 def test_a_peak_on_a_keep_outs_square_edge_is_named_as_the_notch_to_round():
@@ -549,3 +558,68 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_the_constrained_limit_steps_by_its_measured_response():
+    """While every constrained run passes, the limit is relaxed by the
+    square root of the first reading, then by the step the measured slope
+    of reading against limit says lands near the target. A reading that
+    did not move asks for a larger step, never an endless creep."""
+    from loadpath.study import _relax_step
+
+    assert abs(_relax_step([(1.0, 1.44)]) - 1.2) < 1e-9
+    # a proportional response (slope -1) steps straight to the aim
+    s = _relax_step([(1.0, 1.44), (1.2, 1.2)])
+    assert abs(1.2 / s - 1.06) < 1e-6, s
+    # a snap clip's 1.30 -> 1.32: no response, so the step is the largest
+    # a quarter-power response allows, not another square root of 1.32
+    s = _relax_step([(1.0, 1.30), (1.14, 1.32)])
+    assert s > 2.0 and s <= 4.0, s
+    assert _relax_step([(1.0, 1.3), (1.1, 1.3), (1.2, 1.29)]) <= 4.0
+
+
+def test_a_clock_reaches_worker_searches_and_skips_the_settle():
+    """--time-limit is a deadline every stage can read: pitch-start workers
+    get it (they never saw it before), and a run past it delivers the part
+    on supports rather than starting a second search."""
+    import copy
+    import time
+    from types import SimpleNamespace as NS
+
+    from loadpath import orient
+    from loadpath.study import _clock, _deadline, _time_left
+
+    assert _clock(None) is None
+    stop = _clock(time.time() - 1.0)
+    assert stop() and _deadline(stop) is not None and _time_left(stop) < 0
+    inner = _clock(time.time() + 5.0)
+    both = _clock(time.time() + 100.0, inner)
+    assert abs(_deadline(both) - _deadline(inner)) < 1e-9 and not both()
+
+    st = study_from_dict(_clamp(29))
+    res = NS(study=st, best=0, seconds=60.0, outcomes=[NS(volume_fraction=0.2, mesh=None)])
+    real = orient.choose_build_direction
+    try:
+        orient.choose_build_direction = lambda *a, **k: (_ for _ in ()).throw(AssertionError("screened"))
+        calls = []
+        out = orient.settle_supports(st, copy.copy(res), lambda s2: calls.append(s2), should_stop=stop)
+        assert not calls and out.study.raw["supportDecision"]["skipped"]
+        # 90 s left, a part takes 60: no room for the screen and a search part
+        out = orient.settle_supports(st, copy.copy(res), lambda s2: calls.append(s2),
+                                     should_stop=_clock(time.time() + 90.0))
+        assert not calls and out.study.raw["supportDecision"]["chosen"] == "on supports"
+    finally:
+        orient.choose_build_direction = real
+
+
+def test_a_block_that_barely_passes_draws_the_search_up_to_it():
+    """The solid block's margin brackets the search: with a block at 1.11
+    and a part at 30% reading 0.90, the next step reaches toward the top,
+    not 35%; a strong block leaves the proportional step alone."""
+    from loadpath.study import _toward_block
+
+    nxt = 0.3 * 1.05 / 0.9
+    assert _toward_block(nxt, 0.9, (0.3, 0.9), 1.11) > 0.75
+    assert _toward_block(nxt, 0.9, (0.3, 0.9), 12.0) == nxt
+    assert _toward_block(nxt, 0.9, (0.3, 0.9), None) == nxt
+    assert _toward_block(nxt, 0.9, (0.3, 0.9), 0.8) == nxt     # a failing block says nothing here

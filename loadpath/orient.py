@@ -449,7 +449,7 @@ def _delivered_cost(study, o, proc) -> float:
     return _make_cost(r, study, proc, 1.0)
 
 
-def settle_supports(study, result, rerun, on_progress=None, candidates=None):
+def settle_supports(study, result, rerun, on_progress=None, candidates=None, should_stop=None):
     """run_study's second pass for a study whose build direction is "auto",
     or named without a word on supports (`candidates`: that one direction):
     `result` is the search for the free design printed on supports, in the
@@ -469,6 +469,23 @@ def settle_supports(study, result, rerun, on_progress=None, candidates=None):
         return result
     o = result.outcomes[result.best]
     vf = float(o.volume_fraction)
+    # With a clock (`--time-limit`), the screen and a second search are
+    # started only with room for them: the screen at least a part's time
+    # and the search one more. Past the limit a fork's settle ran 15 minutes
+    # on, and its second search could not finish a part. The part on
+    # supports is delivered, which the study allows (it names no overhang rule).
+    from .study import _time_left
+    left = _time_left(should_stop)
+    per_part = (getattr(result, "seconds", None) or 0.0) / max(1, len(result.outcomes))
+    if (should_stop is not None and should_stop()) or (left is not None and left < 2.0 * per_part):
+        raw = dict(result.study.raw)
+        raw["supportDecision"] = {"volumeFraction": vf, "chosen": "on supports", "rerun": False,
+                                  "skipped": "the time limit leaves no room to compare a self-supporting design"}
+        result.study = dataclasses.replace(result.study, raw=raw)
+        if on_progress is not None:
+            on_progress({"stage": "orient", "supports": "on supports", "skipped": "time limit",
+                         "direction": direction_label(result.study.process.build)}, None)
+        return result
     if on_progress is not None:
         on_progress({"stage": "orient", "settle": "supports or self-supporting", "volumeFraction": vf}, None)
     cmp = choose_build_direction(study, candidates=candidates, max_elements=study.max_elements,

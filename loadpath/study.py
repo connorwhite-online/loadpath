@@ -159,6 +159,34 @@ _AUTO_MIN_RUNS = 4
 # 15.1 g in 3357 s.
 
 
+def _deadline(should_stop) -> float | None:
+    """The epoch time at which `should_stop` turns true for good, when it is
+    a clock (`loadpath run --time-limit`, _clock), else None. Stages read it
+    to plan: not to start a part they cannot finish, not to open a second
+    pass the clock leaves no room for."""
+    return getattr(should_stop, "deadline", None)
+
+
+def _time_left(should_stop) -> float | None:
+    d = _deadline(should_stop)
+    return None if d is None else d - time.time()
+
+
+def _clock(deadline: float | None, inner=None):
+    """should_stop for a run that ends at `deadline` (epoch seconds) or when
+    `inner` says so, carrying the deadline (_deadline). None when neither."""
+    if deadline is None and inner is None:
+        return None
+    if deadline is None:
+        return inner
+
+    def stop():
+        return time.time() >= deadline or (inner is not None and bool(inner()))
+    d = _deadline(inner)
+    stop.deadline = deadline if d is None else min(deadline, d)
+    return stop
+
+
 def _box_over(deadline: float, box: float, done: int) -> bool:
     """Whether the constrained run's time box is over, `done` parts in."""
     now = time.time()
@@ -1232,8 +1260,10 @@ def _confirm_cells(st: Study | None = None) -> int:
     return int(max(floor, cells_in(budget)))
 
 
-def _solve_alone(study: Study) -> StudyResult:
-    return _run_single(study)
+def _solve_alone(study: Study, deadline: float | None = None) -> StudyResult:
+    # (a worker process: the run's clock goes in as its deadline. Without
+    # it the pitch-start searches of a small part never saw --time-limit)
+    return _run_single(study, None, _clock(deadline))
 
 
 def _study_cells(st: Study) -> int:
@@ -1283,7 +1313,7 @@ def _parallel(studies: list, on_progress, should_stop) -> list:
 
     results = [None] * len(studies)
     with _share_cores(workers), ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as ex:
-        futs = {ex.submit(_solve_alone, s): i for i, s in enumerate(studies)}
+        futs = {ex.submit(_solve_alone, s, _deadline(should_stop)): i for i, s in enumerate(studies)}
         from concurrent.futures import as_completed
         for f in as_completed(futs):
             i = futs[f]
@@ -1376,7 +1406,8 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
 
         free = choose_build_direction(study, on_progress=on_progress, self_supporting=False)["study"]
         return settle_supports(study, run_study(free, on_progress, should_stop),
-                               lambda st: run_study(st, on_progress, should_stop), on_progress)
+                               lambda st: run_study(st, on_progress, should_stop), on_progress,
+                               should_stop=should_stop)
     proc = study.process
     if proc is not None and proc.overhangs and not proc.overhangs_declared and proc.build is not None:
         # A named build direction says which way the layers lie. It does not
@@ -1398,7 +1429,7 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
                                                                      overhangs_declared=True))
         return settle_supports(base, run_study(free, on_progress, should_stop),
                                lambda st: run_study(st, on_progress, should_stop), on_progress,
-                               candidates=[proc.build])
+                               candidates=[proc.build], should_stop=should_stop)
     mats = study.materials or [study.material]
     if len(mats) == 1:
         if study.goal.method == "auto":
@@ -1430,10 +1461,34 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
 RESTART_STARTS = (1.0, 0.8, 1.25, 0.65, 1.5, 0.55, 1.75, 0.45)
 
 
+def _toward_block(nxt: float, m: float, lo_fail, block_margin) -> float:
+    """The search's next fraction `nxt` (a step in proportion to the margin
+    missing), carried at least to where the line from the highest failing
+    fraction `lo_fail` = (vf, margin) to the solid block (fill 1, margin
+    `block_margin`) crosses the target. The block is a design that passes;
+    a step in proportion to the margin assumes the margin grows with the
+    material, and where a seat or a bore the search cannot change sets the
+    peak it barely grows, which the block shows: a corner bracket whose
+    block read 1.11 read 0.89-0.98 from 30% to 55% fill, five parts short of
+    passing. Unchanged when the block is unread, fails, or the last part
+    passed."""
+    if lo_fail is None or block_margin is None or m >= 1.0 or block_margin <= lo_fail[1]:
+        return nxt
+    v1, m1 = lo_fail
+    return max(nxt, v1 + (1.05 - m1) / (block_margin - m1) * (1.0 - v1))
+
+
+# study.raw key under which _envelope_first hands the block's reading to the
+# pitch starts' searches (taken off the study they deliver: _run_pitches)
+_BOUND_KEY = "_envelopeRead"
+
+
 def _envelope_first(st: Study, on_progress, should_stop):
     """Before a small study's searches are started side by side: the whole
     design space as one solid block, read once. Returns that result when
-    the goal is out of reach inside the envelope (bound_note), else None.
+    the goal is out of reach inside the envelope (bound_note); else the
+    study carrying the block's reading for the searches (_BOUND_KEY), or
+    None when there is none.
 
     Each search asks this of itself after two failed parts. Side by side on
     three grids that is six optimizations and three blocks to say one thing:
@@ -1454,7 +1509,15 @@ def _envelope_first(st: Study, on_progress, should_stop):
     finally:
         prefetch.close()
     o = r.outcomes[-1] if r.outcomes else None
-    return r if o is not None and (o.report.get("bound") or {}).get("outOfReach") else None
+    if o is not None and (o.report.get("bound") or {}).get("outOfReach"):
+        return r
+    if o is not None and o.report.get("margin") is not None:
+        # in reach: the searches carry what the block read (_BOUND_KEY)
+        import dataclasses
+
+        return dataclasses.replace(st, raw=dict(st.raw or {}, **{_BOUND_KEY: {
+            "margin": float(o.report["margin"]), "passes": bool(o.passes)}}))
+    return None
 
 
 def _run_restarts(study: Study, on_progress=None, should_stop=None) -> StudyResult:
@@ -1468,7 +1531,12 @@ def _run_restarts(study: Study, on_progress=None, should_stop=None) -> StudyResu
         starts = pitch_starts(st)
         if starts <= 1:
             return _run_single(st, on_progress, should_stop)
-        return _envelope_first(st, on_progress, should_stop) or _run_pitches(st, starts, on_progress, should_stop)
+        first = _envelope_first(st, on_progress, should_stop)
+        if isinstance(first, StudyResult):
+            return first
+        r = _run_pitches(first or st, starts, on_progress, should_stop)
+        r.study = st
+        return r
 
     g = study.goal
     n = min(g.restarts, len(RESTART_STARTS))
@@ -1958,6 +2026,14 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     if should_stop is not None and should_stop():
         r.choice = choice
         return r
+    left = _time_left(should_stop)
+    if left is not None and left < 2.0 * r.seconds / max(1, len(r.outcomes)):
+        # a constrained part runs on a finer grid and takes longer than a
+        # search part: with less than two search parts' time left on the
+        # clock it would be cut off half made
+        choice["reason"] = "the time limit leaves no room for the constrained method"
+        r.choice = choice
+        return r
     if on_progress is not None:
         on_progress({"stage": "method", "method": "constrained", "stressUtilization": u,
                      **({"probe": True} if probe else {})}, None)
@@ -2000,7 +2076,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
             mg is not None and mg >= _PROBE_ROOM and (event.get("mass") or np.inf) < _PROBE_NEAR * ms)
         # judged between parts (after the tet confirm): stop here rather
         # than cut the next part short at the deadline
-        if not quick.on() and _probe_settled(won[0], start, deadline, done[0]):
+        if not quick.on() and _probe_settled(won[0], start, min(deadline, _deadline(should_stop) or np.inf),
+                                             done[0]):
             settled[0] = True
 
     def progress(event, x):
@@ -2038,6 +2115,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     def stop():
         over = time.time() > deadline if quick.on() else _box_over(deadline, box, done[0])
         return over or user_stop()
+    # the run's own clock goes down with them (_deadline)
+    user_stop.deadline = stop.deadline = _deadline(should_stop)
 
     cstudy = dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained"))
     fit = _constrained_fit(cstudy)
@@ -2296,6 +2375,40 @@ def _out_of_reach(mass, ratio, search_mass: float) -> bool:
     (_PROBE_REACH)."""
     return mass is not None and ratio is not None and bool(np.isfinite(ratio)) and ratio >= 1.0 \
         and mass / ratio > _PROBE_REACH * search_mass
+
+
+# The constrained method's relaxation while every run passes (_relax_step):
+# aimed at this ratio, inside the band a run is accepted in (under 1.12)
+_RELAX_AIM = 1.06
+# ... with the ratio's measured response to the limit taken as no weaker than
+# this power of it (a reading that did not move is noise, not a law)
+_RELAX_SLOPE = -0.25
+
+
+def _relax_step(reads: list) -> float:
+    """The factor the constrained method's limit scale t is relaxed by next,
+    from the runs so far that all passed: reads = [(t, ratio)], ratio the
+    verified part's margin over the target.
+
+    The first step is the square root of the ratio (a guard against wild
+    first readings: the wall bracket's first run read 17 MPa in the
+    optimizer and 377 MPa verified). From the second on, the step is sized
+    by the measured response: the slope of log ratio on log t over the runs
+    so far, and the step that slope says lands on _RELAX_AIM. Stepping by
+    the square root of each reading alone moved a 4 g snap clip from 1.30 to
+    1.32 and then 1.26 in three runs of 3-5 minutes, and its ten-minute box
+    closed with the part 26% over target: where the reading responds weakly
+    to the limit (part of the peak sits at a seat the optimizer does not
+    shape) the step it needs is larger, not the same. Never more than 4x."""
+    _, r = reads[-1]
+    if len(reads) < 2:
+        return float(min(max(r, 1.0) ** 0.5, 4.0))
+    x = np.log([q[0] for q in reads])
+    y = np.log([q[1] for q in reads])
+    var = float(((x - x.mean()) ** 2).sum())
+    slope = float(((x - x.mean()) * (y - y.mean())).sum() / var) if var > 1e-12 else 0.0
+    slope = min(slope, _RELAX_SLOPE) if np.isfinite(slope) else _RELAX_SLOPE
+    return float(np.clip((_RELAX_AIM / r) ** (1.0 / slope), 1.0, 4.0))
 
 
 def _probe_settled(won: bool, start: float, deadline: float, done: int, now: float | None = None) -> bool:
@@ -2727,7 +2840,31 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                   "sf": goal_.safety_factor if (goal_.buckling and goal_.safety_factor and _BUCKLING_SEARCH
                                                 and study.gravity is None and study.thermal is None) else None}
 
+    # Seconds each optimization and its check took (attempt, run_constrained).
+    # With a clock (_deadline) no part is started that the time left cannot
+    # hold: a part cut off at the limit was still meshed and verified past
+    # it, half made, and its minutes were the pick's confirm's.
+    spent: list[float] = []
+    out_of_time = [False]
+
+    def no_room() -> bool:
+        left = _time_left(should_stop)
+        if left is None or not spent or left >= spent[-1]:
+            return False
+        if not out_of_time[0]:
+            out_of_time[0] = True
+            emit({"stage": "warning", "message": f"{left / 60:.1f} min left on the time limit, and the last part "
+                                                 f"took {spent[-1] / 60:.1f}: no further part is started"})
+        return True
+
     def attempt(vf: float, x0, beta0, replay=None, made=None) -> Outcome:
+        t_a = time.time()
+        o = _attempt(vf, x0, beta0, replay, made)
+        if replay is None:
+            spent.append(time.time() - t_a)
+        return o
+
+    def _attempt(vf: float, x0, beta0, replay=None, made=None) -> Outcome:
         def on_iter(rec, xp):
             emit({"stage": "optimize", "volumeFraction": vf, **rec}, xp)
 
@@ -3410,6 +3547,12 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         prefetch_tets(o)
 
     def run_constrained(limits, x0) -> Outcome:
+        t_a = time.time()
+        o = _run_constrained(limits, x0)
+        spent.append(time.time() - t_a)
+        return o
+
+    def _run_constrained(limits, x0) -> Outcome:
         from .constrained import optimize_constrained
 
         emit({"stage": "optimize", "limits": {"stress": limits.stress, "deflection": limits.deflection}})
@@ -3523,8 +3666,9 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         kb = _BUCKLING_START
         fails = []
         t, t_pass, t_fail, x_pass = 1.0, None, None, None
+        relaxed = []    # (t, ratio) of the passing runs while none has failed (_relax_step)
         for _ in range(_MAX_CONSTRAINED_RUNS):
-            if should_stop is not None and should_stop():
+            if should_stop is not None and should_stop() or no_room():
                 break
             limits = Limits(stress * t if stress is not None else None,
                             goal.max_deflection * t if goal.max_deflection is not None else None, mat.E,
@@ -3586,7 +3730,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 # 4x a step, so one wild reading cannot overshoot far
                 t *= min(max(ratio, 0.25), 0.9)
             else:
-                t *= min(ratio ** 0.5, 4.0)
+                relaxed.append((t, ratio))
+                t *= _relax_step(relaxed)
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: _weigh(outcomes[i].report)) if passing else None
         if best is None and fallback:
@@ -3616,7 +3761,12 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         # the volume fraction or the material"; a corner bracket whose solid
         # block passes (SF 2.78 for 2.5) stopped at the same ceiling with
         # "more material is not allowed" and no part.
-        solid = {"o": None, "tried": os.environ.get("LOADPATH_BOUND") == "0", "out": False}
+        solid = {"o": None, "tried": os.environ.get("LOADPATH_BOUND") == "0", "out": False, "margin": None}
+        known = (study.raw or {}).get(_BOUND_KEY)
+        if known is not None and not solid["tried"]:
+            # read once before the pitch starts (_envelope_first): not again
+            # on each grid, and its margin brackets the search from the start
+            solid.update(tried=True, margin=known.get("margin"), known=True)
 
         def envelope_bound():
             solid["tried"] = True
@@ -3630,7 +3780,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             q.report["start"] = "bound: the whole design space, solid"
             note, out = bound_note(study, q.report, domain.pitch)
             q.report["bound"] = {"note": note, "outOfReach": out}
-            solid.update(o=q, out=out)
+            solid.update(o=q, out=out, margin=q.report.get("margin"))
             emit({"stage": "bound", "outOfReach": out, **q.summary()})
 
         if bound_only:
@@ -3642,7 +3792,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                                warnings=list(domain.warnings) + ([q.report["bound"]["note"]] if q is not None else []))
         pieces: list[float] = []
         for _ in range(_MAX_SEARCH_RUNS):
-            if should_stop is not None and should_stop():
+            if should_stop is not None and should_stop() or no_room():
                 break
             o = run_one(vf)
             outcomes.append(o)
@@ -3694,6 +3844,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 # Aim a little past the target; never more than halve or
                 # double in one step, where the linear model stops holding.
                 nxt = vf * 1.05 / max(m, 1e-9)
+                nxt = _toward_block(nxt, m, lo_fail, solid["margin"])
                 nxt = float(np.clip(nxt, vf * 0.5, vf * 2.0))
                 if memory is not None:
                     nxt = memory.snap(nxt, skip=[q.volume_fraction for q in outcomes])
@@ -3707,8 +3858,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             if abs(nxt - vf) < 0.005 and not (hi_pass and lo_fail):
                 break
             vf = nxt
-        if not any(q.passes for q in outcomes) and outcomes and not solid["tried"] \
-                and not (should_stop is not None and should_stop()):
+        if not any(q.passes for q in outcomes) and outcomes and (not solid["tried"] or solid.get("known")) \
+                and solid["o"] is None and not (should_stop is not None and should_stop()):
             envelope_bound()
         if solid["o"] is not None and not any(q.passes for q in outcomes):
             # Nothing lighter passes. Out of reach: the block goes in as the
@@ -3757,7 +3908,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 if best is None:
                     # nothing passes: step up from the largest fraction tried
                     top = max(outcomes, key=lambda q: q.volume_fraction)
-                    if extra >= _TET_EXTRA_RUNS or top.volume_fraction >= _VF_MAX:
+                    if extra >= _TET_EXTRA_RUNS or top.volume_fraction >= _VF_MAX or no_room():
                         break
                     vf = float(np.clip(top.volume_fraction * 1.05 / max(top.report["margin"], 1e-9),
                                        top.volume_fraction + 0.01, _VF_MAX))
@@ -3832,7 +3983,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 # 6.25% failing at 2.93, and its midpoint 6.64% sat under
                 # 0.005 from 6.25%, so nothing in between was tried)
                 tol = 0.005 if lo is None else min(0.005, 0.25 * (o.volume_fraction - lo))
-                if any(abs(nxt - q.volume_fraction) < tol for q in outcomes):
+                if any(abs(nxt - q.volume_fraction) < tol for q in outcomes) or no_room():
                     break
                 outcomes.append(run_one(nxt))
                 calibrate(outcomes[-1], k)
@@ -3900,6 +4051,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         vf = min(vf + 0.02, _VF_MAX)
                     if memory is not None:
                         vf = memory.snap(vf, skip=[q.volume_fraction for q in outcomes])
+                    if no_room():
+                        break
                     if any(abs(vf - f) < 0.005 for f in conf_failed):
                         # nowhere heavier to go (the pick sat at _VF_MAX): the
                         # step up re-ran the same recalled design, failed its
@@ -3912,7 +4065,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                     best = min(passing, key=lambda i: _weigh(outcomes[i].report)) if passing else None
                     continue
                 confirmed.add(best)
-            if conf_fail is None or o.volume_fraction - conf_fail < max(0.005, 0.1 * o.volume_fraction):
+            if conf_fail is None or o.volume_fraction - conf_fail < max(0.005, 0.1 * o.volume_fraction) \
+                    or no_room():
                 break
             q = run_one(0.5 * (conf_fail + o.volume_fraction))
             outcomes.append(q)
@@ -3973,7 +4127,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                     and q.report.get("bodies", 1) <= 1 and str(q.report.get("start", "")).startswith("warm")
                     and q.volume_fraction > o.volume_fraction * 1.03 / max(o.report["margin"], 1e-9)
                     and not any(abs(q.volume_fraction - v) < 0.003 for v in fresh)]
-            if not lost:
+            if not lost or no_room():
                 break
             vf = max(lost)
             emit({"stage": "optimize", "volumeFraction": vf, "start": "layout search: cold"})
