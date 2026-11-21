@@ -191,13 +191,6 @@ def test_cage_over_slivers():
     assert len(cage.Q) > 400
 
 
-if __name__ == "__main__":
-    for name, fn in list(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok", name)
-
-
 def test_cage_finer_only_where_asked():
     """A spot asked k times finer gets edges about k times shorter there,
     the rest at the density asked, and the cage still lies on the mesh
@@ -217,3 +210,10 @@ def test_cage_finer_only_where_asked():
     P = np.random.default_rng(0).normal(size=(500, 3)) * 5
     spots = [(np.zeros(3), 3.0, 2.0), (np.array([1.0, 1.0, 0.0]), 2.5, 4.0)]
     assert np.abs(subd._warp(subd._warp(P, spots), spots, inverse=True) - P).max() < 1e-9
+
+
+if __name__ == "__main__":
+    for name, fn in list(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
+            print("ok", name)
