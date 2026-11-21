@@ -294,12 +294,127 @@ if nb is not None:
             out[i] += acc
 
 
+if nb is not None:
+
+    # The same products by node blocks: a level's extra terms couple whole
+    # nodes (a cut cell's 24 x 24, its Galerkin images below), so the three
+    # rows of node a hold the same neighbour nodes in each of the three
+    # component segments. One index per neighbour serves its nine entries
+    # and each u value is read once for the three rows; every row still sums
+    # its entries in its stored order (component segment, then neighbour),
+    # in float64, so the numbers are _add_csr's to the bit.
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _add_blocks(nodes, ptr, nbr, data, nn, u, out):
+        for r in nb.prange(nodes.size):
+            a = nodes[r]
+            a0, a1, a2 = 0.0, 0.0, 0.0
+            for cj in range(3):
+                off = cj * nn
+                for t in range(ptr[r], ptr[r + 1]):
+                    v = np.float64(u[off + nbr[t]])
+                    a0 += data[cj, t, 0] * v
+                    a1 += data[cj, t, 1] * v
+                    a2 += data[cj, t, 2] * v
+            out[a] += a0
+            out[nn + a] += a1
+            out[2 * nn + a] += a2
+
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _add_blocks32(nodes, ptr, nbr, data, nn, u, out):
+        for r in nb.prange(nodes.size):
+            a = nodes[r]
+            a0, a1, a2 = 0.0, 0.0, 0.0
+            for cj in range(3):
+                off = cj * nn
+                for t in range(ptr[r], ptr[r + 1]):
+                    v = np.float64(u[off + nbr[t]])
+                    a0 += data[cj, t, 0] * v
+                    a1 += data[cj, t, 1] * v
+                    a2 += data[cj, t, 2] * v
+            out[a] += np.float32(a0)
+            out[nn + a] += np.float32(a1)
+            out[2 * nn + a] += np.float32(a2)
+
+
+def _padded_blocks(a):
+    """`a` with explicit zeros filling out every node block any entry
+    touches: in the sorted order a zero adds nothing, so every row sums the
+    same numbers in the same order."""
+    import scipy.sparse as sp
+
+    n = a.shape[0]
+    nn = n // 3
+    c = a.tocoo()
+    pr, pc = c.row % nn, c.col % nn
+    g = sp.csr_matrix((np.ones(len(pr), np.int8), (pr, pc)), shape=(nn, nn))
+    g.sum_duplicates()
+    g = g.tocoo()
+    rows = np.concatenate([g.row + ci * nn for ci in range(3) for _ in range(3)])
+    cols = np.concatenate([g.col + cj * nn for _ in range(3) for cj in range(3)])
+    key = np.unique(rows.astype(np.int64) * n + cols)            # sorted: by row, then column
+    data = np.zeros(len(key))
+    data[np.searchsorted(key, c.row.astype(np.int64) * n + c.col)] = c.data
+    indptr = np.zeros(n + 1, np.int64)
+    np.cumsum(np.bincount(key // n, minlength=n), out=indptr[1:])
+    out = sp.csr_matrix((data, (key % n).astype(np.int64), indptr), shape=a.shape)
+    out.has_sorted_indices = True
+    return out
+
+
+def _node_blocks(a):
+    """(nodes, ptr, neighbour nodes, data (3, pairs, 3) [cj, pair, ci]) of a
+    square CSR on the (3, nodes) layout when every node's three rows hold
+    whole node blocks (above), else None."""
+    n = a.shape[0]
+    if n % 3 or a.shape[1] != n or a.nnz == 0:
+        return None
+    nn = n // 3
+    ip = np.asarray(a.indptr, np.int64)
+    ln = np.diff(ip)
+    l3 = ln.reshape(3, nn)
+    if not (np.all(l3 == l3[0]) and np.all(l3[0] % 3 == 0)):
+        return None
+    nodes = np.flatnonzero(l3[0])
+    m = l3[0][nodes] // 3                              # neighbours per node
+    ptr = np.zeros(len(nodes) + 1, np.int64)
+    np.cumsum(m, out=ptr[1:])
+    pairs = int(ptr[-1])
+    # entry positions: row ci * nn + a, segment cj, neighbour t
+    rel = np.arange(pairs) - np.repeat(ptr[:-1], m)
+    start = ip[:-1].reshape(3, nn)[:, nodes]           # (ci, node)
+    mm = np.repeat(m, m)
+    nbr = None
+    data = np.empty((3, pairs, 3))
+    idx = np.asarray(a.indices, np.int64)
+    for ci in range(3):
+        base = np.repeat(start[ci], m) + rel
+        for cj in range(3):
+            pos = base + cj * mm
+            col = idx[pos] - cj * nn
+            if nbr is None:
+                nbr = col
+                if col.min() < 0 or col.max() >= nn:
+                    return None
+            elif not np.array_equal(col, nbr):
+                return None
+            data[cj, :, ci] = a.data[pos]
+    return nodes, ptr, nbr.astype(np.int32 if nn < 2 ** 31 else np.int64), data, nn
+
+
 def add_csr(prepared, u, out) -> bool:
     """out += A u on numba's threads (u, out: same-shape contiguous float32
     or float64 fields; prepared: csr_rows(A)). False when it cannot (the
     caller then does it with scipy)."""
     if not (available() and u.flags.c_contiguous and out.flags.c_contiguous and u.dtype == out.dtype):
         return False
+    if len(prepared) == 5:
+        if u.dtype == np.float32:
+            _add_blocks32(*prepared, u.reshape(-1), out.reshape(-1))
+        elif u.dtype == np.float64:
+            _add_blocks(*prepared, u.reshape(-1), out.reshape(-1))
+        else:
+            return False
+        return True
     if u.dtype == np.float32:
         _add_csr32(*prepared, u.reshape(-1), out.reshape(-1))
     elif u.dtype == np.float64:
@@ -312,8 +427,17 @@ def add_csr(prepared, u, out) -> bool:
 def csr_rows(a):
     """(rows with entries, indptr, indices, data) of a scipy sparse matrix, for add_csr."""
     a = a.tocsr()
+    if available() and a.shape[0] == a.shape[1] and a.shape[0] % 3 == 0 and a.nnz:
+        blocks = _node_blocks(a)
+        if blocks is None and a.has_canonical_format:
+            blocks = _node_blocks(_padded_blocks(a))
+        if blocks is not None:
+            return blocks
+    # 32-bit column indices where they fit: the pass reads 12 bytes an
+    # entry instead of 16, the same sums (10-20% on the arm link's 9.7M)
+    it = np.int32 if a.shape[1] < 2 ** 31 else np.int64
     return (np.nonzero(np.diff(a.indptr))[0].astype(np.int64), np.asarray(a.indptr, np.int64),
-            np.asarray(a.indices, np.int64), np.ascontiguousarray(a.data, np.float64))
+            np.asarray(a.indices, it), np.ascontiguousarray(a.data, np.float64))
 
 
 if nb is not None:

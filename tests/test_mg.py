@@ -280,6 +280,7 @@ if __name__ == "__main__":
 def test_extra_terms_add_as_scipy_does():
     """A level's extra sparse terms (springs, cut cells) are added on numba's
     threads, rows with entries only: the numbers scipy's product gives."""
+    import pytest
     import scipy.sparse as sp
 
     from loadpath import mgops
@@ -297,3 +298,39 @@ def test_extra_terms_add_as_scipy_does():
         want = out + (a @ u.reshape(-1).astype(np.float64)).astype(dt).reshape(out.shape)
         assert mgops.add_csr(pre, u, out)
         assert np.array_equal(out, want)
+
+
+def test_node_block_extra_is_the_csr_bit_for_bit():
+    """mgops.csr_rows lays a level's extra operator out by node blocks (zeros
+    filling a block out where its pattern is partial); add_csr then gives
+    the plain CSR pass's numbers to the bit, in float64 and float32."""
+    import pytest
+    import scipy.sparse as sp
+
+    from loadpath import mgops
+
+    if not mgops.available():
+        pytest.skip("numba kernels off")
+    rng = np.random.default_rng(2)
+    nn = 400
+    pairs = rng.integers(0, nn, (1500, 2))
+    pairs = np.vstack([pairs, pairs[:, ::-1], np.column_stack([np.arange(nn)] * 2)])
+    rows, cols, vals = [], [], []
+    for ci in range(3):
+        for cj in range(3):
+            keep = rng.random(len(pairs)) < (1.0 if ci == cj else 0.7)     # partial blocks too
+            rows.append(pairs[keep, 0] + ci * nn)
+            cols.append(pairs[keep, 1] + cj * nn)
+            vals.append(rng.standard_normal(keep.sum()))
+    a = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(3 * nn, 3 * nn))
+    a.sum_duplicates()
+    blk = mgops.csr_rows(a)
+    assert len(blk) == 5
+    plain = (np.nonzero(np.diff(a.indptr))[0].astype(np.int64), np.asarray(a.indptr, np.int64),
+             np.asarray(a.indices, np.int64), a.data)
+    for dt in (np.float64, np.float32):
+        u = rng.standard_normal(3 * nn).astype(dt)
+        o1, o2 = np.zeros_like(u), np.zeros_like(u)
+        mgops.add_csr(plain, u, o1)
+        mgops.add_csr(blk, u, o2)
+        assert np.array_equal(o1, o2)
