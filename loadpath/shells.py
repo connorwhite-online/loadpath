@@ -2028,6 +2028,24 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             h["loadCases"] = lcs
         else:
             h.pop("loadCases", None)
+        # a clearance limit names the cases it holds in; a case that stayed
+        # with the other half (a socket's plug cases, when the socket sits in
+        # the base) is not this half's, and naming it made the half's study
+        # invalid (a handheld's cover kept the base's usbc-shift)
+        if isinstance(h.get("goal"), dict) and h["goal"].get("clearances"):
+            names = {lc.get("name") for lc in lcs}
+            kept = []
+            for c_ in h["goal"]["clearances"]:
+                cs = c_.get("cases")
+                if cs is None:
+                    kept.append(c_)
+                    continue
+                mine = [n for n in cs if n in names]
+                if mine:
+                    kept.append({**c_, "cases": mine})
+            h["goal"]["clearances"] = kept
+            if not kept:
+                h["goal"].pop("clearances")
         studies[side] = h
 
     from .schema import lint

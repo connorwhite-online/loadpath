@@ -626,6 +626,12 @@ def bearing_pad(socket, d, gap: float, thickness: float, within=None, avoid=(), 
     F[[0, -1], :, :] = F[:, [0, -1], :] = F[:, :, [0, -1]] = step
     if F.min() >= 0:
         return None
+    # a box socket's faces land on grid nodes: values of exactly 0 there put
+    # several surface vertices on one node, their triangles have no area,
+    # and an STL reader drops them and opens holes (a 160 mm handheld's
+    # socket face was 174 open edges once saved, and its half's run refused
+    # it). Nudge them off the level by a hundredth of a cell.
+    F = np.where(np.abs(F) < 0.01 * step, 0.01 * step, F)
     vt, fc, _, _ = skm.marching_cubes(F, 0.0, spacing=(step, step, step))
     m = trimesh.Trimesh(vt + lo, fc[:, ::-1], process=True)
     if m.volume < 0:

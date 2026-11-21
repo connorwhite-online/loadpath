@@ -94,6 +94,12 @@ def test_measure_and_pad():
     assert up["by"] == "lid" and abs(up["parts"]["lid"]["gap"] - 0.3) < 0.03 and not up["ok"], up
     pad = bearing_pad(sock, [0, -1, 0], 0.0, 1.0, step=0.1)
     assert pad is not None and abs(abs(pad.volume) - 9.0 * 3.3 * 1.0) < 3.0, abs(pad.volume)
+    # closed as an STL reader sees it: the socket's faces sit on grid nodes,
+    # and zero-area triangles there were dropped on load, opening holes
+    import io
+    import trimesh
+    buf = io.BytesIO(pad.export(file_type="stl"))
+    assert trimesh.load(buf, file_type="stl").is_watertight
 
 
 def _product():
