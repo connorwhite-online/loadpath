@@ -2035,11 +2035,19 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
 
     def solve(moduli, rhs):
         if bc.seats:
-            # supports that only push (pushseat.py): their forces are solved with the cases
+            # supports that only push (pushseat.py): their forces are solved with the cases,
+            # on springs that hold the seat for the solves and are taken out again
+            from dataclasses import replace
+            from types import SimpleNamespace
+
             from . import pushseat
 
-            stiff, us, lam = pushseat.solve(lambda r: _solve_grid(study, g, study.elastic(mat), moduli, r), rhs,
-                                         bc.seats, hm.node_xyz, hm.n_dof)
+            ps = pushseat.patches(bc.seats, hm.node_xyz, hm.n_dof)
+            ks, held = pushseat.hold(ps, hm.node_xyz, g.pitch)
+            sprung = held if bc.springs is None else (bc.springs + held).tocsr()
+            gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=sprung)})
+            stiff, us, lam = pushseat.solve(lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r), rhs,
+                                            ps, mat.E * ks)
             seat_forces[:] = lam
             return stiff, us
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)

@@ -126,6 +126,16 @@ class _Analysis:
 
     def __init__(self, domain: Domain, nu: float, rtol: float):
         self.domain = domain
+        # what holds the part softly in every solve: the pins' springs and, with seats
+        # (supports[].push), the springs their contact is solved on (pushseat.hold)
+        self._springs = domain.springs
+        if getattr(domain, "seats", None):
+            from . import pushseat
+
+            ps = pushseat.patches(domain.seats, domain.mesh.node_xyz, domain.mesh.n_dof)
+            ks, held = pushseat.hold(ps, domain.mesh.node_xyz, domain.mesh.pitch)
+            self._seat = {"n": 0, "ps": ps, "ks": ks, "ws": None, "lam": {}, "mu": {}}
+            self._springs = held if domain.springs is None else (domain.springs + held).tocsr()
         self.nu = nu
         self.rtol = rtol
         mesh = domain.mesh
@@ -155,7 +165,7 @@ class _Analysis:
             from .mg import GridElasticity
 
             d = self.domain
-            self._mg = GridElasticity(d.mesh, self.nu, d.fixed, springs=d.springs, rtol=self.rtol, maxiter=2000)
+            self._mg = GridElasticity(d.mesh, self.nu, d.fixed, springs=self._springs, rtol=self.rtol, maxiter=2000)
         return self._mg
 
     def _live_nodes(self, alive):
@@ -300,51 +310,43 @@ class _Analysis:
 
     def _solve_seated(self, e, xp, us, rtol, loads):
         """The cases with the domain's seats pushing (pushseat.py). The
-        seats' forces are loads here, so every answer is in equilibrium with
-        them. Their compliance is read with the unit pushes every SEAT_EVERY
-        solves (the design moves a little between two) and the forces are
-        corrected against it in between: one more solve of a case only when
-        its forces moved."""
+        seats' pushes are loads here (on the springs that hold the seats for
+        the solves), so every answer is in equilibrium with them. Their
+        compliance is read with the unit pushes every SEAT_EVERY solves (the
+        design moves a little between two) and the pushes are corrected
+        against it in between: one more solve of a case only when they
+        moved. A design the seat cannot hold yet is the optimizer's to mend,
+        so nothing raises here."""
         from . import pushseat
 
         d = self.domain
         loads = list(loads if loads is not None else d.loads)
-        st = self.__dict__.setdefault("_seat", {"n": 0, "ps": None, "ws": None, "lam": {}})
-        if st["ps"] is None:
-            st["ps"] = pushseat.patches(d.seats, d.mesh.node_xyz, d.mesh.n_dof)
-        ps = st["ps"]
+        st = self._seat
+        ps, ks = st["ps"], st["ks"]
         pm = np.array(ps)
-        lam0 = [st["lam"].get(i, np.zeros(len(ps))) if len(st["lam"].get(i, ())) == len(ps) else np.zeros(len(ps))
-                for i in range(len(loads))]
+        mu0 = [st["mu"].get(i, np.zeros(len(ps))) for i in range(len(loads))]
         fresh = st["ws"] is None or st["n"] % self.SEAT_EVERY == 0
         st["n"] += 1
-        pushed = [f + lam @ pm for f, lam in zip(loads, lam0)]
+        pushed = [f + mu @ pm for f, mu in zip(loads, mu0)]
         if fresh:
             out = self._solve_safe(e, xp, list(us) + (st["ws"] or [None] * len(ps)), rtol, pushed + ps)
             us, st["ws"] = list(out[:len(loads)]), list(out[len(loads):])
         else:
             us = list(self._solve_safe(e, xp, list(us), rtol, pushed))
-        # each case's forces against the compliance in hand: u = (u - W lam0) + W lam
+        # each case's pushes against the compliance in hand: u = (u - W mu0) + W mu
         wm = np.array(st["ws"])
-        base = [u - lam @ wm for u, lam in zip(us, lam0)]
-        done = pushseat.resolve(base, st["ws"], ps)
+        base = [u - mu @ wm for u, mu in zip(us, mu0)]
+        done = pushseat.resolve(base, st["ws"], ps, ks, strict=False)
         again = []
-        for i, (u, lam) in enumerate(done):
-            st["lam"][i] = lam
+        for i, (u, lam, mu) in enumerate(done):
+            st["lam"][i], st["mu"][i] = lam, mu
             if fresh:
                 us[i] = u          # exact: the compliance is this design's
-            elif np.abs(lam - lam0[i]).sum() > 0.02 * max(np.abs(lam).sum(), 1e-12):
+            elif np.abs(mu - mu0[i]).sum() > 0.02 * max(np.abs(mu).sum(), 1e-12):
                 again.append(i)
         if again:
-            sub = self._solve_safe(e, xp, [done[i][0] for i in again], rtol,
-                                   [loads[i] + st["lam"][i] @ pm for i in again]) \
-                if len(again) == len(loads) else None
-            if sub is None:
-                full = self._solve_safe(e, xp, [done[i][0] if i in again else us[i] for i in range(len(loads))],
-                                        rtol, [f + st["lam"][i] @ pm for i, f in enumerate(loads)])
-                us = list(full)
-            else:
-                us = list(sub)
+            us = list(self._solve_safe(e, xp, [done[i][0] if i in again else us[i] for i in range(len(loads))],
+                                       rtol, [f + st["mu"][i] @ pm for i, f in enumerate(loads)]))
         return us
 
     def _solve(self, e, xp, us, rtol=None, loads=None):
@@ -390,8 +392,8 @@ class _Analysis:
                 keep, fd, stiff, (holder, smesh) = sub
                 solver = self._solver(holder, smesh, mode, rtol)
                 k = stiff.assemble(e[keep])
-                if d.springs is not None:
-                    k = (k + d.springs[fd][:, fd]).tocsr()
+                if self._springs is not None:
+                    k = (k + self._springs[fd][:, fd]).tocsr()
                 try:
                     subs = solver.solve_many(k, [f[fd] for f in loads],
                                              [u[fd] if u is not None else None for u in us])
@@ -418,8 +420,8 @@ class _Analysis:
                 mode = "amg"
         solver = self._solver(holder, mesh, mode, rtol)
         k = stiff.assemble(e)
-        if d.springs is not None:
-            k = (k + d.springs).tocsr()
+        if self._springs is not None:
+            k = (k + self._springs).tocsr()
         out = solver.solve_many(k, list(loads), list(us))
         self.last_iters, self.last_cells = solver.last_iters, mesh.n_elem
         self._last = (k, None, solver)
@@ -491,8 +493,8 @@ class _Analysis:
             mode = "direct" if isinstance(solver, direct.DirectSolver) and self._direct_ok \
                 and mesh.n_dof <= direct.large_dofs() else "amg"
             k = stiff.assemble(self._last_e)
-            if self.domain.springs is not None:
-                k = (k + self.domain.springs).tocsr()
+            if self._springs is not None:
+                k = (k + self._springs).tocsr()
             try:
                 solver = self._solver(holder, mesh, mode, self.rtol)
                 out = solver.solve_many(k, list(rhss), x0s)
