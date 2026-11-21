@@ -1908,8 +1908,8 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
     from .domain import wall_pitch
     wp = wall_pitch(cst)
     if wp is not None:
-        # the constrained method reads a pinned wall on whole cells: two
-        # through it (the search's grid models it as cut cells, thinwall.py)
+        # a pinned wall the constrained method's own grid is too coarse for
+        # (domain.wall_pitch: under a cell as cut cells, thinwall.py)
         cst = dataclasses.replace(cst, pitch=wp)
     spec = _Speculative(cst) if _Speculative.wanted(study, st) else None
     try:
@@ -2349,7 +2349,7 @@ def _constrained_fit(study: Study) -> dict | None:
     from .domain import build_domain, cell_cap, choose_pitch
 
     p = choose_pitch(study)
-    n = build_domain(study, p).n_elem
+    n = build_domain(study, p, cut_walls=True).n_elem
 
     def cells_in(budget):
         return min(n, (budget / _CONSTRAINED_MEMORY - _RUN_BASE_BYTES) / _RUN_CELL_BYTES)

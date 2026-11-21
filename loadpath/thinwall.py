@@ -42,11 +42,13 @@ How the wall enters the optimizer (the way bought stock does, stock.py):
 The delivered part takes the wall exactly (reconstruct unions preserved
 shapes), and the verification reads it on its own cut cells as before.
 
-Not for the constrained method (its stress limit is read per cell, and a
-wall cell's stress is the wall's, not the grid's: it keeps the refined
-grid), pressure or thermal studies (whole cells, verify.use_cut_cells), or
-studies with bought stock (the two would share `stock_scale`).
-LOADPATH_WALL_MODEL=cells restores the refined grid everywhere.
+The constrained method keeps the refined whole-cell grid unless
+LOADPATH_WALL_CONSTRAINED is set (CONSTRAINED, below). A pressure on a
+keep-out acts on the nodes lining it, the wall cells' among them. A bought
+member's cell stays the member's. Not for studies with a thermal block:
+its expansion load and derating are assembled per whole cell, and the
+wall's operator would neither expand nor soften. LOADPATH_WALL_MODEL=cells
+restores the refined grid everywhere.
 """
 from __future__ import annotations
 
@@ -71,6 +73,15 @@ MIN_CELLS = 1.0
 ALPHA = 1e-4
 
 
+# The constrained method on cut walls (constrained.py reads a wall cell's
+# stress over its material). Off: on a ribbed lid at 1.4 mm cells it
+# delivered nothing passing (tet safety factor 0.6-1.2 for a limit of 2)
+# where the search on the same walls passed at 2.36: a wall cell's stress
+# read at its quarter points with the whole-cell element misses the wall's
+# own bending. LOADPATH_WALL_CONSTRAINED=1 turns it on to work on it.
+CONSTRAINED = os.environ.get("LOADPATH_WALL_CONSTRAINED", "").strip() in ("1", "true", "yes", "on")
+
+
 def model() -> str:
     """LOADPATH_WALL_MODEL: "cut" (default) or "cells" (refine the grid to
     two cells through the thinnest wall, as before)."""
@@ -85,12 +96,11 @@ def applies(study) -> bool:
     cells on its own grid (instead of refining the grid to them)."""
     if model() != "cut" or not study.shells:
         return False
-    if study.goal.method == "constrained":
+    if study.goal.method == "constrained" and not CONSTRAINED:
         return False
-    if getattr(study, "stock", None):
-        return False
-    from .verify import use_cut_cells
-    return bool(use_cut_cells(study))
+    # a thermal block's expansion load and derating are assembled per whole
+    # cell (thermal.py); the wall's own operator would neither expand nor soften
+    return getattr(study, "thermal", None) is None
 
 
 @dataclass

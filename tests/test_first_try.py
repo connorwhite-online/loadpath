@@ -236,14 +236,13 @@ def _thin_warnings(r):
 
 
 def test_a_pinned_wall_sets_the_cell_when_the_study_did_not():
-    """On whole cells (LOADPATH_WALL_MODEL=cells, and the constrained
-    method) a lid's 1.5 mm skin at a 20k budget sets the grid two cells
-    across the skin and check has nothing to say about it; an explicit
+    """On whole cells (LOADPATH_WALL_MODEL=cells) a lid's 1.5 mm skin at
+    a 20k budget sets the grid two cells across the skin and check has nothing to say about it; an explicit
     pitch is left alone, and a wall too thin for four times the budget
     still warns."""
-    from loadpath.domain import build_domain, wall_pitch
-
     import os
+
+    from loadpath.domain import build_domain, wall_pitch
 
     lid = _lid
     os.environ["LOADPATH_WALL_MODEL"] = "cells"
@@ -251,8 +250,6 @@ def test_a_pinned_wall_sets_the_cell_when_the_study_did_not():
         _whole_cell_walls(lid, build_domain, wall_pitch)
     finally:
         del os.environ["LOADPATH_WALL_MODEL"]
-    constrained = dict(lid(1.5), goal={"safetyFactor": 2, "method": "constrained"})
-    assert wall_pitch(study_from_dict(constrained)) <= 0.75 + 1e-9
 
 
 def _whole_cell_walls(lid, build_domain, wall_pitch):
@@ -285,6 +282,8 @@ def test_a_thin_wall_is_cut_cells_on_the_studys_own_grid():
     assert not _thin_warnings(check_study(_lid(1.5)))
     assert not _thin_warnings(check_study(_lid(1.5, pitch=1.2)))
     assert build_domain(st).walls is None          # the other solves keep whole cells
+    constrained = study_from_dict(dict(_lid(1.5), goal={"safetyFactor": 2, "method": "constrained"}))
+    assert wall_pitch(constrained) <= 0.75 + 1e-9                # whole cells, two through (thinwall.CONSTRAINED)
     st6 = study_from_dict(_lid(0.6))
     assert wall_pitch(st6) < 0.7                    # a cell through it, within 4x the budget
     assert _thin_warnings(check_study(_lid(0.6)))   # ... which still leaves it under a cell

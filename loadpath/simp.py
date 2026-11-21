@@ -520,6 +520,15 @@ class _Analysis:
         return out
 
     def strain_energy(self, u):
+        """Per cell u_e K_e u_e at unit modulus, with each cell's share of
+        its own element (mesh.stock_scale: a thin wall's or a bought
+        member's cell, whose printed part is the rest of the cell): the
+        sensitivity of what the design adds there."""
+        w = self._strain_energy(u)
+        scale = getattr(self.domain.mesh, "stock_scale", None)
+        return w if scale is None else w * scale
+
+    def _strain_energy(self, u):
         if self._mg is not None:
             return self._mg.strain_energy(u)
         from . import femops

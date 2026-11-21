@@ -1160,6 +1160,13 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
             # grid, whatever clearance the keep-out draws
             fg = ndimage.binary_dilation((free & stock_cell).reshape(dims), structure=_CONN26).ravel()
             design &= ~fg
+    if wall is not None and stock_cell is not None:
+        # a bought member's cell is the member's (stock.py), wall or not
+        keep_w = ~stock_cell[wall_cells.idx]
+        wall_cells = dataclasses.replace(wall_cells, idx=wall_cells.idx[keep_w], ind=wall_cells.ind[keep_w],
+                                         phi=wall_cells.phi[keep_w])
+        wall &= ~stock_cell
+        wall_open &= ~stock_cell
     active = preserve | design
     if stock_cell is not None:
         active |= stock_cell
@@ -1351,8 +1358,10 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
         # the wall's share of each cell is the wall's: the grid's own element
         # carries the rest (scaled, as a bought member's cell is), the wall's
         # weight is its own (thinwall.py)
-        mesh.stock_scale = np.where(wall_el, np.maximum(1.0 - phi, 1e-4), 1.0)
-        mesh.stock_density = phi
+        prev = getattr(mesh, "stock_scale", None)       # bought members' cells (stock.py), none of them walls
+        mesh.stock_scale = np.where(wall_el, np.maximum(1.0 - phi, 1e-4), 1.0 if prev is None else prev)
+        prev = getattr(mesh, "stock_density", None)
+        mesh.stock_density = phi if prev is None else prev + phi
         mesh.wall_share = phi
         sub = dataclasses.replace(wall_cells, ind=wall_cells.ind[on], phi=wall_cells.phi[on])
         wall_k = _wall_operator(sub, mesh, el[on], study.elastic(design=True), bc.fixed)

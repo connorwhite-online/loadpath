@@ -328,6 +328,22 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
         def printed_grad(am, g):
             return g
 
+    # thin walls as cut cells (thinwall.py): a wall cell's material is the
+    # wall's share phi plus what the design fills of the rest, at (1 - phi)
+    # of a cell's volume; cells a keep-out touches are air
+    walls = getattr(domain, "walls", None)
+    share = getattr(mesh, "wall_share", None) if walls is not None else None
+    wvoid = getattr(domain, "wall_void", None)
+    if wvoid is not None and not wvoid.any():
+        wvoid = None
+    wvol = np.where(design, 1.0 if share is None else 1.0 - share, 0.0)
+
+    def material(xv):
+        """(material share per cell, its derivative in the design's density)"""
+        if share is None:
+            return xv, 1.0
+        return share + (1.0 - share) * xv, 1.0 - share
+
     free = np.flatnonzero(design)
     x = np.full(n, opts.volume_fraction)
     if opts.x0 is not None:
@@ -392,9 +408,14 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
         dpb[pres] = 0.0
         dpe = _dproject(xt, beta, eta_e)
         dpe[pres] = 0.0
+        if wvoid is not None:
+            xp[wvoid] = xe[wvoid] = dpb[wvoid] = dpe[wvoid] = 0.0
 
         e = E_MIN + xe ** PENALTY * (1 - E_MIN)
         de = PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN)
+        # each cell's share of its own element (a thin wall's or a bought member's cell, mesh.stock_scale)
+        escale = getattr(mesh, "stock_scale", None)
+        escale = np.ones(n) if escale is None else escale
         us = fe.solve(e, xe, us, loads=domain.loads)
 
         def to_x(g_xe):
@@ -414,11 +435,12 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
             adj_rhs, partials = [], []
             bond_limit = limits.stress * bond_ratio if bond is not None else None
             nc = max(len(avg.nodes), 1) * (2 if bond is not None else 1)
-            v = np.repeat(avg.w0 * np.maximum(xe, 0.0), avg.ns)              # sample weights: material
+            mat, dmat = material(np.maximum(xe, 0.0))
+            v = np.repeat(avg.w0 * mat, avg.ns)                             # sample weights: material
             dn = avg.ball @ v
             on = dn > 0
             dinv = np.where(on, 1.0 / np.where(on, dn, 1.0), 0.0)
-            xs_ = np.repeat(xe, avg.ns)
+            xs_ = np.repeat(mat, avg.ns)
             rho_n = (avg.ball @ (v * xs_)) * dinv                         # density round the node
             for c in stress_cases:
                 moved = np.flatnonzero(us[c].reshape(-1, 3).any(axis=1)[mesh.enode].any(axis=1))
@@ -458,7 +480,7 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
                 t_sig = np.einsum("ij,ij->i", ss, hs_) \
                     - avg.ballT @ (np.einsum("ij,ij->i", gsig, sig) * dinv)
                 t_rho = 2.0 * xs_ * (avg.ballT @ (grho * dinv)) - avg.ballT @ (grho * rho_n * dinv)
-                g_xe = avg.w0 * avg.cell_sum(t_sig + t_rho)
+                g_xe = avg.w0 * avg.cell_sum(t_sig + t_rho) * dmat
                 h_s = h_s.reshape(n, avg.ns, 6)
                 rhs = np.zeros(mesh.n_dof)
                 for k, cbk in enumerate(avg.cbs):
@@ -469,7 +491,7 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
             lams = fe.resolve(adj_rhs, [l for l in lams] if lams[0] is not None and len(lams) == len(adj_rhs) else None)
             for (c, g, g_xe, smax, moved), lam in zip(partials, lams):
                 edof = mesh.edof[moved]
-                g_xe[moved] -= de[moved] * np.einsum("ij,ij->i", lam[edof] @ fe.ke, us[c][edof])
+                g_xe[moved] -= de[moved] * escale[moved] * np.einsum("ij,ij->i", lam[edof] @ fe.ke, us[c][edof])
                 cons.append(g - 1.0)
                 grads.append(to_x(g_xe))
                 record[f"stress.{domain.case_names[c]}"] = smax * limits.stress
@@ -487,7 +509,9 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
                 act = moved[counted[moved]]
                 edof = mesh.edof[act]
                 ue = us[c][edof]                             # (cells, 24)
-                xa = xe[act]
+                mat_a, dmat_a = material(xe[act]) if share is None else (
+                    share[act] + (1.0 - share[act]) * xe[act], 1.0 - share[act])
+                xa = mat_a
                 nc = (max(int(counted.sum()), 1) * len(cbs) if pt_counted is None else max(int(pt_counted.sum()), 1)) \
                     * (2 if bond is not None else 1)
                 bond_limit = limits.stress * bond_ratio if bond is not None else None
@@ -522,7 +546,7 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
                 for cbk, sv, vm, lim, srel in parts:
                     dg_ds = kappa[c] * (srel / max(pm, 1e-30)) ** (_P - 1) / nc
                     # explicit: d s / d xe at fixed u
-                    g_xe[act] += dg_ds * (_Q * np.maximum(xa, 1e-12) ** (_Q - 1) * vm / lim)
+                    g_xe[act] += dg_ds * (_Q * np.maximum(xa, 1e-12) ** (_Q - 1) * vm / lim) * dmat_a
                     # adjoint right-hand side: dg/du
                     coef = dg_ds * (xa ** _Q / (vm * lim))                                  # (cells,)
                     dvm_du = sv @ cbk                                                       # d(vm^2)/2du
@@ -534,7 +558,7 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
             lams = fe.resolve(adj_rhs, [l for l in lams] if lams[0] is not None and len(lams) == len(adj_rhs) else None)
             for (c, g, g_xe, smax, moved), lam in zip(partials, lams):
                 edof = mesh.edof[moved]
-                g_xe[moved] -= de[moved] * np.einsum("ij,ij->i", lam[edof] @ fe.ke, us[c][edof])
+                g_xe[moved] -= de[moved] * escale[moved] * np.einsum("ij,ij->i", lam[edof] @ fe.ke, us[c][edof])
                 cons.append(g - 1.0)
                 grads.append(to_x(g_xe))
                 record[f"stress.{domain.case_names[c]}"] = smax * limits.stress
@@ -627,8 +651,12 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
                 if nm_ in got_m:
                     record[f"vibration.{nm_}"] = v
 
-        f0 = 10.0 * float(xp[design].mean())
-        g0 = 10.0 * design / design.sum()
+        if share is None:
+            f0 = 10.0 * float(xp[design].mean())
+            g0 = 10.0 * design / design.sum()
+        else:
+            f0 = 10.0 * float(xp @ wvol) / wvol.sum()
+            g0 = 10.0 * wvol / wvol.sum()
         if blk is not None:
             # aero.rotors: the mass minimized is the part's plus what its drag
             # in the rotors' streams weighs on a hovering craft (aero.BlockageCost)
