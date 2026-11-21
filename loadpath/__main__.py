@@ -792,7 +792,7 @@ def main(argv=None):
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
     s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field",
                                                                 "handoff", "split", "enclosure", "wires", "antenna",
-                                                                "stack", "bundle"])
+                                                                "stack", "freeform", "bundle"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -951,6 +951,20 @@ def main(argv=None):
                                                     "the process accuracy, or twice the input's noise)")
     su.add_argument("--accuracy", type=float, help="the process's +- mm (default FDM 0.3)")
     su.add_argument("--faces", type=int, help="cage faces, instead of growing the cage to the tolerance")
+    ff = sub.add_parser("freeform", help="curve-driven surfaces from a document (`loadpath schema freeform`): lofts, "
+                                         "patches and flats joined by cuts, fillets, blends, caps and edits, "
+                                         "curvature-continuous by default; writes STEP, STL, a report of every join "
+                                         "and a zebra close-up of each (docs/FREEFORM.md)")
+    ff.add_argument("spec")
+    ff.add_argument("--out", default="loadpath-freeform")
+    jn = sub.add_parser("joins", help="every join of an exterior graded (crease, tangent, curvature) with a zebra "
+                                      "close-up of each: a STEP's shared edges, or a mesh's creases and rounds. "
+                                      "Reads only")
+    jn.add_argument("source")
+    jn.add_argument("--out", help="the sheet (default <source>-joins.png)")
+    jn.add_argument("--limit", type=int, default=12, help="close-ups on the sheet")
+    jn.add_argument("--min-radius", type=float, help="mesh: mm, a round is tighter than this (default the part's "
+                                                     "smallest extent)")
     sd = sub.add_parser("sdf", help="a part (STL/STEP/GLB) or an SDF as a signed distance grid (.npz: distance, "
                                     "origin, pitch; mm, negative inside) for SDF tools; loads back as a study "
                                     "shape {type: sdf}")
@@ -1393,6 +1407,10 @@ def main(argv=None):
         return _surface(args)
     if args.cmd == "sdf":
         return _sdf(args)
+    if args.cmd == "freeform":
+        return _freeform(args)
+    if args.cmd == "joins":
+        return _joins(args)
     if args.cmd == "split":
         return _split(args)
     if args.cmd == "shroud":
@@ -2428,6 +2446,28 @@ def _surface(args):
         return 2
     print(json.dumps(rep, indent=1, default=float))
     return 0 if rep["ok"] else 1
+
+
+def _freeform(args):
+    from .freeform import build
+    try:
+        rep = build(args.spec, os.path.abspath(args.out))
+    except (ValueError, RuntimeError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps(rep, indent=1, default=float))
+    return 0 if rep["ok"] else 1
+
+
+def _joins(args):
+    from .freeform import audit
+    try:
+        rep = audit(args.source, args.out, args.limit, args.min_radius)
+    except (ValueError, RuntimeError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps(rep, indent=1, default=float))
+    return 0
 
 
 def _sdf(args):

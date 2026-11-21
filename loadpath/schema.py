@@ -3825,7 +3825,94 @@ _ENC["placement"]["properties"]["antenna"] = {
     "additionalProperties": False}
 
 
-SCHEMAS = {"stack": STACK_SCHEMA, "study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
+# a freeform surfacing document (freeform.py; docs/FREEFORM.md)
+_FF_RING = {"type": "object", "properties": {
+    "centre": _VEC3, "radii": {"anyOf": [_POS, {"type": "array", "items": _POS, "minItems": 2, "maxItems": 2}],
+                               "description": "mm: r, or [along x, along y]"},
+    "x": {**_VEC3, "description": "the ring's first axis (default [1, 0, 0])"},
+    "y": {**_VEC3, "description": "its second axis (default [0, 1, 0])"},
+    "exponent": {"type": "number", "minimum": 2, "description": "2 an ellipse (default), more a squarer superellipse"},
+    "start": {"type": "number", "description": "radians: where round the ring its first point is (default 0, on x)"}},
+    "required": ["centre", "radii"], "additionalProperties": False,
+    "description": "a closed curve drawn as a ring"}
+_FF_POINTS = {"type": "array", "items": _VEC3, "minItems": 3, "description": "points round a closed curve, mm"}
+_FF_LOOP = {"anyOf": [_FF_RING, _FF_POINTS]}
+_FF_CONT = {"enum": ["G0", "G1", "G2"],
+            "description": "G0 touching, G1 tangent, G2 curvature carried across (default: a reflection crosses "
+                           "the join without a bend)"}
+_FF_SIDE = {"type": "object", "properties": {
+    "surface": {"type": "string"},
+    "edge": {**_VEC3, "description": "a point near the open edge meant (an end of a loft, an opening cut earlier, "
+                                     "the edge a fillet left): the nearest open edge is taken"},
+    "continuity": _FF_CONT}, "required": ["surface", "edge"], "additionalProperties": False}
+_FF_PAIR = {"type": "array", "minItems": 2, "maxItems": 2}
+FREEFORM_SCHEMA = {
+    "$schema": _DIALECT,
+    "$id": "https://github.com/connorwhite-online/loadpath/schema/freeform.schema.json",
+    "title": "loadpath freeform surfaces",
+    "description": "Curve-driven surfaces and what joins them: lofts, patches and flats, then cuts, fillets, blends, "
+                   "caps and edits, each join curvature-continuous unless asked otherwise and every one measured "
+                   "(freeform.py, docs/FREEFORM.md). Units mm.",
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "Names the output files."},
+        "description": {"type": "string"},
+        "surfaces": {"type": "object", "minProperties": 1, "additionalProperties": {
+            "type": "object", "properties": {
+                "loft": {"type": "array", "minItems": 2, "items": _FF_LOOP,
+                         "description": "sections in order; the surface passes through each"},
+                "closed": {"type": "boolean", "description": "a loft's sections are closed loops (default true: a tube)"},
+                "points": {"type": "array", "minItems": 2, "items": {"type": "array", "minItems": 2, "items": _VEC3},
+                           "description": "a patch through a grid of points: rows along u, each row along v"},
+                "flat": {"type": "object", "properties": {
+                    "centre": _VEC3, "x": _VEC3, "y": _VEC3,
+                    "size": {"type": "array", "items": _POS, "minItems": 2, "maxItems": 2}},
+                    "required": ["centre", "x", "y", "size"], "additionalProperties": False,
+                    "description": "a flat rectangle (a seat, a window, a plateau to blend up to)"},
+                "poles": {"type": "array", "items": {"type": "integer", "minimum": 4}, "minItems": 2, "maxItems": 2,
+                          "description": "control points [round or along u, along v]: more follows the sections closer"},
+                "fair": {"type": "number", "minimum": 0,
+                         "description": "weight of the fairness energy against the points (default 1e-6)"}},
+            "x-requireOne": [["loft"], ["points"], ["flat"]], "additionalProperties": False},
+            "description": "name -> surface. Steps refer to these names and add their own."},
+        "steps": {"type": "array", "items": {"type": "object", "properties": {
+            "op": {"enum": ["cut", "fillet", "blend", "cap", "edit"],
+                   "description": "cut: an opening along `loop` in `surface`. fillet: two crossing `surfaces` each "
+                                  "cut back `radius` from the other and blended. blend: one surface across the gap "
+                                  "`from` one open edge `to` another. cap: close the loop of open `edges` with one "
+                                  "patch. edit: move `surface` by handles (`moves`), as fair as it was."},
+            "surface": {"type": "string"},
+            "surfaces": {**_FF_PAIR, "items": {"type": "string"}},
+            "loop": _FF_LOOP,
+            "keep": {"description": "cut: 'outside' (the surface with the opening, default), 'inside' (the piece cut "
+                                    "out) or 'both' (the piece is named by `as`). fillet: a point near the part of "
+                                    "each surface to keep, [a, b], null for its larger side."},
+            "radius": {"anyOf": [_POS, {**_FF_PAIR, "items": _POS}],
+                       "description": "mm each surface is cut back from the other (one, or one for each)"},
+            "from": _FF_SIDE, "to": _FF_SIDE,
+            "edges": {"type": "array", "minItems": 1, "items": _FF_SIDE,
+                      "description": "the open edges that close one loop, each on its surface"},
+            "continuity": {"anyOf": [_FF_CONT, {**_FF_PAIR, "items": _FF_CONT}],
+                           "description": "default G2; a blend takes one for each side"},
+            "lead": {"anyOf": [_POS, {**_FF_PAIR, "items": _POS}],
+                     "description": "how far each surface's shape carries into a blend, relative to the length "
+                                    "that changes curvature least (default 1): more tightens the middle"},
+            "moves": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+                "at": {**_VEC3, "description": "a point on (or near) the surface"},
+                "by": {**_VEC3, "description": "mm it moves"}}, "required": ["at", "by"], "additionalProperties": False}},
+            "hold": {"type": "array", "items": _VEC3, "description": "points of the surface that stay"},
+            "freeze": {"type": "integer", "minimum": 0,
+                       "description": "pole rows along each open side left exactly as they are (default 2: position "
+                                      "and tangent; 3 keeps curvature too)"},
+            "energy": {"enum": ["bending", "jerk"]},
+            "as": {"type": "string", "description": "the name of what the step makes (a blend, a cap, a cut-out piece)"}},
+            "required": ["op"], "additionalProperties": False}},
+        "closed": {"type": "boolean", "description": "the result must sew into a closed solid (ok is false otherwise)"}},
+    "required": ["surfaces"], "additionalProperties": False,
+}
+
+
+SCHEMAS = {"freeform": FREEFORM_SCHEMA, "stack": STACK_SCHEMA, "study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
            "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA, "split": SPLIT_SCHEMA,
            "enclosure": ENCLOSURE_SCHEMA, "wires": WIRES_SCHEMA, "antenna": ANTENNA_SCHEMA,
            "bundle": BUNDLE_SCHEMA}
@@ -3833,7 +3920,7 @@ SCHEMAS = {"stack": STACK_SCHEMA, "study": STUDY_SCHEMA, "heatExchanger": HEAT_E
 
 def schema(kind: str = "study") -> dict:
     """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff', 'split', 'enclosure',
-    'wires', 'antenna', 'stack' or 'bundle' (a results bundle's manifest.json)."""
+    'wires', 'antenna', 'stack', 'freeform' or 'bundle' (a results bundle's manifest.json)."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])

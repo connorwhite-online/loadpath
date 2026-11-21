@@ -826,6 +826,25 @@ def exterior(path: str, out_dir: str | None = None, base_dir: str | None = None,
 _AXES = {"+x": (1, 0, 0), "-x": (-1, 0, 0), "+y": (0, 1, 0), "-y": (0, -1, 0), "+z": (0, 0, 1), "-z": (0, 0, -1)}
 
 
+def freeform(spec, out_dir: str | None = None, base_dir: str | None = None) -> dict:
+    """Build a freeform surfacing document (freeform.py)."""
+    from .freeform import build
+    if isinstance(spec, str) and not spec.lstrip().startswith("{"):
+        spec = _resolve(spec, base_dir)
+        base_dir = base_dir or os.path.dirname(spec)
+    elif isinstance(spec, str):
+        spec = json.loads(spec)
+    return build(spec, out_dir or "freeform", base_dir)
+
+
+def check_joins(path: str, out: str | None = None, base_dir: str | None = None, limit: int = 12,
+                min_radius: float | None = None) -> dict:
+    """Every join of a STEP or mesh exterior, graded (freeform.audit)."""
+    from .freeform import audit
+    full = _resolve(path, base_dir)
+    return audit(full, None if out is None else os.path.join(base_dir or os.getcwd(), out), limit, min_radius)
+
+
 def _direction(build):
     if build is None:
         return (0.0, 0.0, 1.0)
@@ -1314,6 +1333,8 @@ TOOLS = {
     "loadpath_import_cad": ("Import a CAD part as a study", "write"),
     "loadpath_scan": ("Design round a scanned object", "write"),
     "loadpath_exterior": ("Clean an exterior into a skin", "write"),
+    "loadpath_freeform": ("Build freeform surfaces from a document", "write"),
+    "loadpath_check_joins": ("Grade every join of an exterior", "write"),
     "loadpath_kicad": ("Read a KiCad board", "read"),
     "loadpath_enclosure": ("Design a product inside its exterior", "job"),
     "loadpath_build": ("Build a part from a spec in one run", "job"),
@@ -1406,7 +1427,8 @@ def build_server():
     def loadpath_schema(kind: str = "study") -> dict:
         """The JSON Schema (2020-12) for a document a tool takes: 'study' (loadpath_check, loadpath_start
         and every study tool), 'heatExchanger', 'lattice' (options), 'field' (a field graph), 'handoff',
-        'split', 'enclosure', 'wires', 'antenna', 'stack', or 'bundle' (a results bundle's manifest)."""
+        'split', 'enclosure', 'wires', 'antenna', 'stack', 'freeform' (loadpath_freeform), or 'bundle' (a
+        results bundle's manifest)."""
         return _schema(kind)
 
     @tool
@@ -1783,6 +1805,36 @@ def build_server():
         shock, which bar; a size pick; one caliper reading when the fit needs it): ask those, once."""
         return scan(path, out_dir, base_dir, device, units, scale, up, crop, keep, reference, known, support,
                     loads, material, process, grow, confidence, fit, brief, reference_objects, clamp, mu)
+
+    @tool
+    def loadpath_freeform(spec: dict | str, out_dir: str | None = None, base_dir: str | None = None) -> dict:
+        """Curve-driven surfaces from a document (loadpath_schema('freeform')), for a form no primitive
+        draws: `surfaces` (a loft through sections, a patch through a grid of points, a flat) and `steps`,
+        each what a surfacing artist does by hand: cut an opening along a loop, fillet two crossing
+        surfaces (each cut back and blended, leaving both with their own curvature, unlike an arc), blend
+        across a gap between two open edges, cap a loop of open edges with one patch, edit a surface by
+        handles and keep it fair. Joins are curvature-continuous (G2) unless a step asks for G1 or G0. An
+        open edge is named by a point near it, never by number. spec: the object, its JSON text or a path.
+        Writes out_dir/<name>.step, .stl, .json and <name>-joins.png (a zebra close-up of every join) and
+        returns each step's measured gap (mm), tangent angle (degrees) and curvature jump (1/mm), every
+        join graded crease | tangent | curvature, and closed (the faces sew into a solid). Seconds to a
+        minute."""
+        return freeform(spec, out_dir, base_dir)
+
+    @tool
+    def loadpath_check_joins(path: str, out: str | None = None, base_dir: str | None = None, limit: int = 12,
+                             min_radius: float | None = None) -> dict:
+        """How every surface of an exterior meets the next, without changing it: the check a surfacing
+        artist makes with zebra stripes. A STEP file (.step, .stp) is read face by face: each shared edge's
+        gap (mm), tangent angle (degrees) and curvature jump (1/mm), graded crease | tangent (a reflection
+        bends there) | curvature (continuous). A mesh (STL, OBJ, 3MF, GLB) has no faces, so its creases and
+        rounds are found: a round of constant radius reads tangent (curvature jumps where it starts), one
+        whose curvature grows in from its rim reads curvature, and under four facets across it is
+        unresolved (min_radius, mm: what counts as a round; default the part's smallest extent). Writes
+        one image (out, default <path>-joins.png): a zebra close-up of each of the first `limit` joins.
+        Relay creases and tangent joins on a designer's exterior to the designer; never smooth them
+        yourself. Seconds."""
+        return check_joins(path, out, base_dir, limit, min_radius)
 
     @tool
     def loadpath_exterior(path: str, out_dir: str | None = None, base_dir: str | None = None,

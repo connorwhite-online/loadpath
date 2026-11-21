@@ -85,6 +85,31 @@ f = S.sdf(solid, pitch=0.4)                       # exact signed distance, for f
   ducts) then runs unchanged on a surfaced skin, and blends between exact
   fields come out even.
 
+## From a document
+
+An agent that writes JSON, not Python, gives the same steps as a document
+(`loadpath schema freeform`; MCP `loadpath_freeform`):
+
+```
+loadpath freeform examples/freeform/pod.json --out out/pod
+```
+
+`surfaces` are named: a `loft` through sections (each a list of points, or
+a ring `{centre, radii, x, y, exponent}`), a patch through a grid of
+`points`, a `flat`. `steps` then run in order, each one of `cut` (an
+opening along a loop), `fillet` (two crossing surfaces), `blend` (across
+the gap between two open edges), `cap` (a loop of open edges closed by one
+patch) and `edit` (handles). An open edge is never numbered: it is named by
+a point near it (`{"surface": "body", "edge": [0, -10, 0]}` is the body's
+open end nearest that point), so a document survives a change of section
+count or pole count. Joins are G2 unless a step says otherwise.
+
+Out: `<name>.step`, `.stl`, `<name>-joins.png` (the close-up sheet below)
+and `<name>.json`: what each step measured (gap mm, tangent degrees,
+curvature jump 1/mm), every join graded, and `closed`. The pod document
+builds the eight-face solid of the example below in 10 s, all seven joins
+graded curvature.
+
 ## Quality
 
 ```python
@@ -119,6 +144,25 @@ triangles do not read as curvature. It flags:
 Zebra stripes are the reflection of a row of strip lights. They stay smooth
 over a G2 surface, bend sharply at a curvature break, kink at a tangent
 break and wobble over a lump.
+
+### Any exterior, read only
+
+`loadpath joins exterior.step` (MCP `loadpath_check_joins`) runs
+`join_sheet` on a file and changes nothing. A STEP is read face by face as
+above. A mesh has no faces to say where one surface ends, so
+`mesh_joins` finds its edges and rounds from the mesh itself: an edge's
+dihedral angle over the mean height of its two triangles is the curvature
+across it; edges that turn more than 40 degrees at once are creases, and
+faces tighter than the part's smallest extent gather into rounds. Each
+round is read across its width: curvature already at its full value at the
+rim is a constant radius (an arc: graded `tangent`, the curvature jumps
+where it starts), curvature that grows in from the rim is `curvature`, and
+under four facets across the mesh cannot tell (`unresolved`). Tests hold
+it to an arc and an eased round of the same corner at 8, 16 and 32 facets.
+
+What it cannot see on a mesh: a tangent-only join between two broad
+surfaces (no round between them), since both sides are below the
+threshold; that needs the STEP.
 
 ## Sketch matching
 
