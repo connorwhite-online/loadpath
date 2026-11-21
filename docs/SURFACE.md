@@ -35,47 +35,63 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
    +-0.3 mm gives 0.1 mm: it adds 5% to the printed error, sqrt(1 + 1/9)),
    or twice the input's own measured noise when that is larger (fitting
    closer would fit the noise).
-5. **Patches.** Where a face's corners all have four edges the limit
-   surface is exactly bicubic: those patches *are* the surface and meet with
-   C2 continuity. A face at a star point (3 or 5+ edges) is split once
-   toward it; the small corner piece is a quintic fitted to the exact limit
-   points and the exact limit tangent planes (Halstead masks), so the
-   patches round a star point share edges exactly and meet G1 to a fraction
-   of a degree (reported).
+5. **Patches along the cage's own lines.** Every edge line leaving a star
+   point (a vertex with 3 or 5+ edges) is drawn on until it meets another
+   star point or a line already drawn (a motorcycle graph). Between the
+   lines lie rectangles of cage faces with star points only at their
+   corners, and each rectangle is one bicubic B-spline face. Every line is
+   fitted once as a cubic spline (exact where the limit surface is
+   bicubic; toward a star point its knots halve four times, to 1/16 of an
+   edge, and it is fitted to the exact limit points and tangent planes),
+   and both rectangles beside it take that same curve as their edge, so
+   neighbours share edges exactly. Inside, the poles are fitted to the
+   exact limit points and tangent planes (Halstead masks at the star
+   points). Face count goes with the star points, not the cage: a few
+   hundred faces where face-by-face patches gave thousands. Where the
+   layout does not come out (a line that closes on itself, a fit outside a
+   third of the tolerance, neighbours meeting at more than 1 degree) the
+   faces are written one by one as before: regular ones exact bicubics
+   packed into rectangles, star point ones degree-7 patches.
 6. **Solid.** Sewn, checked, written; for a part with exact features the
    smooth body is cut by the exact cylinders, boxes and spheres in
    OpenCascade.
 
-## Numbers (2026-11-17)
+## Numbers (2026-11-21)
 
-| input | cage | STEP faces | tolerance | deviation p99 / max | worst kink | valid, re-read |
+| input | cage | STEP faces | time | deviation p99 / max | worst kink | valid, volume |
 |---|---|---|---|---|---|---|
-| Tripo-style pebble (holes, double wall, jitter) | 4954 quads | 426 (102 packed B-splines) | 0.1 mm (FDM) | 0.066 / 0.34 mm | 0.29 deg | yes |
-| soft plate + exact bore (field part) | 1879 quads | 146 B-spline + 1 cylinder | 0.1 mm | 0.087 / 0.25 mm | 0.7 deg | yes |
-| optimized arm link (`loadpath run --step-surface subd`) | 9499 quads | 1956 B-spline + 26 plane + 13 cylinder | 0.1 mm | 0.097 / 0.67 mm | 1.4 deg | yes, volume +0.02% |
+| Tripo-style pebble (holes, double wall, jitter) | 4902 quads (was 5623) | 240 (was 525) | 3.3 min (was 12.5) | 0.072 / 0.36 mm (was 0.095 / 0.35) | 0.013 deg (was 0.63) | yes, -0.004% (was -0.14%) |
+| optimized arm link body (quick run, 2026-11-21) | 6187 quads (was 8383) | 640 (was 4173) | 4.0 min (was 20.5) | 0.095 / 0.58 mm (was 0.093 / 0.65) | 0.021 deg | yes, -0.02% (the old route left 4 free edges: not a solid) |
 
-The pebble's surface lands as close to its true shape (the generator's
-SDF, before it was broken) as the noisy input does: p99 0.11 mm vs 0.10.
+Tolerance 0.1 mm (a third of FDM's +-0.3 mm) on both. Same machine (4
+cores), same input, run one at a time. Earlier (2026-11-17): soft plate +
+exact bore 146 B-spline faces + 1 cylinder, 250 s.
 
-**Packing.** Rectangles of regular cage faces are grown greedily and each
-becomes one clamped bicubic B-spline (exact: inside such a rectangle the
-limit surface is one C2 spline; a rectangle never closes round a tube).
-Faces at a star point stay whole as degree-7 patches; where that misses the
-limit by more than a third of the tolerance they are split once toward the
-star point. The file's points are written unrounded: rounding a degree-7
-patch's poles to 10 nm moved it off its own edges and readers could not
-mesh it.
+Where the time went: the fit's closest points (now a compiled kernel,
+`closestjit.py`), the least squares (the sample rows are gathered onto the
+limit points they pull, so the normal equations are M^T diag M and the
+matrix with one row per sample is never formed; conjugate gradients from
+the last answer, preconditioned by one factorization a round; a round stops
+once no control point moves more than a fiftieth of the tolerance) and the
+density search (the next cage's size from the error rate the last two
+tries show, aiming just under the tolerance: the old step overshot to a
+cage half again as fine as needed, with more star points).
+
+**Face by face (the fallback).** Rectangles of regular cage faces are grown
+greedily and each becomes one clamped bicubic B-spline; faces at a star
+point stay whole as degree-7 patches, split once toward it where that
+misses the limit by more than a third of the tolerance. The file's points
+are written unrounded: rounding a degree-7 patch's poles to 10 nm moved it
+off its own edges and readers could not mesh it.
 
 ## Not yet
 
-- Packing is greedy: rectangles end at T-junctions, so some faces are long
-  thin strips; tracing separatrices from the star points would give a
-  cleaner layout.
+- Adaptive density: Instant Meshes lays the cage at one density, so flats
+  get as many cage faces (and star points, and so patches) as tight
+  blends. Fewer star points is now the lever on face count.
 - Zebra stripes still wobble on large flats of field parts: the fit follows
   the marching-cubes mesh's small ripples within the tolerance.
-- Adaptive density: Instant Meshes lays the cage at one density, so flats
-  get as many patches as tight blends.
 - Sharp creases on an organic body (a generated mesh's hard rim) are
   rounded to within the tolerance, not kept as creases.
-- Speed: the arm link takes about 20 minutes on a cloud container, most
-  of it in the density and fairing searches.
+- A coarse first cage can come out with holes round thin members; the
+  density search then steps finer (2.5x) until it closes.

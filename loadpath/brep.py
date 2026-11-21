@@ -134,6 +134,11 @@ def _closest(mesh, P, edge=0.5, k=16):
     P = np.asarray(P, float).reshape(-1, 3)
     k = min(k, len(tri))
     out, nout = np.empty_like(P), np.empty_like(P)
+    from . import closestjit
+    if closestjit.available():
+        cand = tree.query(P, k=k, workers=-1)[1].reshape(len(P), k)
+        out, best = closestjit.closest_k(P, tri, cand)
+        return out, nrm[best]
     for j in range(0, len(P), 100_000):
         q = P[j:j + 100_000]
         cand = tree.query(q, k=k)[1].reshape(len(q), k)

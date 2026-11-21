@@ -358,10 +358,13 @@ def _samples(mesh, n, seed=0):
     return np.asarray(P, float), np.asarray(mesh.face_normals[fi], float)
 
 
-def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge=None, data=None, fair=0.0, H=None):
+def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge=None, data=None, fair=0.0, H=None,
+             settle=None):
     """Move the cage's control points so its limit surface lies on `mesh`
     (two-way closest-point least squares, a membrane term on the cage).
-    Returns (cage, hierarchy) with the fitted control points in cage.V."""
+    A round stops early once no control point moves more than `settle`
+    mm in an iteration (the closest points no longer change). Returns
+    (cage, hierarchy) with the fitted control points in cage.V."""
     from scipy.spatial import cKDTree
     from scipy.sparse.linalg import factorized
 
@@ -380,7 +383,13 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
     C = cage.V.copy()
     lam = smooth * M.shape[0] / n
     stiff = np.ones(n)                      # local membrane factor, raised where the surface folds
+    MT = M.T.tocsr()
+    MtM = (MT @ M).tocsc()
+    LL = Lap @ Lap
+    Bend = (fair * M.shape[0] / n) * (LL.T @ LL)
     for rnd in range(4):
+        Reg = (Lap.T @ sp.diags(lam * stiff) @ Lap + Bend).tocsc()
+        pre = None
         for it in range(iterations):
             P = M @ C
             NP = _limit_normals(H, P)
@@ -391,19 +400,30 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
             ok1 = np.einsum("ij,ij->i", nq, NP) > 0.3
             t1 = P - np.where(ok1, np.einsum("ij,ij->i", P - q, nq), 0.0)[:, None] * nq
             # mesh -> surface: every input sample pulls its nearest limit point
-            j = cKDTree(P).query(X)[1]
+            j = cKDTree(P).query(X, workers=-1)[1]
             Nj = NP[j]
             ok2 = np.einsum("ij,ij->i", NX, Nj) > 0.3
             t2 = P[j] + (np.einsum("ij,ij->i", X - P[j], Nj) * ok2)[:, None] * Nj
             w2 = 0.5 * len(P) / len(X)
-            R = sp.diags(np.sqrt(lam * stiff)) @ Lap
-            # bending (thin plate on the cage): what takes the noise out
-            Bd = np.sqrt(fair * M.shape[0] / n) * (Lap @ Lap)
-            A = sp.vstack([M, np.sqrt(w2) * M[j], R, Bd]).tocsr()
-            rhs = np.vstack([t1, np.sqrt(w2) * t2, np.zeros((2 * n, 3))])
-            solve = factorized((A.T @ A).tocsc())
-            AtB = A.T @ rhs
-            C = np.stack([solve(AtB[:, k]) for k in range(3)], axis=1)
+            # normal equations of [M; sqrt(w2) M[j]; membrane; bending]: the
+            # sample rows gather onto the limit points they pull, so it is
+            # M^T diag(1 + w2 count) M, and M[j] (as many rows as samples)
+            # is never formed
+            cnt = w2 * np.bincount(j, minlength=len(P))
+            acc = np.zeros_like(P)
+            np.add.at(acc, j, t2)
+            rhs = MT @ (t1 + w2 * acc)
+            if pre is None:
+                # factor once a round, at the mean pull; conjugate gradients
+                # from there (the counts move a little each round)
+                pre = factorized((MtM * (1.0 + float(cnt.mean())) + Reg).tocsc())
+
+            def K(x, cnt=cnt):
+                return MtM @ x + MT @ (cnt[:, None] * (M @ x)) + Reg @ x
+            C0 = C
+            C = _pcg(K, pre, rhs, C)
+            if settle is not None and it >= 2 and float(np.abs(C - C0).max()) < settle:
+                break
         folds = _folds(H, C)
         if not len(folds):
             break
@@ -414,6 +434,30 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
     H.folds = int(len(_folds(H, C)))
     cage.V = C
     return cage, H
+
+
+def _pcg(K, pre, B, X0, rtol=1e-9, maxiter=200):
+    """Solve K X = B (symmetric positive definite, three right-hand
+    sides at once) by conjugate gradients from X0, preconditioned by a
+    factorization `pre` of a matrix near K."""
+    X = X0.copy()
+    R = B - K(X)
+    nb = np.maximum(np.linalg.norm(B, axis=0), 1e-300)
+    Z = np.stack([pre(R[:, k]) for k in range(R.shape[1])], 1)
+    Pd = Z.copy()
+    rz = np.einsum("ij,ij->j", R, Z)
+    for _ in range(maxiter):
+        if (np.linalg.norm(R, axis=0) <= rtol * nb).all():
+            break
+        KP = K(Pd)
+        a = rz / np.maximum(np.einsum("ij,ij->j", Pd, KP), 1e-300)
+        X += a * Pd
+        R -= a * KP
+        Z = np.stack([pre(R[:, k]) for k in range(R.shape[1])], 1)
+        rz2 = np.einsum("ij,ij->j", R, Z)
+        Pd = Z + (rz2 / np.maximum(rz, 1e-300)) * Pd
+        rz = rz2
+    return X
 
 
 def _folds(H, C, cos=0.5):
@@ -546,17 +590,22 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
     best = None
     for r in range(rounds):
         cage = None
-        for k, f in enumerate((1.0, 1.08, 0.93, 1.17, 1.3, 1.5, 1.8, 2.2)):
-            # an odd or pinched hole, a fold at this density: nudge it
-            try:
-                cage = quad_cage(mesh, int(n * f), crease=crease)
-                break
-            except ValueError as err:
-                if progress:
-                    progress(f"quad cage at {n} faces: {err}; retrying")
-        if cage is None:
-            raise RuntimeError("no closed quad cage")
-        cage, H = fit_cage(cage, mesh, level=level, data=data)
+        while cage is None:
+            for k, f in enumerate((1.0, 1.08, 0.93, 1.17, 1.3, 1.5, 1.8, 2.2)):
+                # an odd or pinched hole, a fold at this density: nudge it
+                try:
+                    cage = quad_cage(mesh, int(n * f), crease=crease)
+                    break
+                except ValueError as err:
+                    if progress:
+                        progress(f"quad cage at {int(n * f)} faces: {err}; retrying")
+            if cage is None:
+                # holes at every nudge: members thinner than the cage's edges
+                # (the remesher cannot close a quad strip round them); finer
+                if n * 2.2 >= max_faces:
+                    raise RuntimeError("no closed quad cage")
+                n = int(min(max_faces, n * 2.5))
+        cage, H = fit_cage(cage, mesh, level=level, data=data, settle=tol / 50)
         dev, _ = deviation(H, cage.V, mesh, data=check)
         tries.append({"faces": len(cage.Q), "irregularVertices": int((cage.valence != 4).sum()),
                       "p99": dev["p99"], "max": dev["max"]})
@@ -566,9 +615,17 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
         best = (cage, H, dev)
         if dev["p99"] <= tol or len(cage.Q) >= max_faces or faces:
             break
-        # bicubic error falls as h^4 on smooth parts, as h^2 where a feature is narrower than a face:
-        # step on the slower rate
-        n = int(min(max_faces, len(cage.Q) * min(4.0, max(1.5, dev["p99"] / tol))))
+        # bicubic error falls as h^4 on smooth parts, as h^2 where a feature is
+        # narrower than a face; the last two tries say which rate this part
+        # is on (faces go as h^-2), and the next cage aims a little under
+        # the tolerance: a cage finer than needed has more star points, so
+        # more patches, and every fit on it is slower
+        rate = 2.0
+        if len(tries) >= 2 and tries[-2]["p99"] > dev["p99"] > 0:
+            rate = 2.0 * np.log(tries[-2]["p99"] / dev["p99"]) / np.log(len(cage.Q) / tries[-2]["faces"])
+            rate = float(np.clip(rate, 2.5, 4.0))
+        grow = (dev["p99"] / (0.9 * tol)) ** (2.0 / rate)
+        n = int(min(max_faces, len(cage.Q) * min(4.0, max(1.3, grow))))
     cage, H, dev = best
     # the smoothest surface the tolerance allows: raise the bending weight
     # while the deviation stays within it (a noisy input's ripples go first)
@@ -578,7 +635,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
         f = 1e-3
         while f < 1e3:
             c2 = Cage(V0.copy(), cage.Q)
-            c2, _ = fit_cage(c2, mesh, level=level, data=data, fair=f, iterations=6, H=H)
+            c2, _ = fit_cage(c2, mesh, level=level, data=data, fair=f, iterations=6, H=H, settle=tol / 50)
             d2, _ = deviation(H, c2.V, mesh, data=check)
             fairs.append({"bending": f, "p99": d2["p99"], "max": d2["max"]})
             if progress:
@@ -728,6 +785,7 @@ def _elevate(c, to):
     return c
 
 
+KINK = 1.0           # degrees: rectangles along the lines meeting at more than this fall back to face patches
 TANGENT = 3.0        # weight of "lies in the limit's tangent plane" rows against position rows (mm per unit)
 IRREGULAR_DEGREE = 7
 REFINE = 0           # times a face at an extraordinary vertex is split before its corner is fitted
@@ -1083,26 +1141,20 @@ def pack(H, C, bs, lay):
         b, a = len(R), len(R[0])
         if a * b == 1:
             continue
-        U, V, P = [], [], []
-        t = np.arange(s + 1) / s
+        # the samples as one grid: inside the rectangle the limit surface is
+        # one uniform bicubic spline, so the clamped one through them is
+        # exact, and the fit separates into a solve along u and one along v
+        X = np.empty((a * s + 1, b * s + 1, 3))
         for j, row in enumerate(R):
             for i, (q, r) in enumerate(row):
-                A = np.rot90(XG[q], _oriented(G, q, r))
-                U.append(np.repeat(i + t, s + 1))
-                V.append(np.tile(j + t, s + 1))
-                P.append(A.reshape(-1, 3))
-        U, V, P = np.concatenate(U), np.concatenate(V), np.concatenate(P)
-        Bu = _bspline_basis(a, U)
-        Bv = _bspline_basis(b, V)
-        A = (Bu[:, :, None] * Bv[:, None, :]).reshape(len(U), -1)
-        from scipy.sparse import csr_matrix
-        from scipy.sparse.linalg import lsqr
-        As = csr_matrix(A)
-        poles = np.stack([lsqr(As, P[:, k], atol=1e-14, btol=1e-14, iter_lim=20000)[0] for k in range(3)], 1)
-        err = float(np.abs(A @ poles - P).max())
+                X[i * s:i * s + s + 1, j * s:j * s + s + 1] = np.rot90(XG[q], _oriented(G, q, r))
+        Bu = _bspline_basis(a, np.arange(a * s + 1) / s)
+        Bv = _bspline_basis(b, np.arange(b * s + 1) / s)
+        poles = np.einsum("ia,ijk,jb->abk", np.linalg.pinv(Bu).T, X, np.linalg.pinv(Bv).T)
+        err = float(np.abs(np.einsum("ia,abk,jb->ijk", Bu, poles, Bv) - X).max())
         if err > 1e-6:
             continue                      # not one spline after all (a fold in the layout): keep its patches
-        out.append(("bspline", poles.reshape(a + 3, b + 3, 3), (a, b)))
+        out.append(("bspline", poles, (a, b)))
         taken |= {whole[q] for row in R for q, _ in row}
     for k, bq in enumerate(bs):
         if k not in taken:
@@ -1135,8 +1187,26 @@ def to_brep(b, sew=SEW):
             m.SetValue(i + 1, 4 if i in (0, n) else 1)
         return k, m
 
+    def breaks(br):
+        k = Array1_double(1, len(br))
+        m = Array1_int(1, len(br))
+        for i, x in enumerate(br):
+            k.SetValue(i + 1, float(x))
+            m.SetValue(i + 1, 4 if i in (0, len(br) - 1) else 1)
+        return k, m
+
     sw = BRepBuilderAPI_Sewing(sew)
     for item in b:
+        if isinstance(item, tuple) and item[0] == "nurbs":
+            _, P, bu, bv = item
+            arr = Array2_gp_Pnt(1, P.shape[0], 1, P.shape[1])
+            for i in range(P.shape[0]):
+                for j in range(P.shape[1]):
+                    arr.SetValue(i + 1, j + 1, _pnt(P[i, j]))
+            ku, mu = breaks(bu)
+            kv, mv = breaks(bv)
+            sw.Add(BRepBuilderAPI_MakeFace(Geom_BSplineSurface(arr, ku, kv, mu, mv, 3, 3), 1e-7).Face())
+            continue
         if isinstance(item, tuple) and item[0] == "bspline":
             _, P, (na, nb) = item
             arr = Array2_gp_Pnt(1, P.shape[0], 1, P.shape[1])
@@ -1177,7 +1247,7 @@ def write_cage_obj(cage, path):
 
 
 def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=None, cage_path=None, packed=True,
-                   **kw):
+                   layout="lines", **kw):
     """Mesh in, STEP of a few smooth patches out. Returns a report."""
     import os
 
@@ -1188,19 +1258,40 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
     t0 = time.time()
     cage, H, rep = surface_mesh(mesh, tolerance=tolerance, faces=faces, progress=progress, **kw)
     Hp = Hierarchy(Cage(cage.V, cage.Q), LEVEL + 1)
-    # a star point's faces whole, as degree-7 patches; split once toward it
-    # (quintic corners) where that misses the limit surface by more than a
-    # third of the tolerance
-    b, lay = patches(Hp, cage.V, degree, irregular=7, refine=0)
-    q = patch_quality(Hp, cage.V, b, lay)
-    if q["patchToLimit"]["max"] > rep["tolerance"] / 3:
-        b, lay = patches(Hp, cage.V, degree, irregular=5, refine=1)
+    b = None
+    if layout == "lines":
+        # rectangles along the cage's own lines, star points at their corners
+        from .subdlines import lay_out
+        b, q = lay_out(Hp, cage.V, rep["tolerance"], progress=progress)
+        if b is not None and q["edgeAngle"]["max"] > KINK:
+            b, q["layout"] = None, f"rectangles meet at up to {q['edgeAngle']['max']:.2f} deg"
+        if b is not None:
+            band = [x for x in b if x[0] == "band"]
+            b = [x for x in b if x[0] != "band"]
+            if band:
+                bs, lay = patches(Hp, cage.V, degree, irregular=7, refine=0)
+                keep = set(band[0][1].tolist())
+                sel = [k for k, c in enumerate(lay) if c[0] in keep]
+                b += pack(Hp, cage.V, [bs[k] for k in sel], [lay[k] for k in sel])
+            q["patches"] = len(b)
+            rep["patches"] = q
+        elif progress:
+            progress(f"lines layout: {q.get('layout')}; patches face by face")
+    if b is None:
+        # a star point's faces whole, as degree-7 patches; split once toward it
+        # (quintic corners) where that misses the limit surface by more than a
+        # third of the tolerance
+        b, lay = patches(Hp, cage.V, degree, irregular=7, refine=0)
         q = patch_quality(Hp, cage.V, b, lay)
-        q["starPointsSplit"] = True
-    rep["patches"] = q
-    if packed:
-        b = pack(Hp, cage.V, b, lay)
-        rep["patches"]["packedSurfaces"] = int(sum(1 for x in b if x[0] == "bspline"))
+        if q["patchToLimit"]["max"] > rep["tolerance"] / 3:
+            b, lay = patches(Hp, cage.V, degree, irregular=5, refine=1)
+            q = patch_quality(Hp, cage.V, b, lay)
+            q["starPointsSplit"] = True
+        q["layout"] = "faces"
+        rep["patches"] = q
+        if packed:
+            b = pack(Hp, cage.V, b, lay)
+            rep["patches"]["packedSurfaces"] = int(sum(1 for x in b if x[0] == "bspline"))
     shape, free = to_brep(b)
     valid = bool(BRepCheck_Analyzer(shape).IsValid())
     # points as OpenCascade writes them: rounding the poles of a degree-7

@@ -81,11 +81,17 @@ def test_blob_to_step():
     assert rep["folds"] == 0
     assert rep["irregularVertices"] > 0
     assert rep["patches"]["edgeAngle"]["max"] < 1.0, rep["patches"]
-    assert rep["patches"]["patchToLimit"]["regularMax"] < 1e-9
+    # rectangles along the cage's lines: the faces away from star points
+    # share poles with the corner faces fitted round them, so they are
+    # within a micron or so of the limit, not to rounding
+    assert rep["patches"]["patchToLimit"]["max"] < rep["tolerance"] / 3, rep["patches"]
+    assert rep["patches"]["patchToLimit"]["regularMax"] < rep["tolerance"] / 30, rep["patches"]
     assert abs(rep["volume"] / rep["meshVolume"] - 1) < 2e-3, rep
     # regular quad regions packed into single B-spline faces
     assert rep["patches"]["packedSurfaces"] > 0
     assert rep["stepFaces"] < 0.5 * rep["cageFaces"], rep
+    assert rep["patches"]["layout"] == "lines", rep["patches"]
+    assert rep["stepFaces"] < 0.25 * rep["cageFaces"], rep      # 24 of 142 (52 face by face)
 
 
 def test_regular_rectangles_pack_into_one_face():
