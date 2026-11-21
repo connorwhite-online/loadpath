@@ -244,13 +244,13 @@ class Recall:
 
     def replay(self, vf: float):
         """A stored outcome at exactly this fraction under the same model:
-        (x, xphys, entry), or None."""
+        (x, xphys, entry, boundary field or None), or None."""
         for e in sorted(self._replayable(), key=lambda e: -e["time"]):
             if abs(e["vf"] - vf) <= 1e-9:
                 arrays = self._arrays(e)
                 if arrays is not None:
                     self.used["replayed"] += 1
-                    return arrays[0], arrays[1], e
+                    return arrays[0], arrays[1], e, arrays[2]
         return None
 
     def warm_start(self, vf: float):
@@ -310,13 +310,15 @@ class Recall:
         try:
             with np.load(os.path.join(self.folder, e["file"])) as z:
                 x, xp = z["x"], z["xphys"]
+                # where in its cells the surface is (simp.boundary_field): what the part was meshed from
+                lev = z["level"] if "level" in z.files else None
         except (OSError, KeyError, ValueError):
             return None
         if len(x) != self.domain.n_elem:
             return None
-        return x.astype(float), xp.astype(float)
+        return x.astype(float), xp.astype(float), (None if lev is None else lev.astype(float))
 
-    def add(self, vf: float, x, xphys, report: dict):
+    def add(self, vf: float, x, xphys, report: dict, level=None):
         """Remember one outcome (replacing a stored one at the same fraction
         under the same loads and model)."""
         if x is None or xphys is None:
@@ -337,7 +339,8 @@ class Recall:
         try:
             os.makedirs(self.folder, exist_ok=True)
             np.savez_compressed(os.path.join(self.folder, name), x=np.asarray(x, np.float32),
-                                xphys=np.asarray(xphys, np.float32))
+                                xphys=np.asarray(xphys, np.float32),
+                                **({} if level is None else {"level": np.asarray(level, np.float32)}))
         except OSError:
             return
         self.index = [o for o in self.index if o not in old] + [e]

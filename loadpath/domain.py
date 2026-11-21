@@ -1348,7 +1348,11 @@ def _build_domain(study: Study, pitch: float) -> Domain:
             # minimum member's thickness as a loaded face is. Only those: a
             # bearing presses on the half of the bore it pushes, and the
             # other half is the optimizer's.
-            touch = (nodes & forced)[mesh.enode].any(axis=1)
+            # (a node already on pinned material, a drawn solid's own, has
+            # what it needs: nothing is added round a preserved region)
+            held = np.zeros(mesh.n_nodes, bool)
+            held[mesh.enode[pres_el].ravel()] = True
+            touch = (nodes & forced & ~held)[mesh.enode].any(axis=1)
             if not touch.any():
                 continue
             thick = max(float(study.min_member or 0.0), pitch)

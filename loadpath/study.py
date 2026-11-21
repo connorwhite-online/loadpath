@@ -2692,6 +2692,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         else:
             # a stored design for this very problem: mesh and verify it, no optimizing
             x, xphys = replay[0], replay[1]
+            xlevel = replay[3] if len(replay) > 3 else None
             warp = None
             opt = {"iterations": 0, "converged": True, "seconds": 0.0, "recalled": True,
                    "achievedVolumeFraction": float(xphys.mean())}
@@ -2752,7 +2753,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         o.voxel_sf = report.get("safetyFactor")
         if memory is not None and made is None:
             # (a polished design is not the compliance design of its fraction: not one to recall as that)
-            memory.add(vf, x, xphys, report)
+            memory.add(vf, x, xphys, report, level=xlevel)
         m = _margin(study, report)
         if m is not None:
             report["margin"] = m
