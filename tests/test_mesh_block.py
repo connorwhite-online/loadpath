@@ -85,3 +85,38 @@ def test_junction_blend_is_g2_and_no_tighter():
 if __name__ == "__main__":
     test_mesh_block_rounds_the_joint()
     print("ok")
+
+
+def _crotch_field(step=0.25):
+    # two square bars (4 mm thick) meeting in an L: one concave corner at the origin
+    g = np.arange(-12.0, 12.0, step) + 0.5 * step
+    X, Y, Z = np.meshgrid(g, g, g, indexing="ij")
+    bar_x = (X > -2) & (Y > -2) & (Y < 2) & (np.abs(Z) < 2)
+    bar_y = (X > -2) & (X < 2) & (Y > -2) & (np.abs(Z) < 2)
+    from scipy import ndimage
+    f = ndimage.gaussian_filter((bar_x | bar_y).astype(float), 0.7)
+    return f, np.array([g[0]] * 3), step
+
+
+def test_member_thickness_is_the_bar_it_sits_on():
+    from loadpath.reconstruct import member_thickness
+    f, origin, step = _crotch_field()
+    # a point on the bar's flank far from the corner: the bar's 4 mm
+    assert abs(member_thickness(f, origin, step, np.array([8.0, 2.0, 0.0])) - 4.0) < 0.6
+
+
+def test_stress_round_fills_only_the_crotch():
+    from loadpath.reconstruct import _round_near, member_thickness
+    f, origin, step = _crotch_field()
+    at = np.array([2.0, 2.0, 0.0])             # the inside corner
+    r = member_thickness(f, origin, step, at)
+    assert 3.5 < r < 7.0
+    g = _round_near(f, origin, step, at, r)
+    assert np.all(g >= f - 1e-9)               # only ever adds
+    added = (g >= 0.5) & (f < 0.5)
+    idx = np.argwhere(added) * step + origin
+    assert len(idx) > 0
+    # all of it inside the corner's quadrant, none on the outer faces
+    assert np.all(idx[:, 0] > 1.5) and np.all(idx[:, 1] > 1.5)
+    # and the fill reaches about r along each leg (a round, not a chamfer of the corner cell)
+    assert idx[:, 0].max() > 2.0 + 0.5 * r

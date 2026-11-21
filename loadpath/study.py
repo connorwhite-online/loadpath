@@ -301,6 +301,8 @@ class Outcome:
             **({"fits": r["fits"]} if r.get("fits") else {}),
             # designed weak links (fuse.py): each link's size, its break window and the crash cases it caps
             **({"fuses": r["fuses"]} if r.get("fuses") else {}),
+            # stress-sized junction rounds kept on this part (_round_hotspots)
+            **({"rounds": r["rounds"]} if r.get("rounds") else {}),
             # bought members (stock.py): the members and joints as checked, and what the assembly weighs
             **({"stock": r["stock"], "printedBodies": r.get("printedBodies"), "stockMass": r.get("stockMass"),
                 "assemblyMass": r.get("assemblyMass")} if "stock" in r else {}),
@@ -368,6 +370,58 @@ def _durability_drives(study: Study) -> bool:
     from .durability import active
 
     return active(study) and (study.durability is None or study.durability.constrain)
+
+
+ROUND_TRIES = 3
+
+
+def _round_hotspots(study: Study, domain, field, mesh, rinfo, report, verify):
+    """Round the junctions where stress governs, sized from the members.
+
+    Where verification puts the governing peak in a concave junction
+    between members (a crotch the member closing left at its own small
+    radius), the part is meshed again with a local round there as large as
+    the member is thick (reconstruct.member_thickness: Peterson's fillet
+    curves flatten to Kt near 1 by then) and verified again. A round is kept
+    only when it buys more strength than the same mass spread as thicker
+    members would: in bending SF goes with t^2 and mass with t, so the
+    round must give dSF/SF > 2 dm/m (plus a 1% noise floor). Then the next
+    governing peak, up to ROUND_TRIES tries. Only while the stress safety
+    factor is what binds the part (a stiffness- or mass-bound part's search
+    pick does not move with it). mesh.roundHotspots: false turns it off."""
+    g = study.goal
+    block = (getattr(study, "raw", None) or {}).get("mesh") or {}
+    if block.get("roundHotspots") is False or os.environ.get("LOADPATH_ROUND_HOTSPOTS") == "0" \
+            or g.safety_factor is None or not report.get("safetyFactor") or rinfo.get("bodies", 1) > 1:
+        return mesh, rinfo, report
+    m0 = _margin(study, report)
+    if m0 is None or report["safetyFactor"] / g.safety_factor > 1.02 * m0:
+        return mesh, rinfo, report
+    rounds = []
+    for _ in range(ROUND_TRIES):
+        gov = min(report["cases"], key=lambda c: c.get("safetyFactor", float("inf")))
+        at = gov.get("peakAt")
+        if at is None or any(np.linalg.norm(np.asarray(at) - a) < 2.0 for a, _r in rounds):
+            break
+        o = ReconstructOptions()
+        o.round_at = rounds + [(np.asarray(at, float), None)]
+        try:
+            m2, ri2 = reconstruct(study, domain, field, o)
+            if m2.volume <= mesh.volume * (1 + 1e-4):
+                break   # a convex or flat spot: no junction to round there
+            r2 = verify(m2)
+        except (RuntimeError, ValueError):
+            break
+        dm = (m2.volume - mesh.volume) / mesh.volume
+        gain = (r2["safetyFactor"] - report["safetyFactor"]) / report["safetyFactor"] - 2.0 * dm
+        if gain <= 0.01:
+            break
+        rounds = list(o.round_at)
+        mesh, rinfo, report = m2, ri2, r2
+    if rounds:
+        report["rounds"] = [{"at": [round(float(v), 2) for v in a], "radius": round(float(r), 2)}
+                            for a, r in rounds]
+    return mesh, rinfo, report
 
 
 def _margin(study: Study, report: dict) -> float | None:
@@ -2725,6 +2779,11 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             mat = study.material
             report = {"mass": float(mesh.volume) * mat.density / 1000.0, "safetyFactor": 0.0,
                       "cases": [], "warnings": [f"verification failed: {exc}"]}
+        if report.get("cases"):
+            mesh, rinfo, report = _round_hotspots(
+                study, domain, xphys if xlevel is None else xlevel, mesh, rinfo, report,
+                lambda m: verify_part(study, m, min_pitch=0.5 * domain.pitch, contact_band=contact_band(study, domain),
+                                      max_pitch=domain.pitch, shell_cells=SEARCH_SHELL_CELLS))
         if buck_state["sf"] is not None and report.get("bucklingFactor") is not None:
             # Buckling in the search (simp.optimize's buckling constraint):
             # on from the first part whose buckling factor comes within
@@ -3390,6 +3449,17 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             if job is not None:
                 prefetch.drop(job)
             raise
+        if report.get("cases"):
+            m0 = mesh
+            mesh, rinfo, report = _round_hotspots(
+                study, domain, _meshed_field(res), mesh, rinfo, report,
+                lambda m: verify_part(study, m, min_pitch=0.5 * domain.pitch,
+                                      contact_band=contact_band(study, domain), max_pitch=domain.pitch))
+            if mesh is not m0 and job is not None:
+                # the tets read the part as delivered: the rounded one
+                prefetch.drop(job)
+                job.mesh = mesh
+                prefetch.submit(study, job, contact_band(study, domain))
         report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
         _sound(report, mesh)
         opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,

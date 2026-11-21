@@ -398,6 +398,40 @@ The idealized clamp is still there (row 1 below): the band still hides what
 a rigid support does to the stress beside it. What is new is that
 everything outside the band is a number the part has, on any mesh.
 
+### 9. A junction is rounded as large as the member it joins (`study._round_hotspots`, `reconstruct.member_thickness`)
+
+Where two members of an optimized part meet, the mesh rounds the concave
+corner with a closing of `mesh.close` (half the minMember, at least 1 mm).
+That radius is a smoothing choice, not a stress one, and the governing peak
+of a stress-bound part sits in exactly those crotches: on the robot-arm
+wrist link the payload case's peak was in a Y between two struts whose
+corner had closed to a slit.
+
+Peterson's shoulder-fillet curves say what radius the corner wants: the
+stress concentration falls steeply with r/d and is near 1 once the round
+is about as large as the thinner member is thick. So where the stress
+safety factor binds, each outcome the search verifies is meshed again with
+a local round at its governing peak, radius the member's own thickness
+(twice the inscribed radius found by climbing the inside distance from
+the peak to the medial ridge), eased out between 2r and 3r so it meets
+the rest of the surface without a step. It is verified again and kept
+only if it buys more than the same mass spent on thicker members would:
+in bending SF goes with t² and mass with t, so a round has to give
+dSF/SF > 2 dm/m (plus a 1% floor for the check's own noise). Then the
+next governing peak, up to three tries. A convex or flat peak adds no
+mass and ends it.
+
+Wrist link, quick grid, same field: two rounds (4.6 and 3.7 mm) took the
+safety factor from 14.0 to 17.5 for 0.25 g (+0.6%). The third peak (the
+side case, 4.9 mm) read lower afterwards and was dropped. Because it runs
+inside the search (both the fraction search and the constrained one), a
+stress-bound part goes lighter for the same goal, not only stronger: the
+wrist link held to SF 3 alone (no deflection limit), quick tier, came out
+30.0 g (tet SF 4.5) with rounds against 32.2 g (tet SF 6.6) without, in
+18 minutes against 22. `mesh.roundHotspots: false` (or
+`LOADPATH_ROUND_HOTSPOTS=0`) turns it off; `report["rounds"]` lists what
+was kept. `loadpath remesh` from the saved field does not re-apply them.
+
 ## What is still a convenience, ranked
 
 Not fixed in this pass. Ranked by how much each distorts a real part;

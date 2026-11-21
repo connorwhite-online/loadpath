@@ -1984,6 +1984,11 @@ STUDY_SCHEMA = {
                                                "curvature continuous where it starts (G2) and its "
                                                "tightest radius is 0.29 x this. Default 1.5 x minMember, "
                                                "at least 3."},
+                     "roundHotspots": {"type": "boolean",
+                                       "description": "Where the stress safety factor binds, round the junction "
+                                                      "under each governing peak as large as the member there is "
+                                                      "thick, kept only when it adds more strength than the same "
+                                                      "mass as thicker members would (default true)."},
                      "smooth": {"type": "number", "minimum": 0,
                                 "description": "Gaussian smoothing of the refined field, in fine cells (default 0.9)."},
                      "taubin": {"type": "integer", "minimum": 0,

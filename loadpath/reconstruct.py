@@ -72,6 +72,10 @@ class ReconstructOptions:
         # points (mm) where the surface smoothing is undone: reconstruct's
         # second pass, at contacts the first one left
         self.unsmooth = None
+        # [(point mm, radius mm)]: a concave junction rounded by this radius
+        # within reach of the point (on top of `close`): sized from the
+        # stress the junction carries (study._round_junctions)
+        self.round_at = None   # [(point mm, radius mm or None: the member's thickness)] (study._round_hotspots)
 
 
 def _smooth_max(a, b, k):
@@ -116,6 +120,60 @@ def _g2_union(a, b, k):
     h = np.maximum(k - np.abs(a - b), 0.0) / k
     h3 = h * h * h
     return np.minimum(a, b) - k * h3 * (0.24 - 0.044 * h * h)
+
+
+def member_thickness(fine, origin, step, at, level=0.5, reach=12.0):
+    """Full thickness (mm) of the member a surface point `at` sits on:
+    twice the inscribed radius at the medial ridge reached by climbing the
+    inside distance from `at`. Peterson's shoulder-fillet curves flatten
+    (Kt near 1) once the round is as large as the thinner member it joins,
+    so this is the round a stress hotspot at a junction asks for."""
+    c = np.round((at - origin) / step).astype(int)
+    h = int(np.ceil(reach / step))
+    lo = np.maximum(c - h, 0)
+    hi = np.minimum(c + h + 1, fine.shape)
+    if np.any(hi <= lo):
+        return 0.0
+    depth = -_field_distance(fine[tuple(slice(a, b) for a, b in zip(lo, hi))], step, level)
+    p = np.clip(c - lo, 0, np.array(depth.shape) - 1)
+    offs = np.array([(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)
+                     if (i, j, k) != (0, 0, 0)])
+    for _ in range(4 * h):
+        q = np.clip(p + offs, 0, np.array(depth.shape) - 1)
+        v = depth[q[:, 0], q[:, 1], q[:, 2]]
+        if v.max() <= depth[tuple(p)]:
+            break
+        p = q[int(np.argmax(v))]
+    return float(2.0 * max(depth[tuple(p)], 0.0))
+
+
+def _round_near(fine, origin, step, at, r, level=0.5, env=None):
+    """A closing of radius `r` (concave edges rounded to r, convex and flat
+    surface unchanged) in a box round `at`, eased out to nothing between
+    2 r and 3 r from it so the larger round meets the rest of the part
+    without a step."""
+    c = np.round((at - origin) / step).astype(int)
+    h = int(np.ceil(3.0 * r / step)) + 3
+    lo = np.maximum(c - h, 0)
+    hi = np.minimum(c + h + 1, fine.shape)
+    if np.any(hi <= lo):
+        return fine
+    sl = tuple(slice(a, b) for a, b in zip(lo, hi))
+    sub = fine[sl]
+    grown = _field_distance(sub, step, level) - r < 0
+    d2 = (ndimage.distance_transform_edt(~grown) - ndimage.distance_transform_edt(grown)) * step
+    d2 += np.where(grown, 0.5 * step, -0.5 * step)
+    closed = ndimage.gaussian_filter(np.clip(level - (d2 + r) / (4.0 * step), 0.0, 1.0), 1.0)
+    idx = np.stack(np.meshgrid(*[np.arange(a, b) for a, b in zip(lo, hi)], indexing="ij"), -1)
+    dist = np.linalg.norm((idx - c) * step, axis=-1)
+    w = np.clip((3.0 * r - dist) / r, 0.0, 1.0)
+    w = w * w * (3.0 - 2.0 * w)
+    closed = sub + w * (np.maximum(sub, closed) - sub)
+    if env is not None:
+        closed = np.minimum(closed, np.maximum(env[sl], sub))
+    out = fine.copy()
+    out[sl] = np.maximum(sub, closed)
+    return out
 
 
 def _field_distance(fine, step, level=0.5):
@@ -993,6 +1051,17 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         if design:
             closed = np.minimum(closed, env.reshape(fine.shape))
         fine = np.maximum(fine, closed)
+    if o.fillet and o.round_at:
+        # stress-sized rounds at the verified hotspots (study._round_hotspots); a
+        # None radius is the member's own thickness, resolved here in place
+        for i, (at, r) in enumerate(o.round_at):
+            at = np.asarray(at, float)
+            if r is None:
+                r = member_thickness(fine, origin, step, at, o.level)
+                o.round_at[i] = (at, r)
+            if r > 0:
+                fine = _round_near(fine, origin, step, at, float(r), o.level,
+                                   env.reshape(fine.shape) if design else None)
     parting = None
     if draft is not None:
         # Draft for a cast or molded part (manufacture.drafted_distance):
