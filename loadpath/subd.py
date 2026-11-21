@@ -185,9 +185,47 @@ class Hierarchy:
 
 # ------------------------------------------------------------------ input
 
-def quad_cage(mesh, faces, crease=None, seed=0):
+def _warp(P, spots, inverse=False):
+    """Space blown up round each spot (centre c, factor k, radius R):
+    x -> c + (x - c) s(r), s = 1 + (k - 1) exp(-r^2 / R^2). r s(r) rises
+    monotonically for k < 3.2 (its slope is least at r^2 = 1.5 R^2), so the
+    map is one to one; `inverse` undoes it (bisection on r, spots in reverse
+    order)."""
+    P = np.array(P, float)
+    for c, k, rad in (spots[::-1] if inverse else spots):
+        d = P - np.asarray(c, float)
+        r = np.linalg.norm(d, axis=1)
+        if not inverse:
+            P = P + d * ((k - 1.0) * np.exp(-(r / rad) ** 2))[:, None]
+            continue
+        lo, hi = r / k, r.copy()
+        for _ in range(48):
+            mid = 0.5 * (lo + hi)
+            big = mid * (1.0 + (k - 1.0) * np.exp(-(mid / rad) ** 2)) > r
+            hi, lo = np.where(big, mid, hi), np.where(big, lo, mid)
+        P = np.asarray(c, float) + d * (0.5 * (lo + hi) / np.maximum(r, 1e-300))[:, None]
+    return P
+
+
+def quad_cage(mesh, faces, crease=None, seed=0, finer=None):
     """An all-quad cage over a closed triangle mesh with about `faces`
-    quads (Instant Meshes, pure-quad mode), its vertices on the mesh."""
+    quads (Instant Meshes, pure-quad mode), its vertices on the mesh.
+
+    `finer`: spots (centre, factor k, radius) where the faces should be k
+    times smaller. Instant Meshes lays one edge length everywhere, so it
+    lays it over the mesh with space blown up k times round each spot
+    (`_warp`) and the quads are mapped back: there its edges come out k
+    times shorter, elsewhere as asked."""
+    if finer:
+        import trimesh
+
+        big = trimesh.Trimesh(_warp(mesh.vertices, finer), np.asarray(mesh.faces), process=False)
+        v, f = _quads(big, int(faces * big.area / mesh.area), crease)
+        return _cage_from_quads(mesh, _warp(v, finer, inverse=True), f)
+    return _cage_from_quads(mesh, *_quads(mesh, faces, crease))
+
+
+def _quads(mesh, faces, crease):
     # Instant Meshes' pure-quad mode subdivides its quad-dominant mesh once,
     # so ask for a quarter of the faces; the in-memory call hands back
     # triangles, so the quads come through an OBJ
@@ -204,7 +242,7 @@ def quad_cage(mesh, faces, crease=None, seed=0):
         v, f = _instant_quads(_even(mesh, 0.25 * float(np.sqrt(mesh.area / max(int(faces), 1)))), kw)
     if not len(f):
         raise ValueError("Instant Meshes extracted no faces")
-    return _cage_from_quads(mesh, v, f)
+    return v, f
 
 
 def _even(mesh, step):
@@ -777,7 +815,7 @@ def pick_tolerance(accuracy=None, noise=None):
     return tol, why
 
 
-def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, level=LEVEL, progress=None,
+def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, level=LEVEL, progress=None,
                  crease=None, accuracy=None, source=None, min_hole=None):
     """Fit a Catmull-Clark surface to a closed mesh. The cage gets denser
     until the two-way deviation's 99th percentile is within `tolerance` mm
@@ -810,13 +848,14 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
     check = _samples(mesh, 200_000, seed=1)
     tries = []
     best = None
+    spots = []          # where the cage is laid finer (quad_cage `finer`)
     for r in range(rounds):
         cage = None
         while cage is None:
             for k, f in enumerate((1.0, 1.08, 0.93, 1.17, 1.3, 1.5, 1.8, 2.2)):
                 # an odd or pinched hole, a fold at this density: nudge it
                 try:
-                    cage = quad_cage(mesh, int(n * f), crease=crease)
+                    cage = quad_cage(mesh, int(n * f), crease=crease, finer=spots)
                     break
                 except ValueError as err:
                     if progress:
@@ -834,7 +873,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
         # a miss twice the bound is a feature narrower than the faces: the
         # pull below cannot bring it in without moving its neighbours
         coarse = [p["miss"] for p in places if p["kind"] == "surface" and p["miss"] > 2.0 * bound]
-        tries.append({"faces": len(cage.Q), "irregularVertices": int((cage.valence != 4).sum()),
+        tries.append({"faces": len(cage.Q), "irregularVertices": int((cage.valence != 4).sum()), "finerAt": len(spots),
                       "p99": dev["p99"], "max": dev["max"], "printableHolesClosed": len(open_holes),
                       "coarseMiss": max(coarse, default=0.0)})
         if progress:
@@ -853,14 +892,40 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=5, le
             rate = 2.0 * np.log(tries[-2]["p99"] / dev["p99"]) / np.log(len(cage.Q) / tries[-2]["faces"])
             rate = float(np.clip(rate, 2.5, 4.0))
         grow = (dev["p99"] / (0.9 * tol)) ** (2.0 / rate)
-        if coarse:
-            grow = max(grow, (max(coarse) / bound) ** (2.0 / rate))
-        if open_holes:
-            # a closed hole opens once four or so edges go round it (edge
-            # under 0.7 of its diameter: pi d / 4)
-            h = np.sqrt(area / len(cage.Q))
-            grow = max(grow, (h / (0.7 * min(p["diameter"] for p in open_holes))) ** 2)
-        n = int(min(max_faces, len(cage.Q) * min(4.0, max(1.3, grow))))
+        # finer only where the shape is tight: a closed hole opens once four
+        # or so edges go round it (edge under 0.7 of its diameter: pi d / 4);
+        # a surface miss narrower than the faces falls as the edge^2. Only
+        # once the part as a whole is within the tolerance: until then every
+        # place misses and the density is the question. The rest keeps
+        # its density (Instant Meshes' edge times 1/k round each place, at
+        # most 3 a try, over three faces round it)
+        # One such try: Instant Meshes lays the whole cage afresh round the
+        # spots, so a second round of spots moves every other place too
+        # (a hole kept open on one lay closes on the next); after it, the
+        # cage gets finer everywhere instead.
+        h = np.sqrt(area / len(cage.Q))
+        for p in (places if dev["p99"] <= tol and not spots else []):
+            if p.get("printable"):
+                k = h / (0.7 * p["diameter"])
+            elif p["kind"] == "surface" and p["miss"] > 2.0 * bound:
+                k = np.sqrt(p["miss"] / (0.9 * bound))
+            else:
+                continue
+            spots.append((np.asarray(p["at"], float), float(np.clip(k, 1.3, 3.0)), 3.0 * h))
+        if dev["p99"] <= tol and (open_holes or coarse) and tries[-1]["finerAt"]:
+            # the spots did not do it: finer everywhere, as for a hole or a
+            # coarse miss without them
+            if open_holes:
+                grow = max(grow, (h / (0.7 * min(p["diameter"] for p in open_holes))) ** 2)
+            if coarse:
+                grow = max(grow, (max(coarse) / bound) ** (2.0 / rate))
+            n = int(min(max_faces, len(cage.Q) * min(4.0, max(1.3, grow))))
+        elif dev["p99"] > tol:
+            n = int(min(max_faces, len(cage.Q) * min(4.0, max(1.3, grow))))
+        else:
+            # the next cage is laid afresh and its 99th percentile moves a
+            # few percent with it: keep it aimed just under the tolerance
+            n = int(min(max_faces, max(n, len(cage.Q) * grow)))
     cage, H, dev = best
     # the smoothest surface the tolerance allows: raise the bending weight
     # while the deviation stays within it (a noisy input's ripples go first)
@@ -1572,6 +1637,25 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
     w["within"] = bool(w["within"] and w["patchesMax"] <= w["bound"])
     shape, free = to_brep(b)
     valid = bool(BRepCheck_Analyzer(shape).IsValid())
+    if (not valid or free) and rep["patches"].get("layout") == "lines":
+        # rectangles that do not sew into a closed solid: face by face
+        if progress:
+            progress(f"lines layout sews with {free} free edges; patches face by face")
+        b, lay = patches(Hp, cage.V, degree, irregular=7, refine=0)
+        q = patch_quality(Hp, cage.V, b, lay)
+        if q["patchToLimit"]["max"] > rep["tolerance"] / 3:
+            b, lay = patches(Hp, cage.V, degree, irregular=5, refine=1)
+            q = patch_quality(Hp, cage.V, b, lay)
+            q["starPointsSplit"] = True
+        q["layout"] = f"faces (lines layout left {free} free edges)"
+        rep["patches"] = q
+        if packed:
+            b = pack(Hp, cage.V, b, lay)
+        shape, free = to_brep(b)
+        valid = bool(BRepCheck_Analyzer(shape).IsValid())
+        w["patchesMax"] = round(w["surfaceMax"] + q["patchToLimit"]["max"], 4)
+        w["within"] = bool(not w["surfacePlaces"] and not w["printableHolesClosed"]
+                           and w["patchesMax"] <= w["bound"])
     # points as OpenCascade writes them: rounding the poles of a degree-7
     # patch to 10 nm moves it off its own edges, and a reader cannot mesh it
     wrote = write_step(shape, path, verify=valid, decimals=None)

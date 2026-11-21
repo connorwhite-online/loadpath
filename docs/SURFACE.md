@@ -63,6 +63,18 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
    holds. `worst.patchesMax` bounds the written faces (limit miss plus
    patch-to-limit). Euler numbers of mesh and cage are reported side by
    side, so a lost handle is never silent.
+
+   **Finer only where the shape is tight.** Instant Meshes lays one edge
+   length everywhere, so once the part as a whole is within the tolerance
+   the cage is laid once more over the mesh with space blown up k times
+   round each flagged place (`quad_cage(..., finer=)`, a radial map
+   c + (x - c)(1 + (k - 1) exp(-r^2/R^2)), one to one for k < 3.2) and the
+   quads mapped back: edges come out k times shorter there and as before
+   elsewhere. It is tried once: the remesher lays the whole cage afresh, so
+   a second round moves every other place too (a hole kept open on one lay
+   closed on the next, on the arm link); after it the cage gets finer
+   everywhere. If the rectangles along the lines do not sew into a closed
+   solid, the faces are written one by one.
 5. **Patches along the cage's own lines.** Every edge line leaving a star
    point (a vertex with 3 or 5+ edges) is drawn on until it meets another
    star point or a line already drawn (a motorcycle graph). Between the
@@ -89,7 +101,7 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
 | input | cage | STEP faces | time | deviation p99 / max | worst kink | valid, volume |
 |---|---|---|---|---|---|---|
 | Tripo-style pebble (holes, double wall, jitter) | 5642 quads | 241 (was 525) | 2.5 min (was 12.5) | 0.071 / 0.27 mm, every place within 0.3 (was 0.095 / 0.35) | 0.005 deg (was 0.63) | yes, -0.004% (was -0.14%) |
-| optimized arm link body (quick run, 2026-11-21) | 13255 quads (was 8383) | 957 (was 4173) | 10.4 min (was 20.5) | 0.083 / 0.27 mm away from two 1 mm pinholes (was 0.093 / 0.65) | 0.048 deg | yes, -0.01% (the old route left 4 free edges: not a solid) |
+| optimized arm link body (quick run, 2026-11-21) | 12-13k quads (was 8383) | 887-957 (was 4173) | 8-10 min (was 20.5) | 0.083 / 0.27 mm away from two 1 mm pinholes (was 0.093 / 0.65) | 0.048 deg | yes, -0.01% (the old route left 4 free edges: not a solid) |
 
 Tolerance 0.1 mm (a third of FDM's +-0.3 mm) on both, on the 99th
 percentile; the worst point is held to the accuracy itself. On the arm

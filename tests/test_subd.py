@@ -196,3 +196,24 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print("ok", name)
+
+
+def test_cage_finer_only_where_asked():
+    """A spot asked k times finer gets edges about k times shorter there,
+    the rest at the density asked, and the cage still lies on the mesh
+    (Instant Meshes laid over space blown up round the spot, mapped back)."""
+    import trimesh
+
+    m = trimesh.creation.icosphere(5, radius=10.0)
+    c0 = np.array([0.0, 0.0, 10.0])
+    c = subd.quad_cage(m, 800, finer=[(c0, 3.0, 6.0)])
+    L = np.linalg.norm(c.V[c.E[:, 0]] - c.V[c.E[:, 1]], axis=1)
+    mid = c.V[c.E].mean(axis=1)
+    near = np.median(L[np.linalg.norm(mid - c0, axis=1) < 2.0])
+    far = np.median(L[np.linalg.norm(mid + c0, axis=1) < 8.0])
+    assert far / near > 2.0, (near, far)
+    assert len(c.Q) < 1.5 * 800, len(c.Q)
+    assert np.abs(np.linalg.norm(c.V, axis=1) - 10.0).max() < 0.05
+    P = np.random.default_rng(0).normal(size=(500, 3)) * 5
+    spots = [(np.zeros(3), 3.0, 2.0), (np.array([1.0, 1.0, 0.0]), 2.5, 4.0)]
+    assert np.abs(subd._warp(subd._warp(P, spots), spots, inverse=True) - P).max() < 1e-9
