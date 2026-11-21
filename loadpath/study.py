@@ -234,7 +234,7 @@ def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should
     from scipy import ndimage
 
     try:
-        coarse = build_domain(study, pitch=2.0 * domain.pitch)
+        coarse = build_domain(study, pitch=2.0 * domain.pitch, cut_walls=True)
     except ValueError:
         # The coarse grid can lose what the fine one resolves (a fastener's
         # seat and face rings landing on the same nodes, a thin load pad):
@@ -1279,7 +1279,7 @@ def _run_pitches(study: Study, starts: int, on_progress, should_stop) -> StudyRe
     does), with every grid's pick in result.starts."""
     import dataclasses
 
-    p0 = float(study.pitch) if study.pitch else build_domain(study).pitch
+    p0 = float(study.pitch) if study.pitch else build_domain(study, cut_walls=True).pitch
     studies = [dataclasses.replace(study, pitch=p0 * (1.0 + PITCH_STEP * k)) for k in range(starts)]
     t0 = time.time()
     results = _parallel(studies, on_progress, should_stop)
@@ -1843,6 +1843,12 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
     goal = study.goal
     st = dataclasses.replace(study, goal=dataclasses.replace(goal, method="search"))
     cst = dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained"))
+    from .domain import wall_pitch
+    wp = wall_pitch(cst)
+    if wp is not None:
+        # the constrained method reads a pinned wall on whole cells: two
+        # through it (the search's grid models it as cut cells, thinwall.py)
+        cst = dataclasses.replace(cst, pitch=wp)
     spec = _Speculative(cst) if _Speculative.wanted(study, st) else None
     try:
         return _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search)
@@ -2619,7 +2625,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         if on_progress is not None:
             on_progress(event, field_)
 
-    domain = build_domain(study)
+    domain = build_domain(study, cut_walls=True)
     radius = filter_radius(domain, study.length_scale, study.min_hole)
     info = _domain_info(domain, radius)
     emit({"stage": "domain", **info, "warnings": domain.warnings})

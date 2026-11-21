@@ -380,7 +380,18 @@ def choose_build_direction(study, candidates=None, max_elements: int = _COMPARE_
             tries = list(cands)
         emit({"selfSupporting": [direction_label(c) for c in tries]})
         full = min(study.max_iterations, 80)
-        workers = _workers(max(len(tries), 1), cells=min(study.max_elements, max_elements))
+        cells = min(study.max_elements, max_elements)
+        need = None
+        if study.shells:
+            # each direction's part is read on a grid four cells through its
+            # thinnest wall, up to verify._SHELL_MAX_CELLS cut cells: that, not
+            # the design grid, sets a worker's memory (a ribbed lid's
+            # directions ran a 15 GB box out of memory at 5.4 GB a worker,
+            # about 14 kB a cell)
+            from .study import _run_bytes
+            from .verify import _SHELL_MAX_CELLS
+            need = max(_run_bytes(cells), 14e3 * _SHELL_MAX_CELLS)
+        workers = _workers(max(len(tries), 1), cells=cells, need=need)
         if proc.anisotropic and not (proc.overhangs and self_supporting):
             tries = [] if rows else list(cands)
         if not tries:

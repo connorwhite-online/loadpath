@@ -210,8 +210,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
                              "next": "loadpath build (MCP: loadpath_build)"})
     try:
         s = study_from_dict(raw, base_dir=base_dir or os.getcwd())
-        # the grid a run would use (a pinned wall sets the cell, domain.wall_pitch)
-        d = build_domain(s, wall_pitch(s))
+        # the grid a run would use (a pinned wall sets the cell, domain.wall_pitch,
+        # or is cut cells on the study's own: thinwall.py)
+        d = build_domain(s, wall_pitch(s), cut_walls=True)
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         return {"ok": False, "error": str(exc) or type(exc).__name__, "issues": issues}
     warnings = [f"{i['path']}: {i['message']}" for i in issues] + list(d.warnings)
@@ -288,7 +289,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
                         "`pip install tbb` (tbb)")
     return jsonable({
         "ok": True, "name": s.name, "pitch": d.pitch, "threadingLayer": layer, "peakMemoryGB": round(mem, 1), "cells": d.n_elem, "dims": list(d.dims),
-        "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.length_scale, s.min_hole),
+        "preservedCells": int(d.preserve.sum()),
+        **({"wallCells": int(d.walls.sum())} if getattr(d, "walls", None) is not None else {}),
+        "filterRadius": filter_radius(d, s.length_scale, s.min_hole),
         "supportNodes": int(d.support_nodes.sum()), "loadNodes": int(d.load_nodes.sum()),
         # mirror planes the design will be held to (declared and found), and
         # why each other plane is not one: {"x": "load case 2"} is a one-way push

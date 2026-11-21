@@ -275,8 +275,46 @@ check went from 251k cells and 38 s to 71k and 19 s, reading 2.08 for 2.02,
 and the run delivered the same part (15.0 g, tets 2.38 for 2.32). The
 saving is half the check, not the fifth the solve alone suggests: reading
 stress on the surface and the submodels at hotspots do not shrink with the
-grid. Open: the signed-distance skin in `run`; a midsurface shell for
-housings past the size above.
+grid.
+
+Done: the signed-distance wall in `run` (`loadpath/thinwall.py`). The design
+grid no longer refines to two cells through the thinnest pinned wall; it
+stays at the study's own budget, and each cell a wall crosses takes the
+wall's own stiffness, integrated over 4^3 sub-cells from the wall's signed
+distance (the verification's cut cells, the click's thin skin), as a fixed
+operator beside the pins' springs. The rest of such a cell is still the
+optimizer's, at its share of a cell's stiffness and volume; where a
+keep-out touches it, it is air. The grid refines only where a wall is
+thinner than one cell. A cantilever plate 1.5 mm thick, off the grid's
+planes, against its own reading at three cells:
+
+| Cells through the plate | 1.0 | 1.4 | 1.7 | 2.1 | 3 |
+|---|---|---|---|---|---|
+| Cut cells, tip deflection / beam theory | 0.81 | 0.83 | 0.85 | 0.89 | 0.91 |
+| Whole cells (wall rounds to cells) | 0.91 | 0.29 | 0.53 | 0.33 | 0.91 |
+
+Whole cells are right only where the wall happens to land on a whole number
+of cells, and 3.5x too stiff where it does not; cut cells hold within 11%
+from one cell through (under one they read stiff: 1.4x at two thirds of a
+cell, 1.9x at under half, which check warns of). Two dev parts, not in the
+held-out set, the same box (4 cores, 15 GB), before and after:
+
+| Part | Grid | Search | Delivered | Safety factor (tets) |
+|---|---|---|---|---|
+| Duct, 1.6 mm wall, cantilevered, before | 176k cells (0.8 mm) | 44 min | 26.7 g | 5.4 (5.8) |
+| Duct, after | 44k cells (1.3 mm) | 18 min | 22.0 g | 3.8 (4.3) |
+| Ribbed lid, 1.5 mm skin, before | 163k cells (0.75 mm) | 33 min | 20.7 g | 2.18 (2.39) |
+| Ribbed lid, after | 32k cells (1.3 mm) | 18 min | 20.7 g | 2.05 (2.36) |
+
+The duct's "before" is all wall: its load needed nothing behind the wall,
+and the drawn 1.6 mm wall came out 2.5 mm (205 mm^2 of section for 129),
+because the run meshed the wall's whole cells as part of the organic body
+and the exact wall went in under it. With the wall off the field the
+delivered wall is the drawn one. The constrained method keeps whole cells
+on the refined grid (its stress limit is read per cell), so where `auto`
+runs it the run's total time drops less than its search's. Open: a
+midsurface shell for housings past the size above; cut walls for the
+constrained method, pressure and thermal studies.
 
 ## Gaps, ranked by how many users they hit
 

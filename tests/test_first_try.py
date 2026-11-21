@@ -222,30 +222,97 @@ def test_a_peak_on_a_keep_outs_square_edge_is_named_as_the_notch_to_round():
     assert "square edge" not in note, "no grid given: nothing to hold the peak against"
 
 
-def test_a_pinned_wall_sets_the_cell_when_the_study_did_not():
-    """A lid with a 1.5 mm skin at a 20k budget: the grid comes out two
-    cells across the skin and check has nothing to say about it; an
-    explicit pitch is left alone, and a wall too thin for four times the
-    budget still warns."""
+def _lid(skin, **res):
+    return {"designSpace": [_box([-30, -20, 0], [30, 20, 9])], "skin": {"thickness": skin, "open": ["-z"]},
+            "supports": [{"shape": _box([-30, -20, -0.5], [-24, 20, 0.3])},
+                         {"shape": _box([24, -20, -0.5], [30, 20, 0.3])}],
+            "loads": [{"shape": _cyl([0, 0, 8.8], "z", 0.8, 6), "force": [0, 0, -60]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2},
+            "resolution": res or {"maxElements": 20000}}
+
+
+def _thin_warnings(r):
+    return [w for w in r["warnings"] if "cells thick" in w or "two cells" in w or "a cell thick" in w]
+
+
+def test_a_pinned_wall_sets_the_cell_when_the_study_did_not(monkeypatch):
+    """On whole cells (LOADPATH_WALL_MODEL=cells, and the constrained
+    method) a lid's 1.5 mm skin at a 20k budget sets the grid two cells
+    across the skin and check has nothing to say about it; an explicit
+    pitch is left alone, and a wall too thin for four times the budget
+    still warns."""
     from loadpath.domain import build_domain, wall_pitch
 
-    def lid(skin, **res):
-        return {"designSpace": [_box([-30, -20, 0], [30, 20, 9])], "skin": {"thickness": skin, "open": ["-z"]},
-                "supports": [{"shape": _box([-30, -20, -0.5], [-24, 20, 0.3])},
-                             {"shape": _box([24, -20, -0.5], [30, 20, 0.3])}],
-                "loads": [{"shape": _cyl([0, 0, 8.8], "z", 0.8, 6), "force": [0, 0, -60]}],
-                "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2},
-                "resolution": res or {"maxElements": 20000}}
-
-    thin = lambda r: [w for w in r["warnings"] if "cells thick" in w or "two cells" in w]  # noqa: E731
+    lid = _lid
+    monkeypatch.setenv("LOADPATH_WALL_MODEL", "cells")
     st = study_from_dict(lid(1.5))
     d = build_domain(st, wall_pitch(st))
     assert d.pitch <= 0.75 + 1e-9 and d.n_elem <= 84000, (d.pitch, d.n_elem)
-    assert not thin(check_study(lid(1.5)))
+    assert not _thin_warnings(check_study(lid(1.5)))
     assert wall_pitch(study_from_dict(lid(1.5, pitch=1.2))) is None
     assert wall_pitch(study_from_dict({k: v for k, v in lid(1.5).items() if k != "skin"})) is None
-    assert thin(check_study(lid(1.5, pitch=1.2)))
-    assert thin(check_study(lid(0.6)))
+    assert _thin_warnings(check_study(lid(1.5, pitch=1.2)))
+    assert _thin_warnings(check_study(lid(0.6)))
+    monkeypatch.delenv("LOADPATH_WALL_MODEL")
+    constrained = dict(lid(1.5), goal={"safetyFactor": 2, "method": "constrained"})
+    assert wall_pitch(study_from_dict(constrained)) <= 0.75 + 1e-9
+
+
+def test_a_thin_wall_is_cut_cells_on_the_studys_own_grid():
+    """The same lid in a plain run: the skin is cut cells on the study's
+    own grid (thinwall.py), a cell through it is enough, the grid is
+    refined only for a skin under a cell, and check says so then. Its
+    cells cost the optimizer the rest of the cell the skin leaves."""
+    from loadpath.domain import build_domain, wall_pitch
+
+    st = study_from_dict(_lid(1.5))
+    assert wall_pitch(st) is None
+    d = build_domain(st, cut_walls=True)
+    # (only the cells under the supports and the load are pinned solid over it)
+    assert d.walls is not None and d.walls.sum() > 1000 and (d.preserve & d.walls).sum() < 0.1 * d.walls.sum()
+    assert d.pitch > 0.95, d.pitch
+    share = d.mesh.wall_share[d.walls]
+    assert 0.0 < share.min() and share.max() <= 1.0
+    assert np.allclose(d.volume_weights[d.walls], 1.0 - share)
+    assert not _thin_warnings(check_study(_lid(1.5)))
+    assert not _thin_warnings(check_study(_lid(1.5, pitch=1.2)))
+    assert build_domain(st).walls is None          # the other solves keep whole cells
+    st6 = study_from_dict(_lid(0.6))
+    assert wall_pitch(st6) < 0.7                    # a cell through it, within 4x the budget
+    assert _thin_warnings(check_study(_lid(0.6)))   # ... which still leaves it under a cell
+
+
+def _plate_tip(pitch, cut, t=1.5):
+    """Tip deflection of a cantilever plate (a skin left open on five faces)
+    at unit modulus over the beam's F L^3 / 3 E I, nothing designed."""
+    from loadpath.domain import build_domain
+    from loadpath.simp import E_MIN, _Analysis
+
+    L, b, z0 = 60.0, 20.0, 0.37
+    st = study_from_dict({"designSpace": [_box([0, -b / 2, -8 + z0], [L, b / 2, 2 + z0])],
+                          "skin": {"thickness": t, "open": ["-z", "+x", "-x", "+y", "-y"]},
+                          "supports": [{"shape": _box([0, -b / 2, -8], [0.5, b / 2, 3])}],
+                          "loads": [{"shape": _box([L - 0.5, -b / 2, -8], [L, b / 2, 3]), "force": [0, 0, -1]}],
+                          "material": "pla", "goal": {"volumeFraction": 0.2}, "minMember": 2.0,
+                          "resolution": {"pitch": pitch}})
+    d = build_domain(st, cut_walls=cut)
+    fe = _Analysis(d, st.elastic(design=True), 1e-9)
+    x = d.preserve.astype(float)
+    u = fe.solve(E_MIN + (1 - E_MIN) * x ** 3, x, [None])[0]
+    return float(d.loads[0] @ u) / (L ** 3 / (3 * b * t ** 3 / 12))
+
+
+def test_a_cut_cell_wall_bends_like_the_wall_where_whole_cells_round_it():
+    """A 1.5 mm plate off the grid's planes: as cut cells it reads within
+    15% of its own reading at three cells through, from 1.4 cells; on whole
+    cells at the same grids it rounds to 2.2 mm and 1.7 mm and reads 3.5x
+    and 1.7x too stiff (bending goes as thickness cubed)."""
+    ref = _plate_tip(0.5, True)
+    assert 0.85 < ref < 0.95, ref        # beam to plate (1 - nu^2) theory
+    for p in (1.1, 0.9):
+        cut, whole = _plate_tip(p, True), _plate_tip(p, False)
+        assert abs(cut / ref - 1.0) < 0.15, (p, cut, ref)
+        assert whole / ref < 0.6, (p, whole, ref)
 
 
 def test_a_searchs_candidates_read_a_pinned_wall_at_two_cut_cells():

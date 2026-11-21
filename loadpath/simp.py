@@ -142,6 +142,10 @@ class _Analysis:
         self.ke = hex8_ke(nu) * mesh.pitch
         self.support_touch = domain.support_nodes[mesh.enode].any(axis=1)
         self.anchor = self.support_touch | domain.load_nodes[mesh.enode].any(axis=1) | domain.preserve
+        walls = getattr(domain, "walls", None)
+        if walls is not None:
+            # a thin wall's cells (thinwall.py): the wall is there whatever the design does
+            self.anchor = self.anchor | walls
         self._full = None
         self._sub = None
         self.last_iters = 0
@@ -252,6 +256,10 @@ class _Analysis:
             # a bought member's cells stay in every reduced system: its stiffness is a fixed operator
             # on them (stock.py) less the printed material's, which only holds with the cell there
             keep = keep | stock
+        walls = getattr(self.domain, "walls", None)
+        if walls is not None:
+            # a thin wall's stiffness is a fixed operator on its cells' nodes (thinwall.py)
+            keep = keep | walls
         return keep
 
     # Reuse one reduced system (its CSR layout and its multigrid hierarchy)
@@ -1243,6 +1251,10 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         x = np.clip(x * (1.0 + float(size or 1e-9) * np.random.default_rng(int(seed)).standard_normal(n)), 0.0, 1.0)
     x[pres] = 1.0
     void = opts.void if opts.void is not None and opts.void.any() else None
+    wv = getattr(domain, "wall_void", None)
+    if wv is not None and wv.any():
+        # the rest of a thin wall's cell where nothing may be printed (thinwall.py)
+        void = wv.copy() if void is None else (void | wv)
     if void is not None:
         x[void] = 0.0
     # massProperties: each cell's cost as volume plus its share of inertia

@@ -20,6 +20,7 @@ paths, not about surfaces.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 
 import os
@@ -104,6 +105,11 @@ class Domain:
     # design cells that join drawn cells through faces where the drawn cells
     # meet only at an edge or corner (drawn_joints): never pruned
     joints: np.ndarray | None = None
+    # thin pinned walls as cut cells (thinwall.py): the cells they cross
+    # (their stiffness is in `springs`), and those of them the optimizer may
+    # not fill (a keep-out touches them, or they are outside the design space)
+    walls: np.ndarray | None = None
+    wall_void: np.ndarray | None = None
 
     @property
     def n_elem(self):
@@ -180,8 +186,11 @@ def wall_pitch(study: Study) -> float | None:
     own grid already has it (or sets its pitch itself).
 
     A wall the study pins (a skin, a duct's or plenum's wall) carries by
-    bending, and under two cells across it bends too stiffly on the grid
-    (the check warning below). The wall the study drew sets the cell, as
+    bending. On whole cells it needs two cells across, and still rounds by
+    up to half a cell (the check warning below); as cut cells
+    (thinwall.py, where it applies) one cell across bends like the wall,
+    so the grid is refined only where the wall is thinner than a cell
+    (eight times fewer cells than two through it). The wall the study drew sets the cell, as
     the member does for the constrained method, up to the same 4x
     maxElements cells. Every packaged study with such a wall set its pitch
     by hand to get this. For `loadpath run` and `check` only: the switch,
@@ -189,12 +198,15 @@ def wall_pitch(study: Study) -> float | None:
     grids (switch._thin_skin)."""
     if study.pitch or not study.shells:
         return None
-    d = build_domain(study)
+    from . import thinwall
+    cut = thinwall.applies(study)
+    d = build_domain(study, cut_walls=cut)
     thin = min(float(t) for _, t in study.shells)
     # (cells counted on the study's own grid, not estimated: the estimate
     # runs a few percent over and left a 1.6 mm skin at 1.95 cells)
     most = d.pitch * (d.n_elem / (4.0 * study.max_elements)) ** (1.0 / 3.0)
-    want = max(thin / 2.0, most)
+    # a wall as cut cells on the grid (thinwall.py) needs only a cell through it
+    want = max(thin / (thinwall.MIN_CELLS if cut else 2.0), most)
     return want if want < d.pitch - 1e-9 else None
 
 
@@ -694,9 +706,13 @@ def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed
     return f
 
 
-def build_domain(study: Study, pitch: float | None = None) -> Domain:
+def build_domain(study: Study, pitch: float | None = None, cut_walls: bool = False) -> Domain:
+    """The design grid. `cut_walls`: a pinned wall under two cells thick on
+    it enters as cut cells (thinwall.py) where thinwall.applies; `loadpath
+    run`'s optimizer asks for that, the other solves keep whole cells (or
+    their own thin skin, switch._thin_skin)."""
     if pitch or study.pitch:
-        return _build_domain(study, float(pitch) if pitch else float(study.pitch))
+        return _build_domain(study, float(pitch) if pitch else float(study.pitch), cut_walls)
     # maxElements is a cap: the pitch is estimated from a coarse occupancy
     # sample, which came out 2-5% over in the brief evals (20988 cells for
     # 20000); grow the cells until the grid fits
@@ -706,7 +722,7 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     p = choose_pitch(study)
     cap = cell_cap(study)
     for _ in range(4):
-        d = _build_domain(study, p)
+        d = _build_domain(study, p, cut_walls)
         if d.n_elem <= cap:
             return d
         p *= (d.n_elem / cap) ** (1.0 / 3.0) * 1.003
@@ -1066,7 +1082,7 @@ def _along(build, a: int) -> bool:
         return True
 
 
-def _build_domain(study: Study, pitch: float) -> Domain:
+def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain:
     lo, hi = study.bounds()
     center = 0.5 * (lo + hi)
     dims = np.maximum(np.ceil((hi - lo) / pitch - 1e-9).astype(int), 1)
@@ -1081,7 +1097,14 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     centers = origin + (ijk + 0.5) * pitch
 
     design_f = _fraction(study.design_space, centers, pitch)
-    pres_f = _fraction([r.shape for r in study.preserve], centers, pitch)
+    # thin pinned walls as cut cells (thinwall.py): their cells are not whole
+    # preserved cells, so they are left out of the drawn geometry's share
+    thin_ids = set()
+    if cut_walls:
+        from . import thinwall
+        if thinwall.applies(study):
+            thin_ids = {rid for rid, _ in thinwall.thin_shells(study, pitch)}
+    pres_f = _fraction([r.shape for r in study.preserve if r.id not in thin_ids], centers, pitch)
     keep_f = _fraction([r.shape for r in study.keep_out], centers, pitch)
     # Only a keep-out that cuts (a bore, a way in, cutsPreserve) takes
     # preserved geometry out; a clearance volume keeps the optimizer's
@@ -1090,13 +1113,26 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     cutting = [r.shape for r in study.keep_out if getattr(r, "cuts", True)]
     cut_f = keep_f if len(cutting) == len(study.keep_out) else _fraction(cutting, centers, pitch)
     preserve = (pres_f >= 0.5) & (cut_f < 0.5)
-    skin = [r.shape for r in study.preserve if r.id == "skin"]
+    skin = [r.shape for r in study.preserve if r.id == "skin" and r.id not in thin_ids]
     if skin and any(not getattr(r, "bore", True) for r in study.keep_out if getattr(r, "cuts", True)):
         bores = [r.shape for r in study.keep_out if getattr(r, "cuts", True) and getattr(r, "bore", True)]
         bore_f = _fraction(bores, centers, pitch) if bores else np.zeros(len(centers))
         preserve |= (_fraction(skin, centers, pitch) >= 0.5) & (bore_f < 0.5)
     preserve = _face_bridge(preserve, pres_f, dims, (design_f >= 0.5) & (keep_f == 0))
     design = (design_f >= 0.5) & ~preserve & (keep_f == 0)
+    wall_cells, wall, wall_open = None, None, None
+    if thin_ids:
+        # the cells a thin wall crosses: in the analysis with the wall's own
+        # cut-cell stiffness; the rest of each is designed where the design
+        # space has it and no keep-out touches it, and air otherwise
+        from .thinwall import wall_cells as _wall_cells
+        bores = [r.shape for r in study.keep_out if getattr(r, "cuts", True) and getattr(r, "bore", True)]
+        wall_cells = _wall_cells(study, centers, pitch, preserve, cut=bores)
+        if wall_cells is not None:
+            wall = np.zeros(len(centers), bool)
+            wall[wall_cells.idx] = True
+            wall_open = wall & (design_f >= 0.5) & (keep_f == 0)
+            design |= wall_open
     stock_cell = None
     if getattr(study, "stock", None):
         # Bought members (stock.py) are bodies in the analysis: every cell one touches is in the mesh,
@@ -1127,6 +1163,8 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     active = preserve | design
     if stock_cell is not None:
         active |= stock_cell
+    if wall is not None:
+        active |= wall
     if not active.any():
         raise ValueError("the design space is empty after removing keep-outs")
 
@@ -1181,6 +1219,14 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                     "({\"type\": \"subtract\", \"shapes\": [keep-out, preserve]}), or give a clearance keep-out "
                     "\"bore\": false (it then never cuts what is drawn), if it is meant to stay.")
     for rid, t in study.shells:
+        if rid in thin_ids:
+            from .thinwall import MIN_CELLS
+            if t < MIN_CELLS * pitch:
+                warnings.append(
+                    f"{rid} is {t:g}mm thick, {t / pitch:.1f} cells: the optimizer reads a wall under a cell thick "
+                    "too stiff in bending (1.4x at two thirds of a cell, 1.9x at under half). Set resolution.pitch "
+                    f"to {t:.2g}mm or less, or raise resolution.maxElements.")
+            continue
         if t < 2.0 * pitch:
             warnings.append(
                 f"{rid} is {t:g}mm thick, {t / pitch:.1f} cells: a wall under two cells thick is too stiff in "
@@ -1290,6 +1336,30 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                         "the screw, so it would load nothing. To design for the clamp, hold the bolt holes across "
                         "the screw only (fix 'xy' for a screw along z) or support elsewhere")
         bc = boundary_conditions(study, mesh)
+    wall_el = wall_void = wall_k = None
+    if wall_cells is not None:
+        from .thinwall import operator as _wall_operator
+        pos = np.full(len(centers), -1)
+        pos[np.flatnonzero(active)] = np.arange(mesh.n_elem)
+        el = pos[wall_cells.idx]
+        on = el >= 0          # (cells left out as unconnected)
+        wall_el = np.zeros(mesh.n_elem, bool)
+        wall_el[el[on]] = True
+        phi = np.zeros(mesh.n_elem)
+        phi[el[on]] = wall_cells.phi[on]
+        wall_void = wall_el & ~wall_open[active] & ~pres_el
+        # the wall's share of each cell is the wall's: the grid's own element
+        # carries the rest (scaled, as a bought member's cell is), the wall's
+        # weight is its own (thinwall.py)
+        mesh.stock_scale = np.where(wall_el, np.maximum(1.0 - phi, 1e-4), 1.0)
+        mesh.stock_density = phi
+        mesh.wall_share = phi
+        sub = dataclasses.replace(wall_cells, ind=wall_cells.ind[on], phi=wall_cells.phi[on])
+        wall_k = _wall_operator(sub, mesh, el[on], study.elastic(design=True), bc.fixed)
+        bc.springs = wall_k if bc.springs is None else (bc.springs + wall_k).tocsr()
+        if bc.raw_loads:
+            # a free part's inertia was weighed before the wall's own weight was on the mesh
+            bc = dataclasses.replace(boundary_conditions(study, mesh), springs=bc.springs)
     support_nodes, fixed, load_nodes = bc.support_nodes, bc.fixed, bc.load_nodes
     loads = list(bc.loads)
     names = [c.name for c in study.load_cases]
@@ -1462,7 +1532,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
                   springs=bc.springs, seats=bc.seats, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
-                  volume_weights=_volume_weights(study, mesh, pres_el),
+                  volume_weights=_wall_weights(_volume_weights(study, mesh, pres_el), mesh, wall_el),
                   center_of_mass=(None if getattr(getattr(study, "mass_properties", None), "com_target", None) is None
                                   else (study.mass_properties.com_target, study.mass_properties.com_tolerance)),
                   raw_loads=list(bc.raw_loads) if bc.raw_loads else None,
@@ -1485,12 +1555,27 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     dom.impacts = [(ci, c) for ci, c in enumerate(study.load_cases) if getattr(c, "impact", None) is not None]
     dom.impact_material = (float(study.material.E), float(study.material.density))
     dom.impact_study = study
+    if wall_el is not None:
+        # thin walls as cut cells (thinwall.py): their cells, and those of them the optimizer may not fill
+        dom.walls = wall_el
+        dom.wall_void = wall_void & ~dom.preserve
     if stock_el is not None:
         # bought members' cells, and those of them on stretches that are not joined (reconstruct leaves
         # these out of the printed part)
         dom.stock = stock_el
         dom.stock_free = free[active] & stock_el
     return dom
+
+
+def _wall_weights(vw, mesh: HexMesh, wall_el):
+    """Volume weights with a thin wall's cells costing the rest of the cell
+    the wall leaves (thinwall.py): the optimizer's density there is the
+    share of that rest it fills."""
+    if wall_el is None:
+        return vw
+    share = getattr(mesh, "wall_share", None)
+    w = np.where(wall_el, 1.0 - share, 1.0)
+    return w if vw is None else vw * w
 
 
 def _volume_weights(study: Study, mesh: HexMesh, preserve: np.ndarray):
