@@ -2071,12 +2071,14 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     def loose() -> bool:
         """The box is a cost bound on a bonus the run may not need. When the
         run has a clock (--time-limit) with room for another part, a stage
-        that already holds a lighter passing part, still loose (its last
-        ratio over the accepted band), goes on to the clock instead: a 4 g
-        snap clip's stage stopped at 1.20 over target with 22 of its 40
-        minutes unused, one step from the band."""
+        that already holds a lighter passing part and has not landed (its
+        last ratio outside the accepted band [1, 1.12)), goes on to the
+        clock instead: a 4 g snap clip's stage stopped at 1.20 over target
+        with 22 of its 40 minutes unused, one step from the band; given that
+        step it read 0.99 and stopped again, its bracket still open."""
         left = _time_left(should_stop)
-        if left is None or not won[0] or ratio_last[0] is None or ratio_last[0] < _CONSTRAINED_DONE or not done[0]:
+        if left is None or not won[0] or ratio_last[0] is None or 1.0 <= ratio_last[0] < _CONSTRAINED_DONE \
+                or not done[0]:
             return False
         return left > (time.time() - start) / done[0]
 
