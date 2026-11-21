@@ -479,28 +479,45 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    pins bearing on the bosses only, a load placement, not a geometry change. `LOADPATH_DRAWN_CARRY=0` and `LOADPATH_DRAWN_BEARS=0`
    turn the meshing and domain halves off.
 
-### Open: parts left heavier than they need to be
+### Fixed: parts left heavier than they need to be
 
-Read from the search logs of the 2026-11-21 re-run (not fixed here; it is
-the search's time, not the shape):
+Read from the search logs of the 2026-11-21 re-run: the search's time, not
+the shape. Fixed on development parts (shelf bracket, printed hook, wall
+bracket), then measured on the four held-out parts at their 40-minute limit.
 
-- **The constrained stage ends on its time box while well over target.**
-  The tool clip's three constrained runs read 1.30, 1.32 and 1.26 times
-  the target at 4.7, 4.7 and 4.5 g, then the ten-minute box closed. The
-  limit is relaxed by the square root of each reading (a guard against
-  the wall bracket's wild first readings), a run takes 3 to 5 minutes at
-  0.8 mm on a 4 g part, and the first 14% relaxation moved neither the
-  mass nor the reading. A step sized by the measured response (the slope
-  of reading against limit over the runs so far) would get there in the
-  runs the box allows.
-- **The 40-minute limit lands mid-bisection.** The caster fork passed at
-  22.2 g, failed at 15.7 g and stopped; its build-direction settle then
-  ran another 15 minutes past the limit.
-- **A part whose envelope barely carries the load cannot be searched.**
-  The corner bracket as a solid block reads 1.11 times its target; the
-  readings between 30% and 55% fill wander between 0.89 and 0.98 with
-  no trend (a hot spot at a bolt seat sets them), and 20 of its 40
-  minutes went to fills that could not pass.
+- **The time limit never reached the small parts' searches.** A part under
+  30k cells is searched on three grids side by side in worker processes,
+  and the workers were started without the run's clock. `--time-limit` is
+  now a deadline every stage reads (`study._deadline`): the workers get it,
+  no part is started that the time left cannot hold (the last part's time
+  is the estimate), the constrained stage is not opened with less than two
+  search parts' time left, and the build-direction settle is skipped past
+  the limit (the part on supports is delivered, which a study naming no
+  overhang rule allows). The caster fork's settle had run 15 minutes past
+  the limit; now the fork stops at 32 minutes, its last part declined with
+  8.8 minutes left and 9.1 needed.
+- **The constrained limit crept.** While every constrained run passes, the
+  limit was relaxed by the square root of each reading. It is now relaxed
+  by the step the measured slope of reading against limit (log-log, over
+  the runs so far, never weaker than a quarter power) says lands on 1.06
+  (`study._relax_step`). The tool clip read 1.30, 1.21, then 0.99 and 1.09:
+  in the band in four runs. Its ten-minute box (a cost bound on a bonus)
+  had closed after two; with room on the clock, a stage holding a lighter
+  passing part that has not landed in [1, 1.12) now runs on to the clock.
+- **A block that barely carries the load was read and thrown away.** The
+  solid block read before the pitch starts went unused when in reach, and
+  each grid's search read it again after two failed parts. Its margin now
+  goes to the searches, and a step up from a failing part reaches at least
+  to where the line from that part to the block crosses the target
+  (`study._toward_block`): a margin that barely grows with the material
+  (a seat sets the peak) is taken at its word.
+
+| Held-out part | Before (main a0608aa) | After (main 5fceed6) |
+|---|---|---|
+| Tool clip | 4.5 g | 4.0 g, SF 2.19 for 2, 22 min |
+| Corner bracket | 12.3 g | 7.8 g, SF 2.53 for 2.5, 30 min |
+| Caster fork | 22.2 g, settle 15 min past the limit | 21.0 g, SF 2.68 for 2.5, 32 min |
+| Tablet stand | 35.7 g | 32.4 g, 13 min |
 
 ## Rule for work under this document
 
