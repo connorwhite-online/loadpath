@@ -31,6 +31,7 @@ import numpy as np
 from scipy import ndimage
 
 from .domain import boundary_conditions, gravity_force
+from .edtops import edt as _edt
 from .fem import HexMesh, Solver, Stiffness, von_mises
 from .spec import Study
 
@@ -138,7 +139,7 @@ def _voxel_fractions(mesh, pitch, box=None, sub=3):
 def _thickness(solid, pitch):
     """Member thickness on the medial ridge: twice the distance to void at
     cells that are local maxima of that distance."""
-    edt = ndimage.distance_transform_edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1]
+    edt = _edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1]
     ridge = solid & (edt >= ndimage.maximum_filter(edt, size=3)) & (edt > 0)
     # A ridge cell's distance to void is ceil(n/2) for a member n cells
     # thick, so 2*edt over-reads odd and 2*edt-1 under-reads even
@@ -1002,7 +1003,7 @@ _THIN_CELLS = 3.0
 def _thin_spots(hm, solid, origin, pitch, vm, body, peak, radius, taken, count=3):
     """Hotspots on members under _THIN_CELLS cells thick reading at least
     0.8 of the peak, at least 2 * radius from each other and from `taken`."""
-    edt = ndimage.distance_transform_edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1]
+    edt = _edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1]
     # a cell's member thickness: twice the largest distance to void nearby
     thick = 2.0 * ndimage.maximum_filter(edt, size=5) - 0.5
     thin_el = thick[tuple(hm.elem_ijk.T)] < _THIN_CELLS
@@ -1330,7 +1331,7 @@ def _thin_preserves(study: Study, pitch: float) -> dict:
         inside = (r.shape.sdf(pts) <= 0).reshape(n)
         if inside.sum() < 8:
             continue
-        edt = ndimage.distance_transform_edt(np.pad(inside, 1))[1:-1, 1:-1, 1:-1]
+        edt = _edt(np.pad(inside, 1))[1:-1, 1:-1, 1:-1]
         ridge = inside & (edt >= ndimage.maximum_filter(edt, size=3)) & (edt > 0)
         if not ridge.any():
             continue

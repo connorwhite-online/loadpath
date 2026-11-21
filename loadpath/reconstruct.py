@@ -22,6 +22,7 @@ import numpy as np
 from scipy import ndimage
 
 from .domain import Domain
+from .edtops import edt
 from .shapes import manifold_from_trimesh, trimesh_from_manifold
 from .spec import Study
 
@@ -123,7 +124,7 @@ def _field_distance(fine, step, level=0.5):
     and the field's own gradient within a couple of cells of it, where a
     distance transform would only resolve whole cells."""
     inside = fine >= level
-    d = (ndimage.distance_transform_edt(~inside) - ndimage.distance_transform_edt(inside)) * step
+    d = (edt(~inside) - edt(inside)) * step
     d += np.where(inside, 0.5 * step, -0.5 * step)
     g = np.linalg.norm(np.stack(np.gradient(fine, step)), axis=0)
     near = (np.abs(fine - level) < 0.45) & (g > 1e-6)
@@ -984,7 +985,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # preserve fillet never sees (the robot arm's upper arm, 51 mm of it once its
         # thrust disk was no longer pinned solid).
         grown = _field_distance(fine, step, o.level) - o.close < 0
-        d2 = (ndimage.distance_transform_edt(~grown) - ndimage.distance_transform_edt(grown)) * step
+        d2 = (edt(~grown) - edt(grown)) * step
         d2 += np.where(grown, 0.5 * step, -0.5 * step)
         # the re-distance is exact only to the grid's cells: smooth it over a
         # cell, or its staircase lands just outside the body as ridges

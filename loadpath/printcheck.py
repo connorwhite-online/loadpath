@@ -36,6 +36,8 @@ from __future__ import annotations
 import numpy as np
 from scipy import ndimage
 
+from .edtops import edt
+
 __all__ = ["check_print", "rotation_to_z", "BRIDGE_SPAN"]
 
 # Unsupported spans a slicer bridges reliably, mm: PLA/PETG with part
@@ -172,7 +174,7 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
                 continue
             # depth of the region from its nearest anchor: a narrow ledge
             # off a wall prints as overhang, no bridge needed
-            depth = ndimage.distance_transform_edt(~anchor)[reg]
+            depth = edt(~anchor)[reg]
             if depth.max() <= ledge_cells + 1.0:
                 continue
             frac, span = _spans(reg, anchor, pitch, max_steps)

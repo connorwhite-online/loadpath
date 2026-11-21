@@ -11,9 +11,11 @@ as one, the envelope's breakpoints compared exactly by cross-multiplying,
 so the result is the square root of the same integer scipy finds: the same
 float64 to the bit.
 
-`edt(a)` stands for `ndimage.distance_transform_edt(a)` on a 3D array with
-unit sampling, no indices returned; it falls back to scipy without numba,
-for other dimensions, or with LOADPATH_EDTOPS=scipy.
+`edt(a)` stands for `ndimage.distance_transform_edt(a)` on a 2D or 3D array
+with unit sampling, no indices returned (a 2D array is one layer of a 3D
+one: along a length-1 axis the envelope is the line's own value); it falls
+back to scipy without numba, for other dimensions, or with
+LOADPATH_EDTOPS=scipy.
 """
 from __future__ import annotations
 
@@ -138,9 +140,11 @@ if nb is not None:
 
 
 def edt(a):
-    """ndimage.distance_transform_edt(a) for a 3D array: each nonzero
+    """ndimage.distance_transform_edt(a) for a 2D or 3D array: each nonzero
     cell's Euclidean distance (in cells) to the nearest zero, float64."""
     a = np.asarray(a)
+    if a.ndim == 2 and available():
+        return edt(a[None])[0]
     if not available() or a.ndim != 3 or a.size == 0 or (a != 0).all():
         from scipy import ndimage
 

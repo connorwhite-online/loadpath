@@ -230,3 +230,8 @@ def test_compiled_edt_is_scipys():
         a = rng.random(shape) < p
         a[0, 0, 0] = False
         assert np.array_equal(edt(a), ndimage.distance_transform_edt(a))
+    # a 2D grid (one print layer's anchors) is one layer of a 3D one
+    for shape, p in [((7, 9), 0.5), ((175, 160), 0.995), ((1, 40), 0.8)]:
+        a = rng.random(shape) < p
+        a[0, 0] = False
+        assert np.array_equal(edt(a), ndimage.distance_transform_edt(a))
