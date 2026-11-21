@@ -210,6 +210,28 @@ def wall_pitch(study: Study) -> float | None:
     return want if want < d.pitch - 1e-9 else None
 
 
+DRAWN_BEARS = os.environ.get("LOADPATH_DRAWN_BEARS", "1") != "0"
+
+
+def _sdf_normal(shape, pts, h):
+    """Unit gradient of a shape's signed distance at `pts` (central differences)."""
+    g = np.zeros_like(pts)
+    for a in range(3):
+        e = np.zeros(3)
+        e[a] = h
+        g[:, a] = shape.sdf(pts + e) - shape.sdf(pts - e)
+    n = np.linalg.norm(g, axis=1, keepdims=True)
+    return g / np.maximum(n, 1e-12)
+
+
+def _min_shape_sdf(shapes, pts, mask):
+    out = np.full(len(pts), np.inf)
+    idx = np.flatnonzero(mask)
+    for sh in shapes:
+        out[idx] = np.minimum(out[idx], sh.sdf(pts[idx]))
+    return out
+
+
 def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape | None, label: str,
                   tol_floor: float = 0.0):
     if shape is None:
@@ -235,6 +257,16 @@ def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape 
         # hook's optimizer hang the part off nodes 0.75 mm short of the wall:
         # it was designed not to touch the wall it is screwed to.
         nodes = d <= 1e-9
+    if kind == "keepOut" and nodes.any() and DRAWN_BEARS and study.preserve:
+        # A pin or bolt bears on the material it passes through. Where the
+        # study draws that material (a boss round the bore), the drawn
+        # shape is what carries it, and the keep-out running on past the
+        # boss is clearance for the pin, not a surface it presses: loaded
+        # there too, the optimizer had to line that clearance a member thick
+        # and the part grew a collar over the boss's end face (a seat).
+        on = nodes & (_min_shape_sdf([r.shape for r in study.preserve], mesh.node_xyz, nodes) <= 0.5 * tol)
+        if on.sum() >= 4:
+            nodes = on
     if not nodes.any() and tol_floor > tol:
         nodes = d <= tol_floor
     if not nodes.any():
@@ -1048,6 +1080,20 @@ def _found_symmetry(study: Study, mesh: HexMesh, dims, pres_el, bc, loads, weigh
     return out
 
 
+def _region_kind(study: Study, ri: int):
+    """"keepOut" when bc.regions[ri] lines a keep-out (a support's or a
+    load's region), else None."""
+    if ri < len(study.supports):
+        sup = study.supports[ri]
+        if sup.shape is not None or sup.region is None:
+            return None
+        try:
+            return study.region_shape(sup.region)[1]
+        except ValueError:
+            return None
+    return "keepOut" if _region_shape_of(study, ri) is not None else None
+
+
 def _region_shape_of(study: Study, ri: int):
     """The keep-out a load region lines (bc.regions[ri]: supports first, then
     each case's loads in order, pressures left out), or None when the region
@@ -1435,7 +1481,14 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
         # cell and a half of a cell that touches one
         gt = np.zeros(dims, bool)
         gt[tuple(mesh.elem_ijk[touch].T)] = True
-        side = ndimage.distance_transform_edt(~gt)[tuple(mesh.elem_ijk[near].T)] <= thick / pitch + 0.5
+        # (measured from the cell's foot on the loaded surface, not from the
+        # cell: measured from the cell, the strap ran on a member's thickness
+        # past the loaded surface's end, along the pin, and stood over a
+        # drawn boss's end face as a collar)
+        cen = mesh.elem_centers()[near]
+        foot = cen - shape.sdf(cen)[:, None] * _sdf_normal(shape, cen, 0.05 * pitch)
+        fijk = np.clip(np.floor((foot - mesh.origin) / pitch).astype(int), 0, np.array(dims) - 1)
+        side = ndimage.distance_transform_edt(~gt)[tuple(fijk.T)] <= 1.75
         lv = np.where(side, lv, np.nan)
         keep = np.isfinite(lv) & (np.isnan(level_hint[near]) | (lv > np.nan_to_num(level_hint[near], nan=0.0)))
         level_hint[near[keep]] = lv[keep]
@@ -1443,9 +1496,16 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
         touch[near[np.nan_to_num(lv, nan=0.0) >= 0.5]] = True
         return touch
 
+    drawn_held = np.zeros(mesh.n_nodes, bool)
+    drawn_held[mesh.enode[pres_el].ravel()] = True
     for ri, nodes in enumerate(bc.regions):
         touch = nodes[mesh.enode].any(axis=1)
         if not touch.any():
+            continue
+        if DRAWN_BEARS and not (nodes & ~drawn_held).any() and _region_kind(study, ri) == "keepOut":
+            # a pin bearing on drawn material only (a boss round the bore):
+            # the drawn cells are pinned already and carry it; a strap round
+            # it only ran on past the boss (_region_nodes)
             continue
         ext = np.ptp(mesh.elem_ijk[touch], axis=0) + 1
         thin = int(np.argmin(ext))

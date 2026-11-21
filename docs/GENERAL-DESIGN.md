@@ -431,6 +431,40 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    the mesh. It is read at the cell centres. (The arm link's reported
    1 mm pinholes are not in the run's part: it has 21 openings, none
    under 4 mm across. They come from the surfacing step.)
+11. **Members meeting drawn shapes at a step.** (Connor, 2026-11-21:
+   "weird transitions galore between keep-out areas and generated
+   volumes".) Four causes where a member reaches a drawn boss, pad or
+   wall, found on a development lug and the motor mount
+   (`tests/test_drawn_transitions.py`):
+   - *The field fell off a cliff at the drawn face.* The cells inside a
+     drawn shape are pinned or empty, so the member's field ended at the
+     face and the fillet blended a member into a wall it could not see
+     into. The field is now carried into the drawn shape from the cells
+     round it (`reconstruct._drawn_carried`), so a member continues into
+     the boss and the smooth union blends where they cross.
+   - *One fillet size for every member.* The blend was a fixed 3 mm
+     whatever met the boss. A shoulder's stress concentration is set by
+     the radius over the member's thickness (Peterson: Kt about 1.4 at
+     r/d 0.25), so the fillet is now a quarter of the member's local
+     thickness, never under the old size (`_stress_sized_k`).
+   - *Fillet tails grazing exact faces.* A fillet tangent to a drawn face
+     leaves the exact boolean a seam at a grazing angle: ledges, slivers,
+     torn strips along a pad's top. The fillet is drawn against the face
+     set a little inside, removed only deep inside the drawn shape, and a
+     drawn flat face no member lands on is cleared so it comes out as
+     drawn (`_clear_free_faces`). Bores and mating faces stay exact.
+   - *A pin bearing on air.* A pin's load region runs the length of its
+     keep-out, past the end of a short boss, and the clearance past the
+     boss was pinned solid as if loaded: a dome grew over the boss top.
+     A load on a keep-out that passes through drawn material bears only
+     where it meets that material (`domain._region_nodes`), and a loaded
+     bore's lining is measured from its own surface (`strap()`).
+
+   Motor mount, same field, old against new meshing: SF 7.43 at 29.45 g
+   against 7.26 at 29.9 g; the pads' lips and slivers are gone and their
+   circles read exactly. Quick search A/B: 30.2 g SF 3.75 old, 29.0 g
+   SF 3.75 new. `LOADPATH_DRAWN_CARRY=0` and `LOADPATH_DRAWN_BEARS=0`
+   turn the meshing and domain halves off.
 
 ### Open: parts left heavier than they need to be
 

@@ -898,12 +898,112 @@ def _drop_unformed_once(part, study, cut_ko, min_wall):
     return part - blob, out
 
 
+# The drawn (preserved) shapes are exact: the boolean union adds them as
+# drawn. Their own pinned cells in the field only approximated them to a
+# cell, and wherever that approximation stood outside the exact face it was
+# what showed: a boss's rim ragged where the two crossed, a boss swallowed
+# in a faceted blob. Inside a drawn shape the field is carried from the
+# nearest design cell instead (members run on into it; the shape itself
+# adds nothing) and the fillet meets the shape's exact face, drawn
+# DRAWN_INSET fine cells inside it so the mesh leaves the face at an angle.
+DRAWN_CARRY = os.environ.get("LOADPATH_DRAWN_CARRY", "1") != "0"
+DRAWN_INSET = 0.6
+DRAWN_CARRY_MAX = os.environ.get('LOADPATH_DRAWN_CARRY_MAX', '1') != '0'
+
+
+# A member's shoulder at a drawn shape is a stepped section: its stress
+# concentration falls with the fillet's radius over the member's thickness
+# (Peterson's stepped bar: Kt ~1.7 at r/d 0.1, ~1.4 at 0.25, flattening
+# past it). A fixed blend left a 6 mm member a radius under 1 mm into its
+# boss; the blend is sized so its tightest radius is FILLET_SHARE of the
+# thickness of the member arriving, never under the study's own blend and
+# reaching no further than FILLET_REACH member thicknesses.
+FILLET_SHARE = float(os.environ.get("LOADPATH_FILLET_SHARE", "0.25"))
+FILLET_KMAX = 12.0   # mm: the widest blend, whatever the member
+
+
+def _stress_sized_k(dm, step, k0):
+    """Per fine cell, the blend width k (mm) whose tightest radius (0.2526 k,
+    _g2_union) is FILLET_SHARE of the thickness of the member nearest it."""
+    depth = np.clip(-dm, 0.0, None)
+    kmax = max(float(k0), FILLET_KMAX)
+    rad = int(np.ceil(kmax / step))
+    thick = 2.0 * ndimage.maximum_filter(depth, size=2 * rad + 1, mode="constant")
+    k = np.clip(FILLET_SHARE * thick / 0.2526, float(k0), kmax)
+    return k
+
+
+def _clear_free_faces(du, dm, preserve, pts, step, inset, level=0.5):
+    """Keep a drawn shape's flat faces that no member stands on clear of the
+    fillet: a boss's end face is a seat (a washer, a screw head, a mating
+    part), and a blend into a member below it rose over the rim and buried
+    the face in a dome. Over such a face the fillet may not rise past its
+    plane; past its rim it may, along a 45 degree slope, so the fillet runs
+    up to the rim in a ramp and no lip stands over the face. A face a member
+    stands on (member material lying on it) is left alone: the fillet there
+    is the member's shoulder on the face."""
+    shape = du.shape
+    member = (dm < 0).reshape(-1)
+    du = du.reshape(-1).copy()
+    for sh in preserve:
+        for at, n, lateral in _flat_faces(sh):
+            s = (pts - at) @ n
+            near = (s > -inset - 2.0 * step) & (s < 12.0)
+            if not near.any():
+                continue
+            i = np.nonzero(near)[0]
+            lat = lateral(pts[i])
+            on = (s[i] > 0) & (s[i] < 1.5 * step) & (lat <= 0)
+            if on.any() and member[i[on]].mean() > 0.02:
+                continue
+            # the allowed side: s <= lat - inset (in the face, the inset
+            # plane under it; past the rim a 45 degree ramp)
+            a = s[i] - (lat - inset)
+            du[i] = _smooth_max(du[i], a, 2.0 * step)
+    return du.reshape(shape)
+
+
+def _drawn_carried(grid, domain: Domain, preserve):
+    idx = np.stack(np.meshgrid(*[np.arange(n) for n in grid.shape], indexing="ij"), -1).reshape(-1, 3)
+    centers = domain.origin + (idx + 0.5) * domain.pitch
+    sd = _min_sdf(preserve, centers).reshape(grid.shape)
+    inside = sd < 0.25 * domain.pitch
+    if not inside.any() or inside.all():
+        return grid
+    if DRAWN_CARRY_MAX:
+        # Layer by layer in from the drawn face, each cell takes the most
+        # material among its face neighbours already set: a design cell
+        # the analysis joined to the drawn cells through a shared face
+        # stays joined (the nearest cell alone, where two were as near,
+        # was as often the void beside the joint: a motor mount's pads
+        # came out as ears on narrow necks)
+        out = grid.copy()
+        todo = inside.copy()
+        while todo.any():
+            p = np.pad(np.where(todo, -1.0, out), 1, constant_values=-1.0)
+            nb = np.max(np.stack([p[2:, 1:-1, 1:-1], p[:-2, 1:-1, 1:-1], p[1:-1, 2:, 1:-1], p[1:-1, :-2, 1:-1],
+                                  p[1:-1, 1:-1, 2:], p[1:-1, 1:-1, :-2]]), axis=0)
+            ready = todo & (nb >= 0)
+            if not ready.any():
+                out[todo] = 0.0
+                break
+            out[ready] = nb[ready]
+            todo &= ~ready
+        return out
+    near = edt(inside, return_distances=False, return_indices=True)
+    out = grid.copy()
+    out[inside] = grid[tuple(near)][inside]
+    return out
+
+
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
                 flush=(), preserve=(), design=(), draft=None, skin=()):
     import trimesh
     from skimage.measure import marching_cubes
 
     grid = domain.full_grid(xphys)
+    if preserve and o.fillet and o.blend > 0 and DRAWN_CARRY:
+        grid = _drawn_carried(grid, domain, preserve)
     pad = 3
     # Pad with void, so material that reaches the design space's boundary
     # rounds off just inside it: the exact intersection with the design
@@ -1006,10 +1106,23 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # G2: the same tightest radius, curvature continuous at its edges)
         sd = sdfs.min(preserve).reshape(fine.shape)
         k = o.blend / 1.2 * G2_SCALE
-        du = _g2_union(_field_distance(fine, step, o.level), sd, k)
+        inset = DRAWN_INSET * step if DRAWN_CARRY else 0.0
+        dm = _field_distance(fine, step, o.level)
+        if DRAWN_CARRY and FILLET_SHARE > 0:
+            k = _stress_sized_k(dm, step, k)
+        du = _g2_union(dm, sd + inset, k)
+        if DRAWN_CARRY:
+            du = _clear_free_faces(du, dm, preserve, sdfs.pts, step, inset, o.level)
         # back to density, over the same width the smoothing gave the field
         width = 2.0 * step
         filleted = np.clip(o.level - du / (2.0 * width), 0.0, 1.0)
+        if DRAWN_CARRY:
+            # only the fillets, not a second shell of the drawn shape inside
+            # it: cut off deep enough inside that the cut's own surface (a
+            # cliff in the field, which marching cubes renders ragged) is
+            # well clear of the drawn face (at half the inset it lay 0.3 mm
+            # under it and showed through as a striped seam)
+            filleted[sd < -(inset + 2.0 * step)] = 0.0
         if design:
             # after the boundary rounding, and never past the boundary itself
             filleted = np.minimum(filleted, env.reshape(fine.shape))
