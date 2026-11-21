@@ -309,3 +309,48 @@ def test_averaged_reading_is_the_bars_stress():
     rec = optimize_constrained(d, 0.0, o, Limits(1.0, None, s.material.E, contact_band=15.0,
                                                  radius=0.86)).history[-1]
     assert abs(rec["stress.pull"] - 5.0) < 0.05 * 5.0, rec["stress.pull"]
+
+
+def test_ball_pairs_are_cKDTrees_pairs():
+    """stressops.ball_pairs finds the pairs cKDTree.sparse_distance_matrix
+    finds, ties at exactly the radius included (lattices at radii their
+    spacing divides), so the material-length average is the same to the bit."""
+    import scipy.sparse as sp
+    from scipy.spatial import cKDTree
+
+    from loadpath.stressops import available, ball_pairs
+
+    if not available():
+        pytest.skip("numba kernels off")
+    rng = np.random.default_rng(3)
+    sets = [(np.argwhere(np.ones((9, 9, 9))) * s + 0.1, np.argwhere(np.ones((11, 11, 11))) * 0.5 * s - 0.2, r)
+            for s in (0.1, 0.3, 1.0) for r in (1.0, 2.0, np.sqrt(2.0), 0.9, 0.7)]
+    sets.append((rng.random((500, 3)) * 5, rng.random((3000, 3)) * 5, 0.86))
+    for p, x, r in sets:
+        pr = cKDTree(p).sparse_distance_matrix(cKDTree(x), r, output_type="coo_matrix")
+        want = sp.csr_matrix((np.ones(pr.nnz), (pr.row, pr.col)), shape=(len(p), len(x)))
+        ptr, col = ball_pairs(p, x, r)
+        assert np.array_equal(ptr, want.indptr) and np.array_equal(col, want.indices)
+
+
+def test_material_average_same_bits_either_path(monkeypatch):
+    """_MaterialAverage built through the compiled pair search and the
+    direct CSR is the operator the cKDTree / coo path built."""
+    from loadpath.fem import HexMesh
+    from loadpath.stressops import available
+    from loadpath.verify import _MaterialAverage
+
+    if not available():
+        pytest.skip("numba kernels off")
+    rng = np.random.default_rng(5)
+    solid = rng.random((14, 10, 8)) < 0.7
+    hm = HexMesh(np.argwhere(solid), 0.8, np.zeros(3))
+    fill = np.where(rng.random(hm.n_elem) < 0.3, rng.random(hm.n_elem), 1.0)
+    sig = rng.standard_normal((hm.n_nodes, 6))
+    for radius in (0.86, 2.0, 4.0):          # the 8-sample, centre and block samplings
+        a = _MaterialAverage(hm.node_xyz, hm.enode, fill, 0.8, radius)
+        monkeypatch.setenv("LOADPATH_STRESSOPS", "numpy")
+        b = _MaterialAverage(hm.node_xyz, hm.enode, fill, 0.8, radius)
+        monkeypatch.delenv("LOADPATH_STRESSOPS")
+        assert np.array_equal(a(sig), b(sig))
+        assert np.array_equal(a.lone, b.lone)

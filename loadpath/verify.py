@@ -252,11 +252,16 @@ class _MaterialAverage:
         wts = np.prod(np.where(CORNERS[None, :, :] > 0.5, q[:, None, :], 1.0 - q[:, None, :]), axis=2)
         xs = np.einsum("sk,ekd->esd", wts, node_xyz[enode[live]]).reshape(-1, 3)
         w = np.repeat(f[live] * pitch ** 3 / ns, ns)
-        # samples from nodal values: (samples, nodes)
-        rows = np.repeat(np.arange(len(xs)), 8)
-        cols = np.repeat(enode[live], ns, axis=0).ravel()         # per element: its samples x its 8 corners
-        vals = np.tile(wts.ravel(), len(live))
-        interp = sp.csr_matrix((vals, (rows, cols)), shape=(len(xs), n))
+        # samples from nodal values: (samples, nodes), each row its element's
+        # 8 corners, written straight in CSR's sorted form (as scipy's coo ->
+        # csr leaves it: the same matrix, and 0.4 s less on a 1M-sample grid)
+        el = enode[live]
+        srt = np.argsort(el, axis=1, kind="stable")
+        cols = np.repeat(np.take_along_axis(el, srt, axis=1)[:, None, :], ns, axis=1).ravel()
+        vals = wts[np.arange(ns)[None, :, None], srt[:, None, :]].ravel()
+        itype = np.int32 if max(len(cols), n) < 2 ** 31 else np.int64
+        interp = sp.csr_matrix((vals, cols.astype(itype), np.arange(0, len(cols) + 1, 8, dtype=itype)),
+                               shape=(len(xs), n))
         blk = int(np.ceil(rho / 3.3))
         if blk > 1 and len(xs):
             # blocks of blk^3 cells: one sample at the block's filled centroid
@@ -268,8 +273,18 @@ class _MaterialAverage:
             xs = (agg @ xs) / wb[:, None]
             interp = (sp.diags(1.0 / wb) @ agg @ interp).tocsr()
             w = wb
-        pairs = cKDTree(node_xyz).sparse_distance_matrix(cKDTree(xs), radius, output_type="coo_matrix")
-        a = sp.csr_matrix((w[pairs.col], (pairs.row, pairs.col)), shape=(n, len(xs)))
+        from .stressops import ball_pairs
+
+        # each node's samples within the radius (stressops: the pairs
+        # cKDTree finds, on all cores)
+        got = ball_pairs(node_xyz, xs, radius)
+        if got is not None:
+            ptr, col = got
+            itype = np.int32 if max(len(col), len(xs)) < 2 ** 31 else np.int64
+            a = sp.csr_matrix((w[col], col.astype(itype), ptr.astype(itype)), shape=(n, len(xs)))
+        else:
+            pairs = cKDTree(node_xyz).sparse_distance_matrix(cKDTree(xs), radius, output_type="coo_matrix")
+            a = sp.csr_matrix((w[pairs.col], (pairs.row, pairs.col)), shape=(n, len(xs)))
         tot = np.asarray(a.sum(axis=1)).ravel()
         # (a node whose ball holds no sample, at the tip of a sliver: its own value)
         self.lone = tot <= 0
@@ -2179,6 +2194,10 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
 
         _sc = stock_cells(study, hm)
         stock_k = _sc.operator(None) if _sc is not None else None
+    # Each case read and its hotspot boxes started (pass 1), then each
+    # case's numbers made as the boxes come in (pass 2), in case order
+    pending = []
+    sub_pool = sub_gate = None
     for ci, case in enumerate(study.load_cases):
         load_nodes = bc.case_load_nodes[ci]
         # Exclude nodes within the contact band of an applied load or support.
@@ -2225,7 +2244,7 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         at = hm.node_xyz[pk].tolist()
         keep = 1.0 if g_node is None else float(g_node[pk])
         global_peak = peak
-        refined = []
+        futs = []
         if refine and body.any():
             half = max(8.0 * pitch, 6.0)
             spots = list(_hotspots(hm.node_xyz, vm, body, peak, half, count=refine))
@@ -2235,28 +2254,38 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                 # in): the highest of them get a submodel too
                 spots += _thin_spots(hm, solid, origin, pitch, vm, body, peak, half, spots, count=refine)
 
-            gate = _submodel_gate() if len(spots) > 1 else None
+            if spots and sub_pool is None:
+                # independent boxes, on threads (the solves release the GIL;
+                # amg_solver sets up one at a time, so the same numbers), as
+                # many at once as the memory free holds (_MemoryGate), every
+                # case's in one pool: a case's boxes start while the next
+                # case is read, and no case waits on its slowest box alone
+                from .pools import pool
 
-            def sub(c, u=u, case=case, half=half, contact=contact):
+                sub_gate = _submodel_gate()
+                sub_pool = pool(3)
+
+            def sub(c, u=u, case=case, half=half, contact=contact, gate=sub_gate):
                 return _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
                                       hm.node_xyz[contact], band, case, edges=edges, cut=cg is not None,
                                       ratio=m_c, gate=gate)
-            if len(spots) > 1:
-                # independent boxes, on threads (the solves release the GIL;
-                # amg_solver sets up one at a time, so the same numbers), as
-                # many at once as the memory free holds (_MemoryGate)
-                from .pools import pool
-
-                with pool(min(len(spots), 3)) as ex:
-                    subs = list(ex.map(sub, spots))
-            else:
-                subs = [sub(c) for c in spots]
-            for r in subs:
-                if r is None:
-                    continue
-                refined.append({"at": r[1], "peakStress": r[0]})
-                if r[0] > peak:
-                    peak, at = r
+            futs = [sub_pool.submit(sub, c) for c in spots]
+        pending.append((case, idx, direction, f, u, sig_u, vm, util, pk, peak, at, keep, global_peak, body,
+                        load_nodes, futs))
+    try:
+        subs_of = [[fu.result() for fu in pend[-1]] for pend in pending]
+    finally:
+        if sub_pool is not None:
+            sub_pool.shutdown(wait=True, cancel_futures=True)
+    for ci, (case, idx, direction, f, u, sig_u, vm, util, pk, peak, at, keep, global_peak, body,
+             load_nodes, _) in enumerate(pending):
+        refined = []
+        for r in subs_of[ci]:
+            if r is None:
+                continue
+            refined.append({"at": r[1], "peakStress": r[0]})
+            if r[0] > peak:
+                peak, at = r
         disp = u.reshape(-1, 3)
         if fields:
             if "fields" not in report and study.thermal is not None:
