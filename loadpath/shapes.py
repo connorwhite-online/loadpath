@@ -838,8 +838,7 @@ def shrink(shape: Shape, t: float, open=()) -> Shape:
     return Offset(shape, -t, open)
 
 
-# most boundary triangles Sweep.to_manifold sweeps one by one (exact);
-# past it, copies along the path
+# boundary triangles Sweep.to_manifold unions per batch (exact either way)
 _SWEEP_PRISMS = 20_000
 
 
@@ -974,19 +973,22 @@ class Sweep(Shape):
             return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
         mesh = base.to_mesh()
         tri = np.asarray(mesh.vert_properties, float)[:, :3][np.asarray(mesh.tri_verts, np.int64)]
-        if len(tri) <= _SWEEP_PRISMS:
-            # exact for any solid: where it starts, where it ends, and the
-            # prism each boundary triangle sweeps (a point of the sweep not
-            # in either copy left the solid through some triangle on its
-            # way). 201 copies of a 44 mm speaker driver (two stacked
-            # cylinders, not convex) took past 10 GB in the union
-            L = self.length * self.direction
-            mans = [base, base.translate(tuple(L))]
-            for t in tri:
-                if abs(np.dot(np.cross(t[1] - t[0], t[2] - t[0]), self.direction)) > 1e-9:
-                    mans.append(m3d.Manifold.hull_points(np.vstack([t, t + L])))
-            return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add)
-        mans = [base.translate(tuple(t * self.direction)) for t in self.offsets]
+        # exact for any solid: where it starts, where it ends, and the prism
+        # each boundary triangle facing the motion sweeps. A point of the
+        # sweep in neither copy lies on a segment along the motion that
+        # starts inside the solid and ends outside, so it left through a
+        # triangle whose outward normal has a positive share along the
+        # motion; the triangles facing back add nothing. Copies along the
+        # path instead (201 of a 44 mm speaker driver, or of a cased phone's
+        # 29k triangles sliding into a cradle) took past 13 GB in the union.
+        L = self.length * self.direction
+        n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        front = tri[n @ self.direction > 1e-9 * np.linalg.norm(n, axis=1).clip(1e-30)]
+        mans = [base, base.translate(tuple(L))]
+        for i in range(0, len(front), _SWEEP_PRISMS):
+            # in batches, so a dense mesh's union stays within memory
+            prisms = [m3d.Manifold.hull_points(np.vstack([t, t + L])) for t in front[i:i + _SWEEP_PRISMS]]
+            mans = [m3d.Manifold.batch_boolean(mans + prisms, m3d.OpType.Add)]
         return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
 
     def to_spec(self):

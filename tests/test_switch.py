@@ -69,6 +69,15 @@ def test_insert_from_sweeps_keep_out_out_of_the_part():
     assert not s.contains(np.array([[2.5, 1.2, 0], [-1.1, 0, 0]])).any()
     man = s.to_manifold()
     assert abs(man.volume() - (4 / 3 * np.pi + np.pi * 5.0)) < 0.15 * (4 / 3 * np.pi + np.pi * 5.0)
+    # a non-convex solid sliding sideways is swept exactly, by the prisms of
+    # the triangles facing the motion: an L of a 10x10x2 base and a 2x10x8
+    # upright slid 5 along x is (10+5)*10*2 + (2+5)*10*8
+    import trimesh
+    from loadpath.shapes import MeshShape
+    ell = trimesh.boolean.union([trimesh.creation.box(bounds=[[0, 0, 0], [10, 10, 2]]),
+                                 trimesh.creation.box(bounds=[[0, 0, 2], [2, 10, 10]])], engine="manifold")
+    v = sweep(MeshShape(ell), [1, 0, 0], 5.0).to_manifold().volume()
+    assert abs(v - 860.0) < 1e-6, v
 
 
 def test_sensitivities_match_finite_differences():
