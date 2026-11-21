@@ -169,7 +169,7 @@ carries a board (enclosure parts, both with a closed skin).
 | tool clip (PETG) | **first try**: 3.1 g, SF 2.71, 18 min | |
 | latch hook (PA12, SLS) | passes, 1.2 g, SF 2.14, 16 min; check warns that the foot is held as if glued | |
 | hose elbow (PETG, 2 bar) | passes, 16.2 g, SF 5.4, 20 min; two check warnings (wall under two cells; flange held as if glued) | passes, 16.4 g, SF 5.1, 22 min; the wall warning is gone |
-| fan duct (PLA) | refused at check, twice: gravity written as a number, then two forces of unknown direction in one case. Third writing passes: 14.1 g, 46 min, with 4 of its 5 designs thrown away (below) | not re-run yet |
+| fan duct (PLA) | refused at check, twice: gravity written as a number, then two forces of unknown direction in one case. Third writing passes: 14.1 g, 46 min, with 4 of its 5 designs thrown away (below) | passes, 15.3 g, every design kept; 65 min on the finer grid, stopped at its time limit before the finer check; its 1.2 mm wall is 1.6 cells at four times the budget |
 | box cover (PETG, 1.6 mm skin) | passes, 31.3 g, SF 2.36, 46 min; check warns the skin is 1.2 cells | **first try**: 28.5 g, SF 2.75, 48 min, check clean |
 | wall box (PLA, 2 mm skin) | passes, 56.0 g, SF 3.65, 40 min; check warns the skin is 1.2 cells | passes, 53.3 g, 57 min, stopped at its time limit before the tet check; the skin is 1.9 cells at four times the budget and check still says so |
 
@@ -188,6 +188,11 @@ study or the grid. What the batch showed:
   duct's wall that thin bends too stiffly on the grid; check said so and
   the run went ahead on it. The wall now sets the cell, up to four times
   the cell budget. It costs time on the larger skinned parts.
+- **Were the glued passes real?** Yes, for these two. Held under their
+  screws only, as check advises (twins `latch-hook-pa12-b`,
+  `hose-elbow-petg-b`), both are a clean check and a passing part on that
+  second try: the latch hook the same 1.2 g at SF 2.15, the elbow 16.3 g
+  at SF 4.1 where the glued flange read 5.1.
 - **Held as if glued** (open). Two of six studies held a bolted face over
   its whole area against a load that pulls it off, the mistake check
   already names. The physical statement is a face that pushes and cannot
