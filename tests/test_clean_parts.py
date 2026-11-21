@@ -236,3 +236,28 @@ def test_a_loaded_bore_is_lined_a_member_thick():
     # and no further: the rest is the optimizer's
     beyond = (np.abs(c[:, 1]) > 8.0) & (r > 3.0 + s.min_member + d.pitch) & (r < 8.0)
     assert not np.asarray(d.preserve, bool)[beyond].any()
+
+
+def test_a_thin_wall_cell_is_not_lost_material():
+    """A drawn wall thinner than two cells is optimized as cut cells: the
+    wall crosses them off-centre, so a cell centre in the air beside it is
+    not material the mesh dropped. The comparison leaves those cells out."""
+    import trimesh
+
+    from loadpath.domain import build_domain
+    from loadpath.study import mesh_fidelity
+
+    study = study_from_dict({
+        "name": "pipe", "material": "pla",
+        "designSpace": [{"type": "box", "min": [-14, -14, 0], "max": [14, 14, 20]}],
+        "keepOut": [{"id": "air", "wall": 1.2, "shape": {"type": "cylinder", "p0": [0, 0, -1], "p1": [0, 0, 21], "r": 8}}],
+        "supports": [{"shape": {"type": "box", "min": [-14, -14, -0.5], "max": [14, 14, 0.5]}}],
+        "loadCases": [{"name": "push", "loads": [{"shape": {"type": "box", "min": [-14, -14, 19.5], "max": [14, 14, 20.5]},
+                                                    "force": [10, 0, 0]}]}],
+    })
+    d = build_domain(study, pitch=1.2, cut_walls=True)
+    assert d.walls is not None and d.walls.any()
+    far = trimesh.creation.box(bounds=[[100, 100, 100], [101, 101, 101]])
+    assert mesh_fidelity(d, d.walls.astype(float), far) is None            # only wall cells: nothing to lose
+    xp = np.ones(d.n_elem)
+    assert mesh_fidelity(d, xp, far)["lostSolidCells"] == 1.0              # the rest is still counted

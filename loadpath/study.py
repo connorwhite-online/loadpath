@@ -1742,6 +1742,10 @@ def mesh_fidelity(domain, xphys, mesh) -> dict | None:
     solid = np.asarray(xphys) > 0.5
     if getattr(domain, "stock", None) is not None:
         solid = solid & ~domain.stock      # a bought member's cells are the member, not print (stock.py)
+    if getattr(domain, "walls", None) is not None:
+        # a thin drawn wall crosses its cells off-centre (thinwall.py): the
+        # wall is there in the mesh though the cell's centre is in the air
+        solid = solid & ~domain.walls
     if not solid.any() or mesh is None or len(getattr(mesh, "faces", ())) == 0:
         return None
     # sampled on the optimizer's own grid: each voxel centre is a cell centre

@@ -473,6 +473,9 @@ def _remesh(args):
     xphys, pitch = load_field(args.field)
     domain = build_domain(study, pitch=pitch)
     if domain.n_elem != len(xphys):
+        # `run` optimizes thin drawn walls as cut cells, on a coarser grid
+        domain = build_domain(study, pitch=pitch, cut_walls=True)
+    if domain.n_elem != len(xphys):
         print(json.dumps({"ok": False, "error": f"{args.field} has {len(xphys)} cells and this study's grid at "
                                                 f"pitch {domain.pitch:g} has {domain.n_elem}: not the same "
                                                 "study (or design space) the field was optimized on"}))
