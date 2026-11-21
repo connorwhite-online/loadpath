@@ -380,6 +380,13 @@ def _member_room(sdfs: "_GridSDF", design, preserve, keep_out, r: float, step: f
         short[~np.isfinite(whole)] = 0.0
         # (half a cell's grace: the cut is the 0.5 level of a ramp one cell wide)
         val = np.where(near, np.clip(1.0 - short / step, 0.0, 1.0), 1.0)
+        # A drawn shape is not a member: it is as thin as it was drawn (a
+        # duct's 1.2 mm wall running to a knife edge between two air
+        # passages), and it comes back exactly either way. Taken out of
+        # the field here, the blueprint stood alone beside what was left
+        # and the two surfaces crossed.
+        if preserve:
+            val = np.maximum(val, np.clip(1.0 - sdfs.min(preserve) / step, 0.0, 1.0))
         # Inside a keep-out, what the material just outside it has: where
         # there is room up to the keep-out's face the material runs on through
         # it and the exact cut ends it on that face (ended here, a fraction

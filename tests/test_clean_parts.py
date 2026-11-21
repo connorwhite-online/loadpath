@@ -181,3 +181,30 @@ def test_beside_a_screw_head_clearance_the_part_ends_clean():
     sel = (rad > 3.76) & (rad < 4.4) & (c[:, 2] > 2.5) & (c[:, 2] < 5.0) & (c[:, 0] < 9.9)
     both = sel[m.face_adjacency].all(axis=1)
     assert sel.sum() > 100 and not (np.degrees(m.face_adjacency_angles[both]) > 50).any()
+
+
+def test_a_drawn_wall_thinner_than_a_member_keeps_its_place():
+    """Two air passages meeting at an angle, walled 1.2 mm: between the end
+    of one and the floor of the other the wall runs out to a knife edge.
+    The room for a member is the optimizer's material's affair, not the
+    drawn wall's: taken out of the field there, the wall came back as the
+    blueprint alone beside what was left, and the surfaces crossed (a
+    duct, 60 faces, not delivered)."""
+    from loadpath.buildcheck import sound_check
+    from loadpath.reconstruct import reconstruct
+
+    spec = {"name": "elbow", "designSpace": [{"type": "box", "min": [-12, -12, 0], "max": [12, 12, 24]}],
+            "keepOut": [{"id": "air", "wall": 1.2, "shape": {"type": "union", "shapes": [
+                {"type": "cylinder", "p0": [0, 0, 25], "p1": [0, 0, 14], "r": 10},
+                {"type": "cylinder", "p0": [0, 0, 14], "p1": [0, 8, 3], "r": 5},
+                {"type": "box", "min": [-8, 6, -1], "max": [8, 10, 5]}]}}],
+            "supports": [{"shape": {"type": "box", "min": [-12, -12.5, 10], "max": [12, -11.7, 22]}, "fix": "xyz"}],
+            "loadCases": [{"name": "pull", "loads": [{"shape": {"type": "box", "min": [-12, 11.5, 14],
+                                                                "max": [12, 12.5, 24]}, "force": [0, 0, -5]}]}],
+            "material": "pla", "process": {"type": "fdm", "buildDirection": "+z"}, "goal": {"volumeFraction": 0.5},
+            "resolution": {"pitch": 0.63}}
+    s = study_from_dict(spec)
+    d = build_domain(s)
+    m, _ = reconstruct(s, d, np.ones(d.mesh.n_elem))
+    r = sound_check(m)
+    assert r["ok"], r.get("detail")

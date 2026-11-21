@@ -353,6 +353,13 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    planes went with it: a plain 54 x 42 block at 0.8 mm lost both. The
    samples now sit a hair inside the quarter points, so both ends of a
    part are counted the same way.
+7. **A drawn thin wall carved with the members.** The room-for-a-member
+   step of item 5 also took a drawn wall thinner than a member out of the
+   field (a duct's 1.2 mm wall, run to a knife edge between two air
+   passages); the wall came back as the blueprint alone and the two
+   surfaces crossed, so the part was not delivered. Found by the held-out
+   re-run, reproduced on a development elbow. Drawn shapes keep their
+   place; only the optimizer's material is held to the member size.
 
 ## Rule for work under this document
 
