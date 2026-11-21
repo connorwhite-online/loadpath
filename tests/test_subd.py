@@ -212,6 +212,23 @@ def test_cage_finer_only_where_asked():
     assert np.abs(subd._warp(subd._warp(P, spots), spots, inverse=True) - P).max() < 1e-9
 
 
+def test_star_points_cancelled_in_pairs():
+    """Edge rotations and diagonal collapses take paired star points away
+    and keep the cage a closed manifold of the same genus."""
+    import trimesh
+
+    from loadpath import subdcoarse
+
+    m = trimesh.creation.icosphere(5, radius=10.0)
+    c = subd.quad_cage(m, 1500)
+    V, Q, touched, taken = subdcoarse.cancel(c.V, c.Q)
+    c2 = subd.Cage(V, Q)                      # raises on a cage that is not closed and manifold
+    lines = lambda v: int(v[v != 4].sum())
+    assert taken > 0 and lines(c2.valence) < lines(c.valence), (taken, lines(c.valence), lines(c2.valence))
+    assert c2.n - len(c2.E) + len(c2.Q) == 2
+    assert c2.valence.min() >= 3 and len(touched) > 0
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

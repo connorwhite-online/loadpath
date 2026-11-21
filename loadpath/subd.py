@@ -826,6 +826,50 @@ def pick_tolerance(accuracy=None, noise=None):
     return tol, why
 
 
+def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress=None):
+    """Star points cancelled in pairs (subdcoarse.cancel: edge rotations
+    and diagonal collapses) where the surface can do without them: the
+    moved neighbourhoods are fitted again (subdedit.refit) and the moves
+    stand only if the 99th percentile holds and no place misses by more
+    than twice the bound or closes a printable hole that did not before;
+    where a new place misses, the vertices round it are frozen and the
+    rest tried once more. Returns (cage, hierarchy, deviation, report)."""
+    from scipy.spatial import cKDTree
+
+    from .subdcoarse import cancel
+    from .subdedit import refit
+
+    def bad(H, C, d1, d2, X):
+        pl, _ = misses(H, C, mesh, d1, d2, X, bound, min_hole)
+        return [p for p in pl if p.get("printable") or (p["kind"] == "surface" and p["miss"] > 2.0 * bound)]
+    d1, d2, X = deviation(H, cage.V, mesh, data=check)[1]
+    before = {tuple(np.round(p["at"], 0)) for p in bad(H, cage.V, d1, d2, X)}
+    stars = int((cage.valence != 4).sum())
+    frozen = np.zeros(0, np.int64)
+    h = float(np.sqrt(mesh.area / len(cage.Q)))
+    rep = {"moves": 0, "starPoints": [stars, stars]}
+    for attempt in range(2):
+        Vn, Qn, touched, taken = cancel(cage.V, cage.Q, frozen=frozen)
+        if not taken:
+            break
+        c2 = Cage(Vn, Qn)
+        H2 = Hierarchy(c2, level)
+        refit(c2, H2, mesh, touched, data, settle=tol / 50)
+        d2v, (e1, e2, X2) = deviation(H2, c2.V, mesh, data=check)
+        new = [p for p in bad(H2, c2.V, e1, e2, X2) if tuple(np.round(p["at"], 0)) not in before]
+        if progress:
+            progress(f"star points {stars} -> {int((c2.valence != 4).sum())} ({taken} moves): "
+                     f"p99 {d2v['p99']:.4f} mm, {len(new)} new places over {2 * bound:.2f}")
+        if d2v["p99"] <= tol and not new:
+            rep = {"moves": int(taken), "starPoints": [stars, int((c2.valence != 4).sum())]}
+            return c2, H2, d2v, rep
+        if not new:
+            break
+        near = cKDTree(cage.V).query_ball_point(np.array([p["at"] for p in new]), 3.0 * h)
+        frozen = np.unique(np.r_[frozen, np.concatenate([np.asarray(x, np.int64) for x in near])])
+    return cage, H, dev, rep
+
+
 def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, level=LEVEL, progress=None,
                  crease=None, accuracy=None, source=None, min_hole=None):
     """Fit a Catmull-Clark surface to a closed mesh. The cage gets denser
@@ -967,6 +1011,11 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
             # few percent with it: keep it aimed just under the tolerance
             n = int(min(max_faces, max(n, len(cage.Q) * grow)))
     cage, H, dev = best
+    if not faces and dev["p99"] <= tol:
+        cage, H, dev, cancelled = _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev,
+                                               progress)
+    else:
+        cancelled = {"moves": 0}
     # the smoothest surface the tolerance allows: raise the bending weight
     # while the deviation stays within it (a noisy input's ripples go first)
     fair, fairs = 0.0, []
@@ -1063,7 +1112,8 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     rep = {"bending": fair, "fairing": fairs, "folds": int(len(_folds(H, cage.V))), "tolerance": round(tol, 4),
            "noise": round(nz, 5), "tolerancePicked": why, "cageFaces": len(cage.Q),
            "irregularVertices": int((cage.valence != 4).sum()),
-           "deviation": dev, "within": bool(dev["p99"] <= tol), "worst": worst, "tries": tries, "seconds": round(time.time() - t0, 1)}
+           "deviation": dev, "within": bool(dev["p99"] <= tol), "worst": worst, "starPointsCancelled": cancelled,
+           "tries": tries, "seconds": round(time.time() - t0, 1)}
     return cage, H, rep
 
 

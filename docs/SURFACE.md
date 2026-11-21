@@ -162,6 +162,22 @@ Same machine (4 cores), same input, run one at a time. Earlier
 (2026-11-17): soft plate + exact bore 146 B-spline faces + 1 cylinder,
 250 s.
 
+**Fewer star points (`subdcoarse.py`).** Every STEP face is a rectangle
+between lines drawn from star points, so the face count goes with them.
+Instant Meshes leaves many in pairs (a 3 diagonal to a 5, two 3s across a
+quad) where its field turns and the shape does not ask for it. Once the
+cage is within the tolerance and put right in place, edge rotations and
+diagonal collapses (Tarini et al. 2010) take such pairs away, a move kept
+when the lines its vertices send out (a star point sends one per edge)
+fall; a rotation that changes nothing on its own is taken when the move it
+makes possible next to it gains. The moved neighbourhoods are fitted again
+and the moves stand only if the 99th percentile holds and no new place
+misses by twice the bound (else the vertices round the new miss are left
+alone and the rest tried again). Polychord collapse, the usual global
+move, does not apply: on the arm link's cage three rings of quads out of
+thousands do not cross themselves. Arm link: 279 -> 214 star points, 774
+-> 611 STEP faces; pebble 93 -> 86, 241 -> 230.
+
 Where the time went: the fit's closest points (now a compiled kernel,
 `closestjit.py`), the least squares (the sample rows are gathered onto the
 limit points they pull, so the normal equations are M^T diag M and the
@@ -184,8 +200,9 @@ off its own edges and readers could not mesh it.
 - Adaptive density beyond repairs: flats still get as many cage faces
   (and star points, and so patches) as the first cage that meets the
   tolerance has everywhere. Edits in place (`subdedit.py`) now handle the
-  tight places; coarsening the flats (polychord collapse) is the lever
-  left on face count.
+  tight places and paired star points are cancelled; a sizing field for
+  the first cage (Instant Meshes has none) is the lever left on face
+  count.
 - Slits and bridged holes more than one face deep or with outlines of
   different lengths on their two walls are joined one face pair at a time,
   or left to the old route.
