@@ -33,7 +33,11 @@ from .spec import Study
 
 __all__ = ["Domain", "build_domain", "choose_pitch"]
 
-_SUB = np.array([[sx, sy, sz] for sx in (-0.25, 0.25) for sy in (-0.25, 0.25) for sz in (-0.25, 0.25)])
+# Sub-cell samples sit a hair inside the quarter points: a face that lies on a
+# quarter plane (a part some odd half cells long) is then counted the same way
+# at both ends, not by rounding, and a mirror-symmetric part stays one.
+_Q = 0.25 * (1.0 - 1e-6)
+_SUB = np.array([[sx, sy, sz] for sx in (-_Q, _Q) for sy in (-_Q, _Q) for sz in (-_Q, _Q)])
 _CONN26 = np.ones((3, 3, 3), bool)
 
 

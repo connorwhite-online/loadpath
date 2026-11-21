@@ -42,6 +42,19 @@ def test_a_mirror_symmetric_problem_is_held_symmetric():
     assert "x" in study.symmetry_missed
 
 
+def test_a_face_on_a_sampling_plane_does_not_cost_the_symmetry():
+    # 54 x 42 at 0.8: the grid overhangs each face by a quarter cell, so the
+    # sub-cell samples of the edge cells fall on the faces themselves. Decided
+    # by rounding, one corner column came out and both mirror planes with it.
+    raw = {"designSpace": [{"type": "box", "min": [-27, -21, 0], "max": [27, 21, 6]}],
+           "supports": [{"shape": {"type": "box", "min": [-27, -21, -0.5], "max": [27, 21, 0.5]}, "fix": "xyz"}],
+           "loadCases": [{"name": "p", "loads": [{"shape": {"type": "cylinder", "center": [0, 0, 5.8], "axis": "z",
+                                                            "length": 0.8, "r": 3}, "force": [0, 0, -50]}]}],
+           "material": "petg", "goal": {"safetyFactor": 2}}
+    d = build_domain(study_from_dict(raw, base_dir="."), 0.8)
+    assert {"x", "y"} <= set(d.mirror)
+
+
 def test_a_one_way_side_load_is_not_taken_as_symmetric():
     raw = copy.deepcopy(BAR)
     raw["loadCases"].append({"name": "side", "loads": [{"region": "tip", "force": [0, 20, 0]}]})

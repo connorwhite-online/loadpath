@@ -346,6 +346,13 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    is square. And smoothing was undone wherever the surface came near a
    keep-out, which along such a cut left the mesher's own facets: not where
    the surface runs through the keep-out.
+6. **Symmetry lost to rounding.** A part an odd number of half cells long
+   overhangs the grid by a quarter cell at each face, so the sub-cell
+   samples of its edge cells land on the faces themselves. Rounding decided
+   each one, a single corner column fell out of the mesh, and the mirror
+   planes went with it: a plain 54 x 42 block at 0.8 mm lost both. The
+   samples now sit a hair inside the quarter points, so both ends of a
+   part are counted the same way.
 
 ## Rule for work under this document
 
