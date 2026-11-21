@@ -1367,6 +1367,8 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
         active[act_idx[~keep]] = False
         mesh = HexMesh(ijk[active], pitch, origin)
 
+    if getattr(study, "print_direction", None) is not None:
+        warnings.extend(_unprintable_preserve(study.print_direction, dims, active, preserve, pitch, origin))
     pres_el = preserve[active]
     joints = drawn_joints(preserve.reshape(dims), mesh.elem_ijk) & ~pres_el
     stock_el = None
@@ -1726,3 +1728,47 @@ class WarpSpec:
     max_distortion: float | None  # mm limits, held as constraints
     max_lift: float | None
     coarsen: int = 1
+
+
+def _unprintable_preserve(direction, dims, active, preserve, pitch, origin) -> list:
+    """Drawn geometry the print cannot reach from its bed. The overhang rule
+    holds preserved cells solid whatever is under them (they are the
+    user's), so a feature hanging over air in the build direction is never
+    the optimizer's problem and only shows as support on the finished part;
+    and a design space whose floor stands off the bed (a hinge knuckle below
+    a clamp's split face set the bed, 7 mm under everything else) grows
+    nothing at all (an iPhone mount read safety factor 0.003 for it). Here
+    the whole envelope is printed solid along the build direction with no
+    cell held: whatever cannot be reached at 45 degrees even then is said,
+    before an optimization is spent on it."""
+    from .am import AMFilter, direction_label
+
+    try:
+        env = active.reshape(dims).astype(float)
+        printed = AMFilter(tuple(dims), direction).forward(env).reshape(-1)
+    except Exception:  # noqa: BLE001 - a check, never a reason not to build
+        return []
+    cant = active & (printed < 0.5)
+    pres_cant = cant & preserve
+    n_act = int(active.sum())
+    if not pres_cant.any() or n_act == 0:
+        return []
+    cell = pitch ** 3
+    idx = np.argwhere(pres_cant.reshape(dims))
+    lo = np.asarray(origin, float) + idx.min(axis=0) * pitch
+    hi = np.asarray(origin, float) + (idx.max(axis=0) + 1) * pitch
+    share = cant.sum() / n_act
+    try:
+        lab = direction_label(direction)
+    except Exception:  # noqa: BLE001
+        lab = str(direction)
+    msg = (f"printed along {lab}, {pres_cant.sum() * cell:.0f} mm^3 of preserved geometry (in "
+           f"[{', '.join(f'{v:.4g}' for v in lo)}] to [{', '.join(f'{v:.4g}' for v in hi)}]) cannot be reached "
+           "from the bed at 45 degrees even with the whole design space solid: it will print on supports. "
+           "Draw it to stand on the bed or on itself, give the design space room under it, or choose another "
+           "build direction")
+    if share > 0.25:
+        msg += (f"; {100 * share:.0f}% of the design space cannot be reached either, so the overhang rule will "
+                "leave the part disconnected (the bed is the lowest cell of the domain: does a preserved feature "
+                "hang below the rest of the part?)")
+    return [msg]
