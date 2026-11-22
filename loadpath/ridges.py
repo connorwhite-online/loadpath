@@ -39,7 +39,7 @@ import numpy as np
 
 from .ribs import _axis, _densify, _plane_basis
 
-__all__ = ["Ridges", "WallRidges", "profile", "section", "thin"]
+__all__ = ["Ridges", "WallRidges", "profile", "section", "thin", "tidy"]
 
 
 def _smin(a, b, k):
@@ -292,6 +292,34 @@ def _nearest_lines(tree, A, B, ID, Q, k):
     valid = np.isfinite(np.take_along_axis(us, srt, 1))
     g = lambda x: np.take_along_axis(x, pick, 1)
     return g(idx), g(tt), g(uu), valid
+
+
+def tidy(lines, weight=None, smooth=4.0, min_length=35.0, step=1.0):
+    """Stress lines as ridge paths: each resampled at `step` and smoothed along its length
+    (a Gaussian of `smooth` mm: a traced streamline wanders by a cell or two, a ridge shouldn't),
+    and lines shorter than `min_length` dropped (a short ridge stiffens nothing and reads as
+    clutter). Returns (lines, weights or None)."""
+    from scipy.ndimage import gaussian_filter1d
+
+    outL, outW = [], []
+    for i, pl in enumerate(lines):
+        pl = np.asarray(pl, float)
+        if len(pl) < 2:
+            continue
+        s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pl, axis=0), axis=1))])
+        if s[-1] < min_length:
+            continue
+        n = max(2, int(np.ceil(s[-1] / step)) + 1)
+        u = np.linspace(0, s[-1], n)
+        q = np.stack([np.interp(u, s, pl[:, j]) for j in range(3)], 1)
+        if smooth > 0 and n > 4:
+            sm = gaussian_filter1d(q, smooth / step, axis=0, mode="nearest")
+            sm[0], sm[-1] = q[0], q[-1]                 # ends stay where they were
+            q = sm
+        outL.append(q)
+        if weight is not None:
+            outW.append(np.interp(u, s, np.asarray(weight[i], float)))
+    return outL, (outW if weight is not None else None)
 
 
 def thin(lines, weight=None, spacing=22.0, parallel=0.8):
