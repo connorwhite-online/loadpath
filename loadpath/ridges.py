@@ -376,7 +376,69 @@ def split(lines, weight=None, ok=None, min_length=35.0):
     return outL, (outW if weight is not None else None)
 
 
-def network(lines, weight=None, snap=10.0, stub=12.0, anchors=None, angle=70.0, touch=2.0):
+def _merge_ends(L, W, joined, merge):
+    """network()'s first rule, in place (see there)."""
+    from scipy.spatial import cKDTree
+    if merge <= 0 or len(L) < 2:
+        return
+    for i in range(len(L)):
+        for side in (0, 1):
+            pl = L[i]
+            others = [q for j, q in enumerate(L) if j != i]
+            allo = np.vstack(others)
+            tree = cKDTree(allo)
+            d, nn = tree.query(pl)
+            seq = np.arange(len(pl)) if side == 0 else np.arange(len(pl))[::-1]
+            close = d[seq] < merge
+            if not close[0]:
+                continue
+            run = int(np.argmin(close)) if not close.all() else len(seq)
+            s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pl[seq], axis=0), axis=1))])
+            if run >= len(seq) - 2 or s[run] < 3.0 or s[-1] - s[run] < 2.0 * merge:
+                continue
+            c = int(seq[max(run - 1, 0)])                  # the last point still alongside
+            tgt = allo[nn[c]]
+            n = max(1, int(np.ceil(np.linalg.norm(tgt - pl[c]))))
+            if side == 0:
+                keep = pl[c:]
+                ext = pl[c] + (tgt - pl[c]) * (np.arange(n, 0, -1) / n)[:, None]
+                L[i] = np.vstack([ext, keep])
+                if W is not None:
+                    W[i] = np.concatenate([np.full(n, W[i][c]), W[i][c:]])
+            else:
+                keep = pl[:c + 1]
+                ext = pl[c] + (tgt - pl[c]) * (np.arange(1, n + 1) / n)[:, None]
+                L[i] = np.vstack([keep, ext])
+                if W is not None:
+                    W[i] = np.concatenate([W[i][:c + 1], np.full(n, W[i][c])])
+            joined[i][side] = True
+
+
+def _merge_nodes(L, joined, merge):
+    """Joined ends whose tips land within 1.5 x `merge` of each other (two ridges meeting a third
+    a few mm apart, from one side: a slot between them) are drawn to one node, their mean, each
+    over its last 2 x `merge` mm."""
+    tips = [(i, side) for i in range(len(L)) for side in (0, 1) if joined[i][side] and len(L[i]) > 2]
+    pos = {k: (L[k[0]][0] if k[1] == 0 else L[k[0]][-1]).copy() for k in tips}
+    done = set()
+    for a in range(len(tips)):
+        for b in range(a + 1, len(tips)):
+            ka, kb = tips[a], tips[b]
+            if ka in done or kb in done or ka[0] == kb[0]:
+                continue
+            if np.linalg.norm(pos[ka] - pos[kb]) >= 1.5 * merge:
+                continue
+            node = 0.5 * (pos[ka] + pos[kb])
+            for i, side in (ka, kb):
+                pl = L[i] if side == 1 else L[i][::-1]
+                s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pl, axis=0), axis=1))])
+                ramp = np.clip(1.0 - (s[-1] - s) / (2.0 * merge), 0, 1)[:, None]
+                pl = pl + ramp * (node - pl[-1])
+                L[i] = pl if side == 1 else pl[::-1]
+            done |= {ka, kb}
+
+
+def network(lines, weight=None, snap=10.0, stub=12.0, anchors=None, angle=70.0, touch=2.0, merge=6.0):
     """Join ridge lines into a network whose every end means something. For each end of each
     line, in this order:
 
@@ -389,17 +451,23 @@ def network(lines, weight=None, snap=10.0, stub=12.0, anchors=None, angle=70.0, 
     - otherwise the end is free: WallRidges tapers its height to nothing over its `taper`, a
       rounded run-out into the skin.
 
+    First, an end that runs alongside another line (within `merge` mm of it, more than `touch`
+    away) is cut back to where it first came that close and joined to the other line from there
+    by a straight piece: two ridges side by side left a slot between them, roofed where their
+    bulbs met (a tunnel the print bridges, and a dirt trap).
+
     Returns (lines, weights or None, ends): ends[i] = (start joined, end joined)."""
     from scipy.spatial import cKDTree
 
     L = [np.asarray(x, float).copy() for x in lines]
     W = None if weight is None else [np.asarray(w, float).copy() for w in weight]
     joined = [[False, False] for _ in L]
+    _merge_ends(L, W, joined, merge)
     ca = np.cos(np.radians(angle))
     for i in range(len(L)):
         for side in (0, 1):
             pl = L[i]
-            if len(pl) < 3:
+            if len(pl) < 3 or joined[i][side]:
                 continue
             end = pl[0] if side == 0 else pl[-1]
             k = min(4, len(pl) - 1)
@@ -464,6 +532,8 @@ def network(lines, weight=None, snap=10.0, stub=12.0, anchors=None, angle=70.0, 
                     L[i] = pl[:c + 1]
                     W = W if W is None else [*W[:i], W[i][:c + 1], *W[i + 1:]]
                     joined[i][1] = True
+    _merge_ends(L, W, joined, merge)          # and again: a run-on can bring an end alongside a line
+    _merge_nodes(L, joined, merge)
     return L, W, [tuple(e) for e in joined]
 
 
