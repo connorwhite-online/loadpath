@@ -490,7 +490,10 @@ class WallRidges:
     the skin; room: optional callable(points on the lines) -> the free height there (it caps
     H; where it leaves under `min_height` the ridge stops, tapering into the skin either side
     rather than being sliced). normal: callable(points on the lines) -> unit vectors off the
-    skin into the part (taken on the lines, smoothed along them, and carried across each section).
+    skin into the part (taken on the lines, smoothed along them over `normal_smooth` mm, and
+    carried across each section). skin: optional callable(points) -> signed distance off the skin
+    (negative on the normal's side): the lines are laid on it. smooth: mm the lines are faired
+    over (ends held).
     On skin facing away from the bed (a ceiling, normal more than 135 degrees from the print
     direction) there is no ridge.
 
@@ -503,7 +506,7 @@ class WallRidges:
 
     def __init__(self, lines, direction, normal, weight=None, t=(1.8, 3.0), H=(6.0, 16.0), R=(1.4, 2.6),
                  chin=45.0, room=None, min_height=3.0, blend=2.0, step=1.0, k=4, ends=None, taper=12.0,
-                 match=6.0):
+                 match=6.0, skin=None, smooth=3.0, normal_smooth=4.0):
         from scipy.ndimage import gaussian_filter1d, maximum_filter1d
         from scipy.spatial import cKDTree
 
@@ -519,6 +522,7 @@ class WallRidges:
             wl = np.ones(len(pl)) if weight is None else np.clip((np.asarray(weight[i], float) - w0) / max(w1 - w0, 1e-9), 0, 1)
             s_raw = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pl, axis=0), axis=1))])
             dense = _densify(pl, step)
+            dense = self._fair(dense, smooth / step, skin)
             sd = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(dense, axis=0), axis=1))])
             wd = np.interp(sd * (s_raw[-1] / max(sd[-1], 1e-9)), s_raw, wl)
             if len(wd) > 2:
@@ -573,7 +577,7 @@ class WallRidges:
             # ridge tore where the two disagreed
             nv = np.asarray(normal(dense), float)
             if len(nv) > 2:
-                nv = gaussian_filter1d(nv, 2.0 / step, axis=0, mode="nearest")
+                nv = gaussian_filter1d(nv, normal_smooth / step, axis=0, mode="nearest")
             nv /= np.maximum(np.linalg.norm(nv, axis=1, keepdims=True), 1e-12)
             NA.append(nv[:-1]); NB.append(nv[1:])
             tg = np.gradient(dense, axis=0)
@@ -590,6 +594,29 @@ class WallRidges:
         self.NA, self.NB = np.concatenate(NA), np.concatenate(NB)
         self.TA, self.TB = np.concatenate(TA), np.concatenate(TB)
         self.tree = cKDTree(0.5 * (self.A + self.B))
+
+    def _fair(self, dense, sig, skin):
+        """The line faired: kinks (a joined end's straight run-on, a traced line's jitter) smoothed
+        out over `smooth` mm with its ends held, then laid on the skin (with `skin`, a signed
+        distance off it, negative on the side the normal points to). A line a millimetre or two
+        off the skin, or wiggling across it, made a ridge whose top wandered with it: a crinkled
+        ridge."""
+        from scipy.ndimage import gaussian_filter1d
+        if sig > 0 and len(dense) > 4:
+            sm = gaussian_filter1d(dense, sig, axis=0, mode="nearest")
+            s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(dense, axis=0), axis=1))])
+            L0 = max(min(3.0 * sig, 0.5 * s[-1]), 1e-9)
+            a = np.clip(1.0 - s / L0, 0, 1)[:, None]
+            b = np.clip(1.0 - (s[-1] - s) / L0, 0, 1)[:, None]
+            # the ends held where they were (a joined end must still meet its neighbour), the
+            # smoothing's shift there eased out along the line
+            dense = sm + a * (dense[0] - sm[0]) + b * (dense[-1] - sm[-1])
+        if skin is not None:
+            for _ in range(3):
+                n = np.asarray(self.normal(dense), float)
+                n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+                dense = dense + np.asarray(skin(dense), float)[:, None] * n
+        return dense
 
     def __call__(self, P):
         P = np.asarray(P, float).reshape(-1, 3)
