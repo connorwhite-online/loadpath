@@ -289,10 +289,14 @@ def test_enclosure_study():
     assert {"mount-board", "mount-battery"} <= {p["id"] for p in st["preserve"]}
     assert [c["name"] for c in st["loadCases"]] == ["drop-z", "drop+y", "squeeze-x"]
     drop = st["loadCases"][0]["loads"]
-    # the floor holds back exactly what the parts push on it
-    total = sum(9.81 * 100 * ld["mass"] for ld in drop if "mass" in ld)
-    floor = [ld for ld in drop if "shape" in ld][0]
-    assert abs(floor["force"][2] - total) < 1e-3 * total, drop
+    # the floor holds back exactly what the parts and the shell's own
+    # slices push on it
+    parts = sum(9.81 * 100 * ld["mass"] for ld in drop if "mass" in ld)
+    fi = max((i for i, ld in enumerate(drop) if "shape" in ld), key=lambda i: drop[i]["force"][2])
+    shell = [ld for ld in drop[:fi] if "shape" in ld]       # the skin's slices, before the floor
+    assert shell, drop
+    total = parts - sum(ld["force"][2] for ld in shell)
+    assert abs(drop[fi]["force"][2] - total) < 1e-3 * total, drop
     # and the landing's spin balances the moment: the support carries nothing
     from loadpath.shells import _load_force
     F = sum((_load_force(ld) for ld in drop), np.zeros(3))
