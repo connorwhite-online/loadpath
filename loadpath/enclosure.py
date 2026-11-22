@@ -69,6 +69,8 @@ RECESS_TOL = 0.5
 # mm: a landing patch narrower than twice this across an axis is left the
 # face's whole width there (a part landing on an edge)
 LANDING_MIN_HALF = 2.0
+# mm a socket soldered to its board may shift against the skin round its port
+SOCKET_LEG_SHIFT = 0.1
 
 
 def _inner_centre(exterior, lo, hi, n: int = 28):
@@ -724,6 +726,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     # (connectors.py), into the mount the socket's board sits on, the hand
     # holding the face across from the port
     shift_limits = []
+    ops_by_id = {p["id"]: p for p in op_place}
     for cn in _listify(loads.get("connector")):
         from .connectors import connector_cases
         cid = cn["component"]
@@ -756,13 +759,16 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         # skin around the port (its best-fit rigid motion), not the far
         # face the hand holds, so the whole shell bending on the hand does
         # not read as the plug binding in its opening
+        max_shift = cn.get("maxShift")
+        if max_shift is None:
+            max_shift = _socket_shift_limit(cn, cid, root, byid, ops_by_id, out, wide)
         R = max(SURROUND_MM, float(np.max(ext)))
         surround = {"region": "skin", "shape": {"type": "box", "min": _r(blo - R), "max": _r(bhi + R)}}
         cc, clear = connector_cases(
             cn.get("type", "usb-c"), region=region, mouth=mouth, out=out, wide=wide,
             hold={"shape": face_slab(_axis_name(-out), t_skin + 0.5)}, name=cn.get("name", cid),
             insert=cn.get("insert"), withdraw=cn.get("withdraw"), side=cn.get("side"), lever=cn.get("lever"),
-            abuse=bool(cn.get("abuse", False)), wrench=cn.get("wrench"), max_shift=cn.get("maxShift", 0.1),
+            abuse=bool(cn.get("abuse", False)), wrench=cn.get("wrench"), max_shift=max_shift,
             relative=surround)
         cases += cc
         if clear:
@@ -772,7 +778,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         for k_ in keep:
             if k_.get("id") == cid:
                 k_["connector"] = {"type": cn.get("type", "usb-c"), "out": _r(out), "wide": _r(wide),
-                                   "maxShift": float(cn.get("maxShift", 0.1)), "surround": surround,
+                                   "maxShift": float(max_shift), "surround": surround,
                                    **{f: cn[f] for f in ("insert", "withdraw", "side", "abuse", "retention")
                                       if cn.get(f) is not None}}
     # rattle: every mounted component held still in the hand (feel.py
@@ -1321,6 +1327,30 @@ def _landing_patch(exterior, slab: dict, pts, d) -> dict:
             if v[b - 1] - v[a] >= 2 * LANDING_MIN_HALF:
                 nlo[j], nhi[j] = v[a] - 0.5, v[b - 1] + 0.5
     return {"type": "box", "min": _r(nlo), "max": _r(nhi)}
+
+
+def _socket_shift_limit(cn, cid, root, byid, ops_by_id, out, wide) -> float:
+    """How far a socket may move under its plug's loads. Soldered to a board
+    (installed on one), its legs take any shift between the two, and they
+    allow SOCKET_LEG_SHIFT. Held by the shell on its own (its board joined
+    by a cable), what binds is the plug in the opening: the plug's shell
+    may move as far as its gap to the opening's edge across each way it is
+    pushed (a USB-C plug, 8.25 x 2.40 mm, in a 9.2 x 3.6 mm port: 0.475)."""
+    from .connectors import CONNECTORS
+    if root(cid) != cid:
+        return SOCKET_LEG_SHIFT
+    plug = (CONNECTORS.get(cn.get("type", "usb-c")) or {}).get("plug")
+    op = ops_by_id.get((byid[cid].get("alignTo") or {}).get("opening"))
+    if not plug or op is None:
+        return SOCKET_LEG_SHIFT
+    lo, hi = (np.asarray(v, float) for v in op["shape"].bounds())
+    thin = np.cross(out, wide)
+    gaps = []
+    for ax, key in ((wide, "wide"), (thin, "thin")):
+        span = float(np.abs(np.asarray(ax, float)) @ (hi - lo))
+        gaps.append(0.5 * (span - float(plug[key])))
+    g = min(gaps)
+    return round(g, 3) if g > SOCKET_LEG_SHIFT else SOCKET_LEG_SHIFT
 
 
 def _landing_share(pts, at_floor, d) -> float:

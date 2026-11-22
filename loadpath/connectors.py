@@ -50,11 +50,13 @@ __all__ = ["CONNECTORS", "connector_cases"]
 # N, N, [(across, N)], mm, {across: N·mm}
 CONNECTORS = {
     "usb-c": {"insert": 20.0, "withdraw": 20.0, "side": {"thin": 8.0, "wide": 20.0}, "lever": 15.0,
-              "wrench": {"thin": 2000.0, "wide": 3500.0},
+              "wrench": {"thin": 2000.0, "wide": 3500.0}, "plug": {"wide": 8.25, "thin": 2.40},
               "source": "USB Type-C (vendor reports citing USB-IF / EIA-364-13)"},
     "usb-a": {"insert": 35.0, "withdraw": 35.0, "side": {"thin": 10.0, "wide": 10.0}, "lever": 15.0,
+              "plug": {"wide": 12.0, "thin": 4.5},
               "source": "USB 2.0 Standard-A (insertion max; extraction taken equal; side assumed)"},
     "usb-micro-b": {"insert": 35.0, "withdraw": 35.0, "side": {"thin": 10.0, "wide": 10.0}, "lever": 15.0,
+                    "plug": {"wide": 6.85, "thin": 1.8},
                     "source": "USB 2.0 Micro-B (insertion max; extraction taken equal; side assumed)"},
 }
 
