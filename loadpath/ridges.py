@@ -647,6 +647,7 @@ class WallRidges:
         tear = np.minimum(disk, np.maximum(cone, ax - (R / ca - R * ca)))
         f = _smin(web, tear, 1.0)                           # the bulb blended into the web
         f = np.maximum(f, over)                             # ends at the line's end, never past it
+        f = np.maximum(f, 0.3 - H)                          # under 0.3 mm tall it is nothing (no sliver line on the skin)
         f = np.where(valid & ~ceiling, f, 1e6)              # a ridge tapered to nothing is a sliver in the skin
         out = f[:, 0]
         for j in range(1, f.shape[1]):

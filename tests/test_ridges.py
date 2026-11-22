@@ -132,7 +132,7 @@ def test_room_running_out_tapers_instead_of_slicing():
     L = [np.array([[-40, 0, 0], [40, 0, 0]], float)]
     room = lambda C: np.where(np.abs(C[:, 0]) < 6, 1.0, 20.0)          # an obstacle over the middle
     r = _floor_ridges(L, room=room, taper=10.0)
-    assert _top(r, 0, 0) < 0.3 and abs(_top(r, -30, 0) - 8.0) < 0.3      # a sliver, flush in the skin
+    assert _top(r, 0, 0) == 0.0 and abs(_top(r, -30, 0) - 8.0) < 0.3
     tops = [_top(r, x, 0) for x in np.arange(-20, -6, 1.0)]
     assert np.all(np.diff(tops) <= 0.11)                      # it runs down to the gap, no cliff
     assert max(np.abs(np.diff(tops))) < 2.0
