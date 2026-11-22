@@ -3230,8 +3230,9 @@ _CONNECTOR = {"type": "object", "properties": {
                                                 "(usb-c 2.0 / 3.5 N·m); default false"},
     "wrench": {"type": "object", "properties": {"thin": _POS, "wide": _POS}, "additionalProperties": False,
                "description": "N·mm wrenching moments, with abuse"},
-    "maxShift": {"type": "number", "minimum": 0, "description": "mm the board's mount may move in these cases "
-                                                                "(default 0.1; 0 for no cap)"},
+    "maxShift": {"type": "number", "minimum": 0, "description": "mm the socket may move against the skin round its port "
+                                                                "in these cases (0 for no cap). Default: 0.1 on a board "
+                                                                "(its legs), else the plug's gap to its opening"},
     "retention": {"type": "object", "additionalProperties": _POS,
                   "description": "N the socket's legs (solder joints, shell tabs) are rated for, per force "
                                  "(insert, withdraw, side-thin+, ...) or 'all', from its datasheet: with a split, "

@@ -684,3 +684,18 @@ def test_an_off_centre_landing_pushes_with_the_effective_mass():
     d = np.array([0, 0, -1.0])
     assert abs(_landing_share(pts, [0, 0, -0.1], d) - 1.0) < 1e-9
     assert abs(_landing_share(pts, [1.0, 0, -0.0], d) - 0.5) < 1e-9
+
+
+def test_a_socket_on_its_own_may_shift_as_far_as_its_plug_clears_the_port():
+    """Soldered to a board, a socket's legs allow 0.1 mm; held by the shell
+    alone, the plug's shell (USB-C 8.25 x 2.40) may move to the edge of a
+    9.2 x 3.6 port: 0.475 mm."""
+    from loadpath.enclosure import _socket_shift_limit
+    from loadpath.shapes import shape_from_spec
+    op = {"id": "p", "shape": shape_from_spec({"type": "box", "min": [-3, -4.6, -1.8], "max": [0, 4.6, 1.8]})}
+    byid = {"usbc": {"alignTo": {"opening": "p"}}, "s2": {"installedOn": "board"}, "board": {}}
+    root = lambda c: "board" if c == "s2" else c
+    out, wide = np.array([-1.0, 0, 0]), np.array([0, 1.0, 0])
+    cn = {"type": "usb-c"}
+    assert abs(_socket_shift_limit(cn, "usbc", root, byid, {"p": op}, out, wide) - 0.475) < 1e-6
+    assert _socket_shift_limit(cn, "s2", root, byid, {"p": op}, out, wide) == 0.1
