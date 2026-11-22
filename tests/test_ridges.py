@@ -223,3 +223,35 @@ def test_anchor_network_mirror_is_symmetric():
     pts = np.vstack(lines)
     from scipy.spatial import cKDTree
     assert cKDTree(pts).query(pts * [-1, 1, 1])[0].max() < 1e-6
+
+
+def test_fillet_union_is_curvature_continuous_and_as_deep_as_its_radius():
+    from loadpath.ridges import fillet_union
+    # a floor (y < 0 solid) and a wall (x < 0 solid): the fillet fills the corner's bisector
+    # r (sqrt 2 - 1) deep, as a circular fillet of radius r would
+    r = 3.0
+    s = np.linspace(0.0, 4.0, 4001)
+    x = s / np.sqrt(2.0)                             # along the bisector, both fields x = y = s / sqrt 2 off the faces
+    f = fillet_union(x, x, r)
+    depth = s[np.argmin(np.abs(f))]
+    assert abs(depth - r * (np.sqrt(2.0) - 1.0)) < 0.02
+    # along the floor, the second difference never jumps (no crease at the fillet's edge)
+    y = 0.5
+    xs = np.linspace(-1.0, 12.0, 13001)
+    g = fillet_union(np.full_like(xs, y), -xs, r)
+    d2 = np.diff(g, 2) / (xs[1] - xs[0]) ** 2
+    assert np.abs(np.diff(d2)).max() < 0.05
+
+
+def test_wall_ridges_root_grows_with_height():
+    from loadpath.ridges import WallRidges
+    line = np.c_[np.linspace(0, 80, 81), np.zeros(81), np.zeros(81)]
+    up = lambda P: np.tile([0.0, 0.0, 1.0], (len(P), 1))
+    lo = WallRidges([line], "+z", up, H=(4.0, 4.0), taper=10.0, root=(0.3, 1.0, 3.0))
+    hi = WallRidges([line], "+z", up, H=(9.0, 9.0), taper=10.0, root=(0.3, 1.0, 3.0))
+    mid = np.array([[40.0, 3.0, 0.5]])
+    assert abs(lo.root_radius(mid)[0] - 1.2) < 0.1 and abs(hi.root_radius(mid)[0] - 2.7) < 0.1
+    end = np.array([[0.5, 3.0, 0.5]])                   # the tapered end: back to the least radius
+    assert hi.root_radius(end)[0] < 1.3
+    far = np.array([[40.0, 40.0, 0.5]])
+    assert abs(hi.root_radius(far)[0] - 1.0) < 1e-6

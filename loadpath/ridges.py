@@ -39,12 +39,33 @@ import numpy as np
 
 from .ribs import _axis, _densify, _plane_basis
 
-__all__ = ["Ridges", "WallRidges", "anchor_network", "geodesic", "network", "profile", "section", "split", "thin", "tidy"]
+__all__ = ["Ridges", "WallRidges", "anchor_network", "fillet_union", "geodesic", "network", "profile", "section",
+           "split", "thin", "tidy"]
 
 
 def _smin(a, b, k):
     h = np.clip(0.5 + 0.5 * (b - a) / k, 0.0, 1.0)
     return b * (1 - h) + a * h - k * h * (1 - h)
+
+
+def _smin_c2(a, b, k):
+    """Smooth union with no step in curvature (cubic). The quadratic _smin's curvature jumps where
+    |a - b| = k, and on a glossy part that jump shows as a crease line along both edges of every
+    fillet. k may be an array (a fillet that grows and shrinks along a ridge)."""
+    k = np.maximum(k, 1e-9)
+    h = np.maximum(k - np.abs(a - b), 0.0) / k
+    return np.minimum(a, b) - k * h ** 3 / 6.0
+
+
+_C2_PER_R = 6.0 * (1.0 - 1.0 / np.sqrt(2.0))   # the cubic blend reaches k / 6 off each face on the bisector; a radius-r fillet, r (1 - 1 / sqrt 2)
+
+
+def fillet_union(a, b, r):
+    """a and b joined with a root fillet of about radius r (scalar or per point) that is
+    curvature-continuous where it meets both faces: no crease at either edge of the fillet,
+    which a circular (G1) fillet or the quadratic smooth min leave. r is the radius of the
+    circular fillet that fills a square corner as deep."""
+    return _smin_c2(a, b, _C2_PER_R * np.asarray(r, float))
 
 
 def _box2(x, y, bx, by):
@@ -201,7 +222,7 @@ class Ridges:
         f = np.where(valid, f, 1e6)
         out = f[:, 0]
         for j in range(1, m):
-            out = _smin(out, f[:, j], self.blend)
+            out = _smin_c2(out, f[:, j], 1.5 * self.blend)   # as deep as the quadratic blend's k, without its crease
         return out
 
     def _clear(self, H, R):
@@ -717,16 +738,22 @@ class WallRidges:
     section and is blended. Where ridges cross or join, each takes the taller one's height
     within `match` mm (smoothed along it), so their tops meet flush instead of a step. Every
     ridge ends at its line's ends (a flat cap, of nothing where it tapered): it never runs on
-    past them."""
+    past them.
+
+    root: (fraction of the height, least, most) mm, the root fillet's radius where the ridges meet
+    the skin and the features they run into. root_radius(P) gives it at any point, eased between
+    neighbouring ridges, for fillet_union(skin, ridges, r): it grows with a ridge's height and
+    shrinks with it into a taper, so a run-out fades into the skin."""
 
     def __init__(self, lines, direction, normal, weight=None, t=(1.8, 3.0), H=(6.0, 16.0), R=(1.4, 2.6),
                  chin=45.0, room=None, min_height=3.0, blend=2.0, step=1.0, k=4, ends=None, taper=12.0,
-                 match=6.0, skin=None, smooth=3.0, normal_smooth=4.0):
+                 match=6.0, skin=None, smooth=3.0, normal_smooth=4.0, root=(0.3, 1.0, 3.0)):
         from scipy.ndimage import gaussian_filter1d, maximum_filter1d
         from scipy.spatial import cKDTree
 
         self.b = _axis(direction)
         self.normal, self.chin, self.blend, self.k = normal, float(chin), float(blend), int(k)
+        self.root = tuple(float(v) for v in root)
         allw = np.concatenate([np.ravel(x) for x in weight]) if weight is not None else np.ones(1)
         w0, w1 = np.percentile(allw, 5), np.percentile(allw, 95)
         dense_all, par_all, ids_all, f_all = [], [], [], []
@@ -810,6 +837,24 @@ class WallRidges:
         self.TA, self.TB = np.concatenate(TA), np.concatenate(TB)
         self.tree = cKDTree(0.5 * (self.A + self.B))
 
+    def root_radius(self, P, ease=4.0):
+        """The root fillet's radius at points P: each nearby ridge's (root[0] x its height there,
+        held within root[1:]), weighted by exp(-(distance / ease)^2) so it changes smoothly from
+        one ridge to the next instead of stepping where the nearest ridge changes; root[1] far
+        from every ridge."""
+        P = np.asarray(P, float).reshape(-1, 3)
+        fr, lo, hi = self.root
+        out = np.full(len(P), lo)
+        for a0 in range(0, len(P), 100_000):
+            Q = P[a0:a0 + 100_000]
+            idx, tt, uu, valid = _nearest_lines(self.tree, self.A, self.B, self.id, Q, self.k)
+            H = self.PA[idx][..., 1] + tt * (self.PB[idx][..., 1] - self.PA[idx][..., 1])
+            r = np.clip(fr * H, lo, hi)
+            w = np.where(valid, np.exp(-(np.where(valid, uu, 0.0) / ease) ** 2), 0.0)
+            far = np.exp(-4.0)                      # beyond about 2 ease of every ridge, the least radius
+            out[a0:a0 + 100_000] = (np.sum(w * r, axis=1) + far * lo) / (np.sum(w, axis=1) + far)
+        return out
+
     def _fair(self, dense, sig, skin):
         """The line faired: kinks (a joined end's straight run-on, a traced line's jitter) smoothed
         out over `smooth` mm with its ends held, then laid on the skin (with `skin`, a signed
@@ -890,13 +935,13 @@ class WallRidges:
         rad = np.linalg.norm(q - np.einsum("nkd,nkd->nk", q, gh)[..., None] * gh, axis=-1)
         cone = rad * sa - ax * ca
         tear = np.minimum(disk, np.maximum(cone, ax - (R / ca - R * ca)))
-        f = _smin(web, tear, 1.0)                           # the bulb blended into the web
+        f = _smin_c2(web, tear, 1.5)                        # the bulb blended into the web (C2: no crease line)
         f = np.maximum(f, over)                             # ends at the line's end, never past it
         f = np.maximum(f, 0.3 - H)                          # under 0.3 mm tall it is nothing (no sliver line on the skin)
         f = np.where(valid & ~ceiling, f, 1e6)              # a ridge tapered to nothing is a sliver in the skin
         out = f[:, 0]
         for j in range(1, f.shape[1]):
-            out = _smin(out, f[:, j], self.blend)
+            out = _smin_c2(out, f[:, j], 1.5 * self.blend)   # as deep as the quadratic blend's k, without its crease
         return out
 
 
