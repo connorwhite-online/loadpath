@@ -160,3 +160,17 @@ def test_crossing_tops_meet_flush():
     # the low ridge rises to the tall one's height at the node, and is back down away from it
     assert abs(_top(r, 0, 2.5) - _top(r, 0, 0)) < 0.6      # the node itself is 0.4 up: the blend
     assert _top(r, 0, 20) < 6.0
+
+
+def test_lines_are_faired_and_laid_on_the_skin():
+    # a traced line wandering 1.5 mm off a floor (z = 0) and jittering across it
+    from loadpath.ridges import WallRidges
+    x = np.arange(-40, 41, 1.0)
+    rng = np.random.default_rng(0)
+    pl = np.column_stack([x, 0.4 * rng.standard_normal(len(x)), 1.5 + 0.3 * rng.standard_normal(len(x))])
+    up = lambda P: np.tile([0.0, 0.0, 1.0], (len(P), 1))
+    r = WallRidges([pl], "+z", up, H=(8.0, 8.0), taper=10.0, skin=lambda P: -P[:, 2])
+    assert np.abs(r.A[:, 2]).max() < 1e-9                       # on the skin
+    wig = np.abs(np.diff(r.A[:, 1], 2)).max()
+    assert wig < 0.1 * np.abs(np.diff(pl[:, 1], 2)).max()       # the jitter faired out
+    assert abs(r.A[0, 0] - pl[0, 0]) < 0.5 and abs(r.A[0, 1] - pl[0, 1]) < 0.05   # its ends held

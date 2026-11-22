@@ -274,7 +274,9 @@ def _nearest_lines(tree, A, B, ID, Q, k, raw=False):
     each line by its nearest segment, with a validity mask (and, with raw, t unclamped: below 0
     or above 1 past the segment's ends)."""
     n = len(Q)
-    kk = min(k * 6, len(A))
+    # candidates by segment: a line 1 mm per segment fills ~2r of them within r, so two nearby lines
+    # could crowd a third (a tall ridge 8 mm off) out of the list, and its ridge blinked in and out
+    kk = min(k * 20, len(A))
     _, idx = tree.query(Q, k=kk)
     idx = np.asarray(idx).reshape(n, kk)
     a, b = A[idx], B[idx]
@@ -488,7 +490,10 @@ class WallRidges:
     the skin; room: optional callable(points on the lines) -> the free height there (it caps
     H; where it leaves under `min_height` the ridge stops, tapering into the skin either side
     rather than being sliced). normal: callable(points on the lines) -> unit vectors off the
-    skin into the part (taken on the lines, smoothed along them, and carried across each section).
+    skin into the part (taken on the lines, smoothed along them over `normal_smooth` mm, and
+    carried across each section). skin: optional callable(points) -> signed distance off the skin
+    (negative on the normal's side): the lines are laid on it. smooth: mm the lines are faired
+    over (ends held).
     On skin facing away from the bed (a ceiling, normal more than 135 degrees from the print
     direction) there is no ridge.
 
@@ -501,7 +506,7 @@ class WallRidges:
 
     def __init__(self, lines, direction, normal, weight=None, t=(1.8, 3.0), H=(6.0, 16.0), R=(1.4, 2.6),
                  chin=45.0, room=None, min_height=3.0, blend=2.0, step=1.0, k=4, ends=None, taper=12.0,
-                 match=6.0):
+                 match=6.0, skin=None, smooth=3.0, normal_smooth=4.0):
         from scipy.ndimage import gaussian_filter1d, maximum_filter1d
         from scipy.spatial import cKDTree
 
@@ -509,7 +514,7 @@ class WallRidges:
         self.normal, self.chin, self.blend, self.k = normal, float(chin), float(blend), int(k)
         allw = np.concatenate([np.ravel(x) for x in weight]) if weight is not None else np.ones(1)
         w0, w1 = np.percentile(allw, 5), np.percentile(allw, 95)
-        dense_all, par_all, ids_all = [], [], []
+        dense_all, par_all, ids_all, f_all = [], [], [], []
         for i, pl in enumerate(lines):
             pl = np.asarray(pl, float)
             if len(pl) < 2:
@@ -517,6 +522,7 @@ class WallRidges:
             wl = np.ones(len(pl)) if weight is None else np.clip((np.asarray(weight[i], float) - w0) / max(w1 - w0, 1e-9), 0, 1)
             s_raw = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pl, axis=0), axis=1))])
             dense = _densify(pl, step)
+            dense = self._fair(dense, smooth / step, skin)
             sd = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(dense, axis=0), axis=1))])
             wd = np.interp(sd * (s_raw[-1] / max(sd[-1], 1e-9)), s_raw, wl)
             if len(wd) > 2:
@@ -539,10 +545,8 @@ class WallRidges:
                 if len(ss) < 2 or ss[-1] < min(taper, 0.5 * sd[-1]):
                     continue
                 f[a0:b0] = _taper(ss, taper, not (a0 == 0 and je[0]), not (b0 == len(dense) and je[1]))
-            Hv = Hv * f
-            tv = tv * (0.5 + 0.5 * f)
-            Rv = np.minimum(Rv, np.maximum(0.3 * Hv, 0.5 * tv * f))
-            dense_all.append(dense); par_all.append(np.stack([tv, Hv, Rv], 1)); ids_all.append(i)
+            Hv = np.where(f > 0, Hv, 0.0)                   # the taper goes on after the flush tops
+            dense_all.append(dense); par_all.append(np.stack([tv, Hv, Rv], 1)); ids_all.append(i); f_all.append(f)
         if not dense_all:
             raise ValueError("no ridge lines")
         # flush tops: within `match` of another ridge, a ridge takes the taller one's height
@@ -560,7 +564,12 @@ class WallRidges:
                     lift = np.maximum(gaussian_filter1d(lift, 3.0 / step, mode="nearest"), p_[:, 1])
                     lift = np.where(p_[:, 1] > 0, lift, 0.0)
                 p_[:, 1] = lift
-        A, Bs, PA, PB, ID, END, NA, NB = [], [], [], [], [], [], [], []
+        # then the tapers (free ends, room run-outs), so a lifted node never lifts a taper back up
+        for p_, f in zip(par_all, f_all, strict=True):
+            p_[:, 1] *= f
+            p_[:, 0] *= 0.5 + 0.5 * f
+            p_[:, 2] = np.minimum(p_[:, 2], np.maximum(0.3 * p_[:, 1], 0.5 * p_[:, 0] * f))
+        A, Bs, PA, PB, ID, END, NA, NB, TA, TB = [], [], [], [], [], [], [], [], [], []
         for i, dense, par in zip(ids_all, dense_all, par_all, strict=True):
             A.append(dense[:-1]); Bs.append(dense[1:]); PA.append(par[:-1]); PB.append(par[1:])
             # the skin's normal on the line itself (smoothed along it), not at each query point: a
@@ -568,9 +577,12 @@ class WallRidges:
             # ridge tore where the two disagreed
             nv = np.asarray(normal(dense), float)
             if len(nv) > 2:
-                nv = gaussian_filter1d(nv, 2.0 / step, axis=0, mode="nearest")
+                nv = gaussian_filter1d(nv, normal_smooth / step, axis=0, mode="nearest")
             nv /= np.maximum(np.linalg.norm(nv, axis=1, keepdims=True), 1e-12)
             NA.append(nv[:-1]); NB.append(nv[1:])
+            tg = np.gradient(dense, axis=0)
+            tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-12)
+            TA.append(tg[:-1]); TB.append(tg[1:])
             ID.append(np.full(len(dense) - 1, i))
             e = np.zeros(len(dense) - 1, np.int8)
             e[0] |= 1
@@ -580,7 +592,31 @@ class WallRidges:
         self.PA, self.PB, self.id = np.concatenate(PA), np.concatenate(PB), np.concatenate(ID)
         self.end = np.concatenate(END)
         self.NA, self.NB = np.concatenate(NA), np.concatenate(NB)
+        self.TA, self.TB = np.concatenate(TA), np.concatenate(TB)
         self.tree = cKDTree(0.5 * (self.A + self.B))
+
+    def _fair(self, dense, sig, skin):
+        """The line faired: kinks (a joined end's straight run-on, a traced line's jitter) smoothed
+        out over `smooth` mm with its ends held, then laid on the skin (with `skin`, a signed
+        distance off it, negative on the side the normal points to). A line a millimetre or two
+        off the skin, or wiggling across it, made a ridge whose top wandered with it: a crinkled
+        ridge."""
+        from scipy.ndimage import gaussian_filter1d
+        if sig > 0 and len(dense) > 4:
+            sm = gaussian_filter1d(dense, sig, axis=0, mode="nearest")
+            s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(dense, axis=0), axis=1))])
+            L0 = max(min(3.0 * sig, 0.5 * s[-1]), 1e-9)
+            a = np.clip(1.0 - s / L0, 0, 1)[:, None]
+            b = np.clip(1.0 - (s[-1] - s) / L0, 0, 1)[:, None]
+            # the ends held where they were (a joined end must still meet its neighbour), the
+            # smoothing's shift there eased out along the line
+            dense = sm + a * (dense[0] - sm[0]) + b * (dense[-1] - sm[-1])
+        if skin is not None:
+            for _ in range(3):
+                n = np.asarray(self.normal(dense), float)
+                n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+                dense = dense + np.asarray(skin(dense), float)[:, None] * n
+        return dense
 
     def __call__(self, P):
         P = np.asarray(P, float).reshape(-1, 3)
@@ -595,7 +631,13 @@ class WallRidges:
         seg = np.linalg.norm(b - a, axis=2)
         e = self.end[idx]
         over = np.maximum(np.where(e & 1, -traw, 0.0), np.where(e & 2, traw - 1.0, 0.0)) * seg   # past the line's end
-        T = b - a
+        # past an inner end of a segment (when the line's next segment didn't make the candidate list)
+        # the section would run on along the tangent, a ghost ridge: held back beyond 1 mm of overrun
+        over = np.maximum(over, np.maximum(-traw, traw - 1.0) * seg - 1.0)
+        # the tangent eased from vertex to vertex, not each segment's own: with a segment's own, the
+        # section turned in a step at every vertex, and a bulb 8 mm off a curving line came out
+        # stepped (a jump of up to 0.9 mm where the nearest segment changed)
+        T = self.TA[idx] + tt[..., None] * (self.TB[idx] - self.TA[idx])
         T /= np.maximum(np.linalg.norm(T, axis=2, keepdims=True), 1e-12)
         C = a + tt[..., None] * (b - a)
         par = self.PA[idx] + tt[..., None] * (self.PB[idx] - self.PA[idx])
@@ -632,7 +674,8 @@ class WallRidges:
         tear = np.minimum(disk, np.maximum(cone, ax - (R / ca - R * ca)))
         f = _smin(web, tear, 1.0)                           # the bulb blended into the web
         f = np.maximum(f, over)                             # ends at the line's end, never past it
-        f = np.where(valid & ~ceiling & (H > 0), f, 1e6)
+        f = np.maximum(f, 0.3 - H)                          # under 0.3 mm tall it is nothing (no sliver line on the skin)
+        f = np.where(valid & ~ceiling, f, 1e6)              # a ridge tapered to nothing is a sliver in the skin
         out = f[:, 0]
         for j in range(1, f.shape[1]):
             out = _smin(out, f[:, j], self.blend)
