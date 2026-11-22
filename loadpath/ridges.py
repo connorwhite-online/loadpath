@@ -943,11 +943,21 @@ class WallRidges:
         tear = np.minimum(disk, np.maximum(cone, ax - (R / ca - R * ca)))
         f = _smin_c2(web, tear, 1.5)                        # the bulb blended into the web (C2: no crease line)
         f = np.maximum(f, over)                             # ends at the line's end, never past it
-        f = np.maximum(f, 0.3 - H)                          # under 0.3 mm tall it is nothing (no sliver line on the skin)
+        # under 0.6 mm tall it is nothing, and the field climbs fast as it goes: held at 0.3 - H it
+        # sat a hair off the skin along every tapered-out line, and a root fillet (any smooth union
+        # with the skin) raised it into a faint ghost ridge there
+        f = np.maximum(f, 6.0 * (0.6 - H))
         f = np.where(valid & ~ceiling, f, 1e6)              # a ridge tapered to nothing is a sliver in the skin
-        out = f[:, 0]
+        # where ridges join, the blend is full at the skin and eases off toward their tops (to a
+        # quarter at the top): a blend as deep at the tops raised a knuckle over every node
+        frac = np.clip(along / np.maximum(Lw, 1e-6), 0.0, 1.0)
+        frac = np.where(np.isfinite(f) & (f < 1e5), frac, 1.0)
+        out, fo = f[:, 0], frac[:, 0]
         for j in range(1, f.shape[1]):
-            out = _smin_c2(out, f[:, j], 1.5 * self.blend)   # as deep as the quadratic blend's k, without its crease
+            lift = np.minimum(fo, frac[:, j])
+            k = 1.5 * self.blend * np.clip(1.15 - lift, 0.25, 1.0)
+            out = _smin_c2(out, f[:, j], k)                     # as deep as the quadratic blend's k, without its crease
+            fo = np.maximum(fo, frac[:, j])
         return out
 
 
