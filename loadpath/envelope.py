@@ -181,9 +181,23 @@ def _grid_sdf(mesh, reach=12.0, pitch=None):
     origin = np.asarray(origin, float) - pad * pitch
     dist = (ndimage.distance_transform_edt(~solid) - ndimage.distance_transform_edt(solid)) * pitch
     dist -= 0.5 * pitch * np.sign(dist)
+    lo = origin + 0.5 * pitch
+    # near the surface the voxel transform is out by up to half a cell, in a pattern that follows
+    # the voxels: a face cut by this field came out lumpy and stair-stepped (the features cradling
+    # a part in a printed shell, at a fine remesh). There the nodes take the exact distance to the
+    # mesh (signed by the voxels, which are right a cell or more from the surface)
+    band = np.abs(dist) < 2.5 * pitch
+    if band.any():
+        import trimesh
+        ii = np.argwhere(band)
+        Q = lo + ii * pitch
+        d_exact = np.empty(len(Q))
+        for a in range(0, len(Q), 20000):                    # closest_point's working set grows with its batch
+            d_exact[a:a + 20000] = trimesh.proximity.closest_point(mesh, Q[a:a + 20000])[1]
+        inside = dist[band] < 0
+        dist[band] = np.where(inside, -d_exact, d_exact)
     dist = dist.astype(np.float32)
     shape = np.array(dist.shape)
-    lo = origin + 0.5 * pitch
     hi = lo + (shape - 1) * pitch
 
     def f(P):
