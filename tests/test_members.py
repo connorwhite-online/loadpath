@@ -12,10 +12,11 @@ def _cap(X, a, b, r):
 
 
 def _y(p=0.5):
+    # the legs rise 47 degrees: at exactly 45 the overhang check flipped on rounding (CI, once)
     ax = np.arange(-20, 20, p)
     X = np.stack(np.meshgrid(ax, ax, ax, indexing="ij"), -1)
-    d = np.minimum.reduce([_cap(X, (0, 0, 0), (0, 0, 18), 2.0), _cap(X, (0, 0, 0), (15, 0, -15), 2.0),
-                           _cap(X, (0, 0, 0), (-15, 0, -15), 1.5)])
+    d = np.minimum.reduce([_cap(X, (0, 0, 0), (0, 0, 18), 2.0), _cap(X, (0, 0, 0), (14, 0, -15), 2.0),
+                           _cap(X, (0, 0, 0), (-14, 0, -15), 1.5)])
     return X, d, (-20, -20, -20), p
 
 
