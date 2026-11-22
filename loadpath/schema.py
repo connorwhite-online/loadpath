@@ -3394,7 +3394,10 @@ ENCLOSURE_SCHEMA = {
         "loads": {"type": "object", "properties": {
             "drop": {"type": "object", "properties": {
                 "g": {"type": "number", "exclusiveMinimum": 0, "description": "design deceleration in g (default 50)"},
-                "faces": _FACE_LIST, "contactDepth": _POS}, "additionalProperties": False,
+                "faces": _FACE_LIST, "contactDepth": _POS,
+                "height": {**_POS, "description": "m dropped from: the floor then touches the exterior over the "
+                                                  "crush depth height / g (else contactDepth, default 0.5 mm)"}},
+                "additionalProperties": False,
                 "description": "a drop onto each face: every component's mass x g toward it, through its mount, "
                                "the floor's reaction on that face of the exterior"},
             "squeeze": {"anyOf": [_SQUEEZE, {"type": "array", "items": _SQUEEZE}],

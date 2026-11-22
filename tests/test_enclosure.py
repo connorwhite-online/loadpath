@@ -291,7 +291,7 @@ def test_enclosure_study():
     drop = st["loadCases"][0]["loads"]
     # the floor holds back exactly what the parts and the shell's own
     # slices push on it
-    parts = sum(9.81 * 100 * ld["mass"] for ld in drop if "mass" in ld)
+    parts = sum(9.81 * ld["dynamic"] * ld["mass"] for ld in drop if "mass" in ld)
     fi = max((i for i, ld in enumerate(drop) if "shape" in ld), key=lambda i: drop[i]["force"][2])
     shell = [ld for ld in drop[:fi] if "shape" in ld]       # the skin's slices, before the floor
     assert shell, drop
@@ -673,3 +673,14 @@ def test_a_socket_seats_in_its_tight_slot_through_a_thick_wall():
     c = r["best"]["components"]["usbc"]
     assert abs(c["recess"] - 0.3) <= 0.35, c
     assert abs(c["centre"][1]) < 0.15 and abs(c["centre"][2]) < 0.15, c
+
+
+def test_an_off_centre_landing_pushes_with_the_effective_mass():
+    """A dumbbell (two 1 kg ends 2 m apart) hit square under its centre of
+    mass takes the whole deceleration; hit at one end, the effective mass
+    there is 1/(1/M + r^2/I) = 1/(1/2 + 1/2) = 1 kg, half of M."""
+    from loadpath.enclosure import _landing_share
+    pts = [("a", 1.0, np.array([-1.0, 0, 0])), ("b", 1.0, np.array([1.0, 0, 0]))]
+    d = np.array([0, 0, -1.0])
+    assert abs(_landing_share(pts, [0, 0, -0.1], d) - 1.0) < 1e-9
+    assert abs(_landing_share(pts, [1.0, 0, -0.0], d) - 0.5) < 1e-9

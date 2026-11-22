@@ -658,29 +658,41 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         massed = {k: v for k, v in mounts.items() if v["mass"] > 0}
         if not massed:
             warnings.append("loads.drop: no component has a mass with a mount; no drop cases written")
+        # the floor stops the part over the crush its deceleration allows:
+        # from a height h at G g that is h / G, and the floor touches the
+        # exterior wherever it is that close to the face (a curved side
+        # meets the floor over more than its very tip)
+        h = drop.get("height")
+        crush = 1000.0 * float(h) / g if h else float(drop.get("contactDepth", 0.5))
         for f in faces if massed else []:
             d = _axis_vec(f)
-            ls, total, pts = [], 0.0, []
+            pts = []
             for k, v in massed.items():
                 gm = [m for m in byid if root(m) == k]
                 w = np.array([float(byid[m].get("mass") or 0.0) for m in gm])
                 cs = np.array([lay["components"][m]["centre"] for m in gm])
                 at = (w[:, None] * cs).sum(axis=0) / max(w.sum(), 1e-12)
-                ls.append({"region": f"mount-{k}", "mass": round(v["mass"], 6), "dynamic": g,
-                           "gravity": f, "at": _r(at, 3)})
                 pts.append((k, float(v["mass"]), np.asarray(at, float), {"region": f"mount-{k}"}))
-                total += v["mass"] * 9.81 * g
             # the shell's own mass lands too: its weight goes into the
             # floor's push and its inertia into the spin, slice by slice
-            for j, (sm, sc, box) in enumerate(shell_slices):
-                ls.append({"shape": box, "force": _r(sm * 9.81 * g * d, 3)})
-                pts.append((f"shell-{j}", sm, sc, {"shape": box}))
-                total += sm * 9.81 * g
-            # the floor holds the shell back on that face
-            slab = face_slab(f, t_skin + float(drop.get("contactDepth", 0.5)))
+            pts += [(f"shell-{j}", sm, sc, {"shape": box}) for j, (sm, sc, box) in enumerate(shell_slices)]
+            slab = face_slab(f, t_skin + crush)
             slab = _landing_patch(exterior, slab, pts, d)
+            at_floor = _contact_centre(exterior, slab)
+            # G is how hard the floor stops the point it hits. Off the
+            # centre of mass, part of the landing goes into spin and the
+            # floor's push is the effective mass's, not the whole mass's
+            ge = g * _landing_share(pts, at_floor, d)
+            ls, total = [], 0.0
+            for k, mi, at, tgt in pts:
+                if "region" in tgt:
+                    ls.append({**tgt, "mass": round(mi, 6), "dynamic": round(ge, 4), "gravity": f, "at": _r(at, 3)})
+                else:
+                    ls.append({**tgt, "force": _r(mi * 9.81 * ge * d, 3)})
+                total += mi * 9.81 * ge
+            # the floor holds the shell back on that face
             ls.append({"shape": slab, "force": _r(-total * d, 3)})
-            ls += _drop_spin(pts, -total * d, _contact_centre(exterior, slab), 9.81 * g * d)
+            ls += _drop_spin(pts, -total * d, at_floor, 9.81 * ge * d)
             cases.append({"name": f"drop{f}", "loads": ls})
     for i, sq in enumerate(_listify(loads.get("squeeze"))):
         a = str(sq.get("axis", "x")).lstrip("+-")
@@ -1309,6 +1321,25 @@ def _landing_patch(exterior, slab: dict, pts, d) -> dict:
             if v[b - 1] - v[a] >= 2 * LANDING_MIN_HALF:
                 nlo[j], nhi[j] = v[a] - 0.5, v[b - 1] + 0.5
     return {"type": "box", "min": _r(nlo), "max": _r(nhi)}
+
+
+def _landing_share(pts, at_floor, d) -> float:
+    """The share of a landing's deceleration the centre of mass takes: a
+    rigid body hit at c (r from its centre of mass) along d has the
+    effective mass 1 / (1/M + (r x d) . I^-1 (r x d)) there, so a part
+    landing on a bulge well off its centre of mass is pushed less hard
+    than one landing square, the rest going into its spin."""
+    m = np.array([p[1] for p in pts])
+    r = np.array([p[2] for p in pts])
+    M = m.sum()
+    if M <= 0:
+        return 1.0
+    cm = (m[:, None] * r).sum(axis=0) / M
+    q = r - cm
+    inertia = sum(m[i] * (np.dot(q[i], q[i]) * np.eye(3) - np.outer(q[i], q[i])) for i in range(len(m)))
+    a = np.cross(np.asarray(at_floor, float) - cm, np.asarray(d, float))
+    k = 1.0 / M + float(a @ np.linalg.pinv(inertia, rcond=1e-9) @ a)
+    return float(np.clip(1.0 / (M * k), 0.0, 1.0))
 
 
 def _drop_spin(pts, floor_force, at_floor, accel) -> list:
