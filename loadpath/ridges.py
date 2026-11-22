@@ -740,6 +740,7 @@ class WallRidges:
     ridge ends at its line's ends (a flat cap, of nothing where it tapered): it never runs on
     past them.
 
+    room_smooth: mm over which the room is taken at its lowest and eased (the ridge's top line).
     root: (fraction of the height, least, most) mm, the root fillet's radius where the ridges meet
     the skin and the features they run into. root_radius(P) gives it at any point, eased between
     neighbouring ridges, for fillet_union(skin, ridges, r): it grows with a ridge's height and
@@ -747,7 +748,7 @@ class WallRidges:
 
     def __init__(self, lines, direction, normal, weight=None, t=(1.8, 3.0), H=(6.0, 16.0), R=(1.4, 2.6),
                  chin=45.0, room=None, min_height=3.0, blend=2.0, step=1.0, k=4, ends=None, taper=12.0,
-                 match=6.0, skin=None, smooth=3.0, normal_smooth=4.0, root=(0.3, 1.0, 3.0)):
+                 match=6.0, skin=None, smooth=3.0, normal_smooth=4.0, root=(0.3, 1.0, 3.0), room_smooth=3.0):
         from scipy.ndimage import gaussian_filter1d, maximum_filter1d
         from scipy.spatial import cKDTree
 
@@ -774,7 +775,12 @@ class WallRidges:
             if room is not None:
                 rm = np.asarray(room(dense), float)
                 if len(rm) > 2:
-                    rm = gaussian_filter1d(rm, 3.0 / step, mode="nearest")
+                    # the lowest room within room_smooth either side, then eased over it: the top
+                    # runs in long even curves under every obstruction instead of following each
+                    # dip of the room (a rib whose height, and so its bulb's width, wobbled)
+                    from scipy.ndimage import minimum_filter1d
+                    w_ = max(1, int(round(2 * room_smooth / step)) | 1)
+                    rm = gaussian_filter1d(minimum_filter1d(rm, w_, mode="nearest"), room_smooth / step, mode="nearest")
                 Hv = np.minimum(Hv, rm)
             # runs with room for a ridge, each tapered at its ends: at a free end of the line, and
             # wherever the room runs out mid-line; a joined end keeps its full section
