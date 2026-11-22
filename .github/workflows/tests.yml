@@ -8,6 +8,13 @@ on:
   # that lands on main without a pull request is checked on its branch first
   workflow_dispatch:
 
+# One run at a time per branch: a newer push replaces a run still waiting
+# for runners (the latest run covers every earlier commit), and a run
+# already started finishes. 19 main runs once queued behind each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # The suite is split by file into groups that each take 10-15 minutes on a
   # 4-core runner (timings in the comments, from a run on 2026-11-10); in one

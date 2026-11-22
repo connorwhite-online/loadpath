@@ -266,3 +266,23 @@ def test_check_notes_a_whole_hole_support():
          "goal": {"volumeFraction": 0.3}, "resolution": {"maxElements": 4000}}
     r = check_study(s)
     assert any("held all round" in n for n in r["notes"]), r["notes"]
+
+
+def test_drawn_geometry_the_print_cannot_reach_is_said():
+    """A lug hanging below the design space's floor sets the bed: the floor
+    stands off it, so the rest of the part (a pad at the far end) cannot be
+    printed at 45 degrees from it, which the domain says before optimizing.
+    With the lug's foot level with the floor nothing is said."""
+    def warnings(lug_z0):
+        s = {"name": "hang",
+             "designSpace": [{"type": "box", "min": [0, 0, 5], "max": [60, 20, 20]}],
+             "preserve": [{"id": "lug", "shape": {"type": "box", "min": [25, 5, lug_z0], "max": [35, 15, 8]}},
+                          {"id": "pad", "shape": {"type": "box", "min": [0, 0, 17], "max": [8, 20, 20]}}],
+             "supports": [{"region": "lug"}],
+             "loadCases": [{"name": "p", "loads": [{"region": "pad", "force": [0, 0, -50]}]}],
+             "material": "petg", "process": {"type": "fdm", "buildDirection": "+z", "overhangs": True},
+             "goal": {"safetyFactor": 2}, "resolution": {"pitch": 2.0}}
+        return [w for w in build_domain(study_from_dict(s)).warnings if "cannot be reached" in w]
+    low = warnings(0)
+    assert low and "disconnected" in low[0], low
+    assert not warnings(5)

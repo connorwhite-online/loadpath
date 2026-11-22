@@ -1696,6 +1696,35 @@ def to_brep(b, sew=SEW):
     while ex.More():
         shells.append(TopoDS.Shell(ex.Current()))
         ex.Next()
+    if len(shells) > 1 and free == 0:
+        # closed pieces: a cage that came apart at a pinch of the mesh (two
+        # bodies touching along an edge) or crumbs a hole's rim left. Each
+        # closed shell is a solid; crumbs under a thousandth of the body go,
+        # real pieces are fused back (an iPhone mount's filled slots left
+        # one body and two crumbs).
+        from .step import _volume
+
+        solids = sorted((_forward(BRepBuilderAPI_MakeSolid(sh).Solid()) for sh in shells),
+                        key=lambda so: -abs(_volume(so)))
+        big = abs(_volume(solids[0]))
+        keep = [so for so in solids if abs(_volume(so)) > 1e-3 * big]
+        solid = keep[0]
+        if len(keep) > 1:
+            from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+            from OCP.TopTools import TopTools_ListOfShape
+
+            args, tools = TopTools_ListOfShape(), TopTools_ListOfShape()
+            args.Append(keep[0])
+            for so in keep[1:]:
+                tools.Append(so)
+            fu = BRepAlgoAPI_Fuse()
+            fu.SetArguments(args)
+            fu.SetTools(tools)
+            fu.Build()
+            if not fu.IsDone():
+                raise RuntimeError(f"sewing left {len(shells)} closed shells that would not fuse")
+            solid = fu.Shape()
+        return solid, free
     if len(shells) != 1:
         raise RuntimeError(f"sewing left {len(shells)} shells, {free} free edges")
     solid = BRepBuilderAPI_MakeSolid(shells[0]).Solid()

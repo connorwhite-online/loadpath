@@ -185,3 +185,21 @@ def test_clearance_relative_to_its_surround_ignores_rigid_motion():
     rows = {r["name"]: r for r in _clearance_rows(s, "c", pts, u, _clearance_nodes(s, pts, 0.5))}
     assert rows["abs"]["travel"] > 0.8
     assert 0.02 < rows["port"]["travel"] < 0.06
+
+
+def test_unfolding_leaves_sound_and_truly_crossed_parts_alone():
+    # the float32 unfold pass only takes back sub-micron folds: a sound part
+    # comes back as it was, and two solids pushed through each other are not
+    # "repaired" into a part (the soundness check still refuses them)
+    from loadpath.reconstruct import _unfold_float32
+
+    box = trimesh.creation.box((10, 10, 10))
+    assert _unfold_float32(box) is box
+    a = trimesh.creation.box((10, 10, 10))
+    b = trimesh.creation.box((10, 10, 10)).apply_translation((4.3, 3.7, 2.9))
+    crossed = trimesh.util.concatenate([a, b])
+    info = {}
+    out = _unfold_float32(crossed, info)
+    rep = {"bodies": 1}
+    _sound(rep, out)
+    assert rep["sound"]["ok"] is False

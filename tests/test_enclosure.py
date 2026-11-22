@@ -466,6 +466,9 @@ def test_plug_loads_go_through_the_boards_mount():
     assert abs(th["at"][1] - (mouth_y - 15.0)) < 1e-6, (th, mouth_y)
     assert abs(abs(th["force"][2]) - 8.0) < 1e-6 and abs(abs(wd["force"][0]) - 20.0) < 1e-6, (th, wd)
     cl = st["goal"]["clearances"]
+    # counted against the skin round the port, not the hand's face 34 mm away
+    rel = cl[0].pop("relativeTo")
+    assert rel["region"] == "skin" and rel["shape"]["type"] == "box", rel
     assert cl == [{"name": "conn-shift", "region": "mount-board", "maxTravel": 0.1, "cases": list(cs)}], cl
     assert not [x for x in lint(st, "study") if x["level"] == "error"], lint(st, "study")
     # abuse: the wrenching moments as a force at the lever
@@ -624,3 +627,45 @@ if __name__ == "__main__":
                 print("FAIL", name, flush=True)
                 traceback.print_exc()
     sys.exit(1 if fails else 0)
+
+
+def test_brief_keepout_mesh_paths_resolve_against_the_brief():
+    # a keepOut drawn as a mesh beside the brief: the study is written into
+    # the out folder, so its path must not be read against that folder
+    import os
+    from loadpath.enclosure import _abs_paths
+
+    k = [{"id": "light", "shape": {"type": "union", "shapes": [{"type": "mesh", "path": "light.stl"}]}, "bore": False}]
+    got = _abs_paths(k, "/briefs/scanner")
+    assert got[0]["shape"]["shapes"][0]["path"] == os.path.abspath("/briefs/scanner/light.stl")
+    assert k[0]["shape"]["shapes"][0]["path"] == "light.stl"   # the brief is not changed
+
+
+def test_a_socket_seats_in_its_tight_slot_through_a_thick_wall():
+    """A USB-C socket (8.94 x 3.26 stadium) aligned to a 9.2 x 3.6 stadium
+    slot through a 3 mm wall comes out in the slot, its face the recess
+    short of the exterior: the slot is drawn for it, so the margin parts
+    keep off everything else does not hold it out (a scanner's socket sat
+    11.75 mm behind its port)."""
+    import manifold3d as m3d
+
+    from loadpath.handoff import _fine_mesh_shape
+    from loadpath.shapes import shape_from_spec
+
+    def stadium(w, h, length, x0):
+        r = h / 2
+        return m3d.Manifold.batch_hull([m3d.Manifold.cylinder(length, r, r, 64).rotate((0, 90, 0))
+                                        .translate((x0, y, 0)) for y in (-(w / 2 - r), w / 2 - r)])
+
+    box = m3d.Manifold.cube((60, 30, 20)).translate((-30, -15, -10))
+    slot = stadium(9.2, 3.6, 5.0, -31.0)            # through the -x wall
+    sock = stadium(8.94, 3.26, 7.35, 0.0)
+    ext = _fine_mesh_shape({"type": "mesh", "path": _stl("thick-ext.stl", box - slot)}, None)
+    ops = [{"id": "port", "shape": shape_from_spec({"type": "mesh", "path": _stl("thick-slot.stl", slot)}),
+            "inward": "+x", "depth": 3.2}]
+    comps = [{"id": "usbc", "shape": {"type": "mesh", "path": _stl("thick-sock.stl", sock)}, "rotate": "none",
+              "alignTo": {"opening": "port", "face": "-x", "recess": 0.3}}]
+    r = place(ext, comps, skin=3.0, openings=ops, pitch=1.0)
+    c = r["best"]["components"]["usbc"]
+    assert abs(c["recess"] - 0.3) <= 0.35, c
+    assert abs(c["centre"][1]) < 0.15 and abs(c["centre"][2]) < 0.15, c

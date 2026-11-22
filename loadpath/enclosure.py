@@ -64,6 +64,8 @@ _FACES = ["-z", "+z", "-x", "+x", "-y", "+y"]
 # opening's surround: enough skin to fix the opening's own frame, local
 # enough that the shell bending on the hand is left out)
 SURROUND_MM = 10.0
+# mm an aligned part may sit off its asked recess before the report says so
+RECESS_TOL = 0.5
 
 
 def _inner_centre(exterior, lo, hi, n: int = 28):
@@ -309,6 +311,29 @@ def _offset_below(H, step: float, t: float):
     return np.where(steep, H + t, H - t)
 
 
+def _abs_paths(v, base_dir):
+    """A copy of a brief block with its shapes' file paths made absolute:
+    a relative path is the brief's (its folder), while the study written
+    out resolves against its own folder (_localize copies them there)."""
+    import copy
+    v = copy.deepcopy(v)
+    if base_dir is None:
+        return v
+
+    def walk(x):
+        if isinstance(x, dict):
+            if x.get("type") in ("mesh", "sdf", "brep") and isinstance(x.get("path"), str) \
+                    and not os.path.isabs(x["path"]):
+                x["path"] = os.path.abspath(os.path.join(base_dir, x["path"]))
+            for y in x.values():
+                walk(y)
+        elif isinstance(x, list):
+            for y in x:
+                walk(y)
+    walk(v)
+    return v
+
+
 def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None) -> dict:
     """Brief in; a study, a placement and a report out (files under
     out_dir: cad/<component>.stl in product coordinates, the study). See the
@@ -365,6 +390,18 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         spec = _shape_spec(f["shape"], base_dir)
         fixed.append((fid, _fine_mesh_shape(spec, None)))
         preserve.append({"id": fid, "shape": spec})
+
+    # a brief keep-out with partsOut: space nothing may stand in, a part no
+    # more than the designed material (a camera's light path to its
+    # window). Placement keeps every part out of it; the study keeps the
+    # material out as any keep-out. Without it a keep-out only holds the
+    # material out (a board's bay, which the board sits in).
+    parts_out = []
+    for i, k in enumerate(b.get("keepOut") or []):
+        if isinstance(k, dict) and k.get("partsOut"):
+            from .shapes import shape_from_spec
+            parts_out.append((k.get("id") or f"keepOut-{i}",
+                              shape_from_spec(_abs_paths(k["shape"], base_dir), None)))
 
     comps = []
     for i, c in enumerate(b.get("components") or []):
@@ -448,7 +485,8 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     aware = pl_opts.get("assemblyAware", True) and not split
 
     def lay_out(turning):
-        return place(exterior, comps, skin=t_skin, openings=op_place, fixed=fixed, rules=pl_opts, judge=judge,
+        return place(exterior, comps, skin=t_skin, openings=op_place, fixed=fixed + parts_out, rules=pl_opts,
+                     judge=judge,
                      pitch=pl_opts.get("pitch"), beam=int(pl_opts.get("beam", 3)),
                      margin=float(pl_opts.get("margin", 0.5)), on_progress=on_progress,
                      access=(lambda *a: access(*a, turning=turning)) if aware else None)
@@ -530,7 +568,8 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         if ins is not None and not c.get("external"):
             k["insertFrom"] = ins
         keep.append(k)
-    keep += list(b.get("keepOut") or [])
+    keep += [{k_: v_ for k_, v_ in k.items() if k_ != "partsOut"} if isinstance(k, dict) else k
+             for k in _abs_paths(list(b.get("keepOut") or []), base_dir)]
     for k, v in mounts.items():
         preserve.append({"id": f"mount-{k}", "shape": v["shape"]})
         # a board on screws: the taps, shanks, heads and drivers kept clear
@@ -580,7 +619,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     # what verify will find under a support or a mount: the fixed parts
     # when the brief has them (they are what gets checked), else the skin
     material = [sh for _, sh in fixed]
-    supports = b.get("supports")
+    supports = _abs_paths(b.get("supports"), base_dir)
     if not supports:
         pts, moved = _support_points(exterior, centre, rest, r_sup, material, lo, hi)
         supports = [{"shape": {"type": "sphere", "center": _r(q), "r": round(r_sup, 3)}} for q in pts]
@@ -595,7 +634,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         gone = {f"mount-{k}" for k in mounts if k not in kept}
         preserve[:] = [p for p in preserve if p["id"] not in gone]
         mounts = kept
-    cases = list(b.get("loadCases") or [])
+    cases = _abs_paths(list(b.get("loadCases") or []), base_dir)
     loads = b.get("loads") or {}
 
     def face_slab(f, depth):
@@ -804,6 +843,14 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     from .schema import lint
     issues = [x for x in lint(study, "study") if x["level"] == "error"]
     placement = {k: {kk: vv for kk, vv in v.items()} for k, v in lay["components"].items()}
+    for k, v in placement.items():
+        # a part aligned to an opening that did not get to its asked depth:
+        # a plug may not reach a socket set back in the wall
+        if v.get("recess") is not None and v.get("recessAsked") is not None \
+                and abs(v["recess"] - v["recessAsked"]) > RECESS_TOL:
+            warnings.append(f"{k}: sits {v['recess']:.2f} mm behind its opening, {v['recessAsked']:g} asked: it "
+                            "could not get further in (the opening narrower than the part, or something in the "
+                            "way). Check the part's shape against the opening's")
     report = {"placement": {"components": placement, "order": pr["order"], "given": pr["given"],
                             "centerOfMass": lay["centerOfMass"], "mass": lay["mass"], "pitch": pr["pitch"],
                             "layoutsTried": tried, "blocked": pr["blocked"], "seconds": pr["seconds"]},

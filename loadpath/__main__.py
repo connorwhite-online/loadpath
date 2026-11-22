@@ -453,6 +453,11 @@ def _making_summary(m: dict) -> dict:
     return out
 
 
+# flags that only choose what a run writes, honoured when given with --resume
+_RESUME_OUTPUTS = ("step", "step_surface", "no_render", "no_bundle")
+_OUTPUT_DEFAULTS = {"step_surface": "facets"}
+
+
 def _remesh(args):
     """A run's saved optimized field meshed again and verified: the same
     reconstruction and check `run` gives an outcome, without the optimizer."""
@@ -695,7 +700,13 @@ def _run_checkpoint(p, args, argv):
             print(json.dumps({"ok": False, "error": f"{out} holds no resumable run "
                                                     f"(no checkpoint/{checkpoint.RUN_FILE})"}))
             return None
+        given = args
         args = p.parse_args(saved["argv"])
+        # what to write is not part of the design problem: a STEP asked for
+        # on resume (the run's own argv had none) is written, not dropped
+        for k in _RESUME_OUTPUTS:
+            if getattr(given, k, None) not in (None, False, _OUTPUT_DEFAULTS.get(k)):
+                setattr(args, k, getattr(given, k))
         cwd = saved["cwd"]
         args.study = os.path.join(cwd, args.study)
         args.base_dir = args.base_dir and os.path.join(cwd, args.base_dir)

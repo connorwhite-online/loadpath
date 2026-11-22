@@ -2036,8 +2036,14 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         # invalid (a handheld's cover kept the base's usbc-shift)
         if isinstance(h.get("goal"), dict) and h["goal"].get("clearances"):
             names = {lc.get("name") for lc in lcs}
+            # ...and a limit on a region that went to the other half (a
+            # socket's mount, whose plug cases the base still carries
+            # through the seam) holds nothing here
+            regions = {r.get("id") for k in ("preserve", "keepOut") for r in h.get(k) or []} | {"skin"}
             kept = []
             for c_ in h["goal"]["clearances"]:
+                if c_.get("region") is not None and c_["region"] not in regions:
+                    continue
                 cs = c_.get("cases")
                 if cs is None:
                     kept.append(c_)
