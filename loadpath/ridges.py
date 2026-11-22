@@ -39,7 +39,7 @@ import numpy as np
 
 from .ribs import _axis, _densify, _plane_basis
 
-__all__ = ["Ridges", "WallRidges", "network", "profile", "section", "split", "thin", "tidy"]
+__all__ = ["Ridges", "WallRidges", "anchor_network", "geodesic", "network", "profile", "section", "split", "thin", "tidy"]
 
 
 def _smin(a, b, k):
@@ -536,6 +536,151 @@ def network(lines, weight=None, snap=10.0, stub=12.0, anchors=None, angle=70.0, 
     _merge_nodes(L, joined, merge)
     return L, W, [tuple(e) for e in joined]
 
+
+
+def _edge_graph(V, F):
+    from scipy.sparse import coo_matrix
+    E = np.vstack([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    E = np.unique(np.sort(E, axis=1), axis=0)
+    w = np.linalg.norm(V[E[:, 0]] - V[E[:, 1]], axis=1)
+    n = len(V)
+    return coo_matrix((np.r_[w, w], (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n)).tocsr()
+
+
+def geodesic(V, F, a, b, graph=None):
+    """The shortest path over the surface mesh (V, F) from point a to point b (each snapped to
+    its nearest vertex), along the mesh's edges: a polyline of vertices. Fair it before use
+    (WallRidges does, laying it back on the skin)."""
+    from scipy.sparse.csgraph import dijkstra
+    from scipy.spatial import cKDTree
+    V = np.asarray(V, float)
+    g = _edge_graph(V, np.asarray(F)) if graph is None else graph
+    ia, ib = cKDTree(V).query([a, b])[1]
+    _, pred = dijkstra(g, indices=ia, return_predecessors=True)
+    path = [ib]
+    while path[-1] != ia and pred[path[-1]] >= 0:
+        path.append(pred[path[-1]])
+    return V[path[::-1]]
+
+
+def anchor_network(V, F, anchors, k=5, max_length=90.0, min_length=8.0, clear=8.0, min_angle=40.0,
+                   ok=None, pairs=None, smooth=3.0, mirror=None):
+    """Ribs as load paths between hard points: the shortest paths over a skin (the surface mesh
+    V, F) between anchors (bosses, posts, cradles: the points where they meet the skin), chosen
+    the way a designer lays out ribs, so every rib starts and ends at something it ties together
+    and none is an accident of a stress field:
+
+    - candidates are each anchor's `k` nearest anchors over the surface, `min_length` to
+      `max_length` mm apart (or the given `pairs`, index pairs, alone);
+    - shortest first, a candidate is kept when it stays `clear` mm from every rib already kept
+      (but where both meet at a shared anchor), leaves each of its anchors at `min_angle` degrees
+      or more from the ribs already there, and `ok(points) -> bool array` holds all along it
+      (room for a rib: the parts' keep-outs);
+    - so the network is planar on the skin: ribs meet only at anchors, never cross mid-span.
+
+    mirror: a scale such as (-1, 1, 1) for a symmetric part: each anchor is paired with its
+    mirror image's (the nearest, within 2 mm) and each rib is kept together with its mirror image
+    (the same path, mirrored), or neither is, so the layout is exactly symmetric.
+
+    The paths are smoothed over `smooth` mm (ends held) here only to judge their directions;
+    returns (lines, kept pairs). Pass the lines to network(..., anchors=...) and WallRidges."""
+    from scipy.ndimage import gaussian_filter1d
+    from scipy.sparse.csgraph import dijkstra
+    from scipy.spatial import cKDTree
+
+    V = np.asarray(V, float)
+    A = np.asarray(anchors, float).reshape(-1, 3)
+    g = _edge_graph(V, np.asarray(F))
+    ia = cKDTree(V).query(A)[1]
+    D, pred = dijkstra(g, indices=ia, return_predecessors=True)
+    Dab = D[:, ia]
+    if pairs is None:
+        cand = set()
+        for i in range(len(A)):
+            order = [j for j in np.argsort(Dab[i]) if j != i and min_length <= Dab[i, j] <= max_length]
+            for j in order[:k]:
+                cand.add((min(i, j), max(i, j)))
+        cand = sorted(cand, key=lambda q: Dab[q])
+    else:
+        cand = [tuple(q) for q in pairs]
+
+    def path(i, j):
+        out, v = [ia[j]], ia[j]
+        while v != ia[i] and pred[i, v] >= 0:
+            v = pred[i, v]
+            out.append(v)
+        P = V[out[::-1]]
+        if len(P) > 4:
+            sm = np.column_stack([gaussian_filter1d(P[:, c], smooth, mode="nearest") for c in range(3)])
+            r = np.linspace(0, 1, len(P))[:, None]
+            P = sm + (1 - r) * (P[0] - sm[0]) + r * (P[-1] - sm[-1])
+        return P
+
+    def leave(P, at_start, reach=6.0):
+        s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
+        if at_start:
+            q = P[min(np.searchsorted(s, reach), len(P) - 1)] - P[0]
+        else:
+            q = P[max(np.searchsorted(s, s[-1] - reach), 0)] - P[-1]
+        return q / max(np.linalg.norm(q), 1e-9)
+
+    if mirror is not None:
+        mv = np.asarray(mirror, float)
+        dm, mi = cKDTree(A).query(A * mv)
+        mmap = np.where(dm < 2.0, mi, -1)
+    kept, lines, dirs = [], [], {i: [] for i in range(len(A))}
+    trees = []
+    ca = np.cos(np.radians(min_angle))
+
+    def fits(i, j, P, extra=()):
+        if len(P) < 3 or (ok is not None and not np.all(ok(P))):
+            return None
+        di, dj = leave(P, True), leave(P, False)
+        if any(np.dot(di, d) > ca for d in dirs[i]) or any(np.dot(dj, d) > ca for d in dirs[j]):
+            return None
+        for (a, b), t in list(zip(kept, trees, strict=True)) + list(extra):
+            # clear of every kept rib, judged away from the anchors either rib ends at
+            far = np.ones(len(P), bool)
+            for q in {a, b, i, j}:
+                far &= np.linalg.norm(P - A[q], axis=1) > clear
+            Q = P[far]
+            if len(Q) and t.query(Q)[0].min() < clear:
+                return None
+        return di, dj
+
+    def keep(i, j, P, d):
+        kept.append((i, j))
+        lines.append(P)
+        trees.append(cKDTree(P))
+        dirs[i].append(d[0])
+        dirs[j].append(d[1])
+
+    done = set()
+    for i, j in cand:
+        if (i, j) in done:
+            continue
+        P = path(i, j)
+        d = fits(i, j, P)
+        if d is None:
+            continue
+        if mirror is None:
+            keep(i, j, P, d)
+            continue
+        a, b = mmap[i], mmap[j]
+        if a < 0 or b < 0:
+            continue
+        if {a, b} == {i, j}:                       # a rib that is its own mirror image
+            keep(i, j, P, d)
+            done.add((i, j))
+            continue
+        Pm = P * mv
+        dm_ = fits(a, b, Pm, extra=[((i, j), cKDTree(P))])
+        if dm_ is None:
+            continue
+        keep(i, j, P, d)
+        keep(a, b, Pm, dm_)
+        done |= {(i, j), (min(a, b), max(a, b))}
+    return lines, kept
 
 def _taper(s, length, at_start, at_end):
     """A smooth ramp 0 -> 1 over `length` from each free end (1 elsewhere)."""

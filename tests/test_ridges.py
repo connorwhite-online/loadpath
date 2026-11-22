@@ -194,3 +194,32 @@ def test_network_merges_an_end_running_alongside_another_line():
     assert ends[1][1]
     d = np.min(np.linalg.norm(L[1][:, None] - a[None], axis=2), axis=1)
     assert (d[-5:] < 6.0).any() and np.sum((d > 1.0) & (d < 4.0)) < 6      # no long run alongside
+
+
+def test_anchor_network_is_planar_and_ties_anchors():
+    import trimesh
+    from loadpath.ridges import anchor_network
+    m = trimesh.creation.box((100.0, 100.0, 2.0)).subdivide().subdivide().subdivide().subdivide()
+    top = m.vertices[:, 2] > 0.5
+    keep = top[m.faces].all(axis=1)
+    sub = m.submesh([np.where(keep)[0]], append=True)
+    A = np.array([[-30, -30, 1], [30, -30, 1], [30, 30, 1], [-30, 30, 1], [0, 0, 1]], float)
+    lines, kept = anchor_network(sub.vertices, sub.faces, A, k=4, max_length=100, clear=5.0, min_angle=30.0)
+    assert len(kept) >= 6                          # the square's sides and spokes to its middle
+    assert (0, 2) not in kept and (1, 3) not in kept   # its diagonals would cross the spokes
+    for (i, j), P in zip(kept, lines):
+        assert np.linalg.norm(P[0] - A[i]) < 4 and np.linalg.norm(P[-1] - A[j]) < 4
+
+
+def test_anchor_network_mirror_is_symmetric():
+    import trimesh
+    from loadpath.ridges import anchor_network
+    m = trimesh.creation.box((100.0, 100.0, 2.0)).subdivide().subdivide().subdivide().subdivide()
+    keep = (m.vertices[:, 2] > 0.5)[m.faces].all(axis=1)
+    sub = m.submesh([np.where(keep)[0]], append=True)
+    A = np.array([[-30, -30, 1], [30, -30, 1], [30, 30, 1], [-30, 30, 1], [0, 0, 1], [-35, 5, 1], [35, 5, 1]], float)
+    lines, kept = anchor_network(sub.vertices, sub.faces, A, k=4, max_length=100, clear=5.0, min_angle=30.0,
+                                 mirror=(-1, 1, 1))
+    pts = np.vstack(lines)
+    from scipy.spatial import cKDTree
+    assert cKDTree(pts).query(pts * [-1, 1, 1])[0].max() < 1e-6
