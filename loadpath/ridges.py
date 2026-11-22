@@ -630,10 +630,13 @@ class WallRidges:
         a, b = self.A[idx], self.B[idx]
         seg = np.linalg.norm(b - a, axis=2)
         e = self.end[idx]
-        over = np.maximum(np.where(e & 1, -traw, 0.0), np.where(e & 2, traw - 1.0, 0.0)) * seg   # past the line's end
+        # past the line's end: a plane there, only on the line's end segments (elsewhere nothing: a
+        # 0 here clamped the whole inside of every ridge to 0, a slab marching cubes stair-stepped)
+        over = np.maximum(np.where(e & 1, -traw, -np.inf), np.where(e & 2, traw - 1.0, -np.inf)) * seg
         # past an inner end of a segment (when the line's next segment didn't make the candidate list)
         # the section would run on along the tangent, a ghost ridge: held back beyond 1 mm of overrun
-        over = np.maximum(over, np.maximum(-traw, traw - 1.0) * seg - 1.0)
+        inner = np.maximum(-traw, traw - 1.0) * seg - 1.0
+        over = np.maximum(over, np.where(inner > 0, inner, -np.inf))
         # the tangent eased from vertex to vertex, not each segment's own: with a segment's own, the
         # section turned in a step at every vertex, and a bulb 8 mm off a curving line came out
         # stepped (a jump of up to 0.9 mm where the nearest segment changed)

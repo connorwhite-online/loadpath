@@ -174,3 +174,11 @@ def test_lines_are_faired_and_laid_on_the_skin():
     wig = np.abs(np.diff(r.A[:, 1], 2)).max()
     assert wig < 0.1 * np.abs(np.diff(pl[:, 1], 2)).max()       # the jitter faired out
     assert abs(r.A[0, 0] - pl[0, 0]) < 0.5 and abs(r.A[0, 1] - pl[0, 1]) < 0.05   # its ends held
+
+
+def test_inside_a_ridge_is_negative_not_a_flat_zero():
+    # a field flat at 0 through the web (a clamp) has no surface to find: marching cubes stair-steps it
+    L = [np.array([[-30, 0, 0], [30, 0, 0]], float)]
+    r = _floor_ridges(L, taper=12.0)
+    f = r(np.array([[0.0, 0.0, z] for z in (1.0, 3.0, 5.0)]))
+    assert (f < -0.5).all()
