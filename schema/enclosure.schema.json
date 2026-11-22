@@ -1635,6 +1635,11 @@
             "contactDepth": {
               "type": "number",
               "exclusiveMinimum": 0
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "m dropped from: the floor then touches the exterior over the crush depth height / g (else contactDepth, default 0.5 mm)"
             }
           },
           "additionalProperties": false,

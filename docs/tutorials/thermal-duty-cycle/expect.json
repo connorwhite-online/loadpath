@@ -47,7 +47,7 @@
   {
    "file": "hot/report.json",
    "value": "r['outcomes'][r['best']]['mass']",
-   "min": 8,
+   "min": 7,
    "max": 15.5,
    "what": "PA-CF designed for the cycle: mass, g"
   },

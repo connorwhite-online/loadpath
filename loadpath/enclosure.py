@@ -66,6 +66,9 @@ _FACES = ["-z", "+z", "-x", "+x", "-y", "+y"]
 SURROUND_MM = 10.0
 # mm an aligned part may sit off its asked recess before the report says so
 RECESS_TOL = 0.5
+# mm: a landing patch narrower than twice this across an axis is left the
+# face's whole width there (a part landing on an edge)
+LANDING_MIN_HALF = 2.0
 
 
 def _inner_centre(exterior, lo, hi, n: int = 28):
@@ -650,26 +653,46 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     drop = loads.get("drop")
     if drop:
         g = float(drop.get("g", 50.0))
+        shell_slices = _shell_slices(exterior, t_skin, b.get("material", "pa12"))
         faces = drop.get("faces") or _FACES
         massed = {k: v for k, v in mounts.items() if v["mass"] > 0}
         if not massed:
             warnings.append("loads.drop: no component has a mass with a mount; no drop cases written")
+        # the floor stops the part over the crush its deceleration allows:
+        # from a height h at G g that is h / G, and the floor touches the
+        # exterior wherever it is that close to the face (a curved side
+        # meets the floor over more than its very tip)
+        h = drop.get("height")
+        crush = 1000.0 * float(h) / g if h else float(drop.get("contactDepth", 0.5))
         for f in faces if massed else []:
             d = _axis_vec(f)
-            ls, total, pts = [], 0.0, []
+            pts = []
             for k, v in massed.items():
                 gm = [m for m in byid if root(m) == k]
                 w = np.array([float(byid[m].get("mass") or 0.0) for m in gm])
                 cs = np.array([lay["components"][m]["centre"] for m in gm])
                 at = (w[:, None] * cs).sum(axis=0) / max(w.sum(), 1e-12)
-                ls.append({"region": f"mount-{k}", "mass": round(v["mass"], 6), "dynamic": g,
-                           "gravity": f, "at": _r(at, 3)})
-                pts.append((k, float(v["mass"]), np.asarray(at, float)))
-                total += v["mass"] * 9.81 * g
+                pts.append((k, float(v["mass"]), np.asarray(at, float), {"region": f"mount-{k}"}))
+            # the shell's own mass lands too: its weight goes into the
+            # floor's push and its inertia into the spin, slice by slice
+            pts += [(f"shell-{j}", sm, sc, {"shape": box}) for j, (sm, sc, box) in enumerate(shell_slices)]
+            slab = face_slab(f, t_skin + crush)
+            slab = _landing_patch(exterior, slab, pts, d)
+            at_floor = _contact_centre(exterior, slab)
+            # G is how hard the floor stops the point it hits. Off the
+            # centre of mass, part of the landing goes into spin and the
+            # floor's push is the effective mass's, not the whole mass's
+            ge = g * _landing_share(pts, at_floor, d)
+            ls, total = [], 0.0
+            for k, mi, at, tgt in pts:
+                if "region" in tgt:
+                    ls.append({**tgt, "mass": round(mi, 6), "dynamic": round(ge, 4), "gravity": f, "at": _r(at, 3)})
+                else:
+                    ls.append({**tgt, "force": _r(mi * 9.81 * ge * d, 3)})
+                total += mi * 9.81 * ge
             # the floor holds the shell back on that face
-            slab = face_slab(f, t_skin + float(drop.get("contactDepth", 0.5)))
             ls.append({"shape": slab, "force": _r(-total * d, 3)})
-            ls += _drop_spin(pts, -total * d, _contact_centre(exterior, slab), 9.81 * g * d)
+            ls += _drop_spin(pts, -total * d, at_floor, 9.81 * ge * d)
             cases.append({"name": f"drop{f}", "loads": ls})
     for i, sq in enumerate(_listify(loads.get("squeeze"))):
         a = str(sq.get("axis", "x")).lstrip("+-")
@@ -1247,6 +1270,78 @@ def _contact_centre(exterior, slab: dict):
     return P.mean(axis=0) if len(P) else 0.5 * (lo + hi)
 
 
+def _landing_patch(exterior, slab: dict, pts, d) -> dict:
+    """The floor's push in a flat landing on a face: where the face rests
+    on the floor round the point under the parts' centre of mass. A part
+    that lands flat with its centre of mass over the face it lands on does
+    not spin: the floor's pressure shifts until its resultant is under the
+    centre of mass. Spread evenly over the whole face instead, it acted at
+    the face's middle and the spin that balanced it put 619 N on a 30 g
+    camera's mount (a long scanner landing on its side, the centre of mass
+    8 mm off the side's middle). The patch is the face's slab cut to the
+    widest window centred under the centre of mass that stays within the
+    face's material along each axis across the landing; what is left off
+    centre (the centre of mass past an end of the face) still spins it
+    (_drop_spin)."""
+    if not pts:
+        return slab
+    m = np.array([p[1] for p in pts])
+    cm = (m[:, None] * np.array([p[2] for p in pts])).sum(axis=0) / m.sum()
+    lo, hi = np.asarray(slab["min"], float), np.asarray(slab["max"], float)
+    n = np.clip(np.ceil((hi - lo) / 1.0).astype(int) + 1, 2, 160)
+    P = np.stack(np.meshgrid(*[np.linspace(lo[i], hi[i], n[i]) for i in range(3)], indexing="ij"),
+                 -1).reshape(-1, 3)
+    P = P[exterior.sdf(P) <= 0]
+    if not len(P):
+        return slab
+    k = int(np.argmax(np.abs(np.asarray(d, float))))
+    nlo, nhi = lo.copy(), hi.copy()
+    # trim the face from its heavier end along each axis across the landing
+    # until its material's centroid is under the centre of mass (the
+    # patch's even pressure then pushes through it); twice round, as
+    # trimming one axis moves the other's centroid
+    for _ in range(2):
+        for j in range(3):
+            if j == k:
+                continue
+            inside = np.all((P >= nlo) & (P <= nhi), axis=1)
+            v = np.sort(P[inside, j])
+            if len(v) < 8:
+                continue
+            a, b = 0, len(v)
+            cs = np.concatenate([[0.0], np.cumsum(v)])
+            while b - a > max(8, len(v) // 10):
+                mean = (cs[b] - cs[a]) / (b - a)
+                if abs(mean - cm[j]) <= 0.25:
+                    break
+                if mean < cm[j]:
+                    a += 1
+                else:
+                    b -= 1
+            if v[b - 1] - v[a] >= 2 * LANDING_MIN_HALF:
+                nlo[j], nhi[j] = v[a] - 0.5, v[b - 1] + 0.5
+    return {"type": "box", "min": _r(nlo), "max": _r(nhi)}
+
+
+def _landing_share(pts, at_floor, d) -> float:
+    """The share of a landing's deceleration the centre of mass takes: a
+    rigid body hit at c (r from its centre of mass) along d has the
+    effective mass 1 / (1/M + (r x d) . I^-1 (r x d)) there, so a part
+    landing on a bulge well off its centre of mass is pushed less hard
+    than one landing square, the rest going into its spin."""
+    m = np.array([p[1] for p in pts])
+    r = np.array([p[2] for p in pts])
+    M = m.sum()
+    if M <= 0:
+        return 1.0
+    cm = (m[:, None] * r).sum(axis=0) / M
+    q = r - cm
+    inertia = sum(m[i] * (np.dot(q[i], q[i]) * np.eye(3) - np.outer(q[i], q[i])) for i in range(len(m)))
+    a = np.cross(np.asarray(at_floor, float) - cm, np.asarray(d, float))
+    k = 1.0 / M + float(a @ np.linalg.pinv(inertia, rcond=1e-9) @ a)
+    return float(np.clip(1.0 / (M * k), 0.0, 1.0))
+
+
 def _drop_spin(pts, floor_force, at_floor, accel) -> list:
     """Inertia relief for a drop: the floor's push on one face and the
     components' weight elsewhere balance as forces but not as moments (a
@@ -1273,10 +1368,49 @@ def _drop_spin(pts, floor_force, at_floor, accel) -> list:
     # components can take and say nothing more
     alpha = -np.linalg.lstsq(inertia, M, rcond=1e-9)[0]
     out = []
-    for i, (k, mi, at) in enumerate(pts):
+    for i, p in enumerate(pts):
+        k, mi, at = p[:3]
+        target = p[3] if len(p) > 3 else {"region": f"mount-{k}"}
         e = mi * np.cross(alpha, q[i])
         if np.linalg.norm(e) > 1e-6:
-            out.append({"region": f"mount-{k}", "force": _r(e, 3), "at": _r(at, 3)})
+            out.append({**target, "force": _r(e, 3)} if "shape" in target
+                       else {**target, "force": _r(e, 3), "at": _r(at, 3)})
+    return out
+
+
+def _shell_slices(exterior, t_skin: float, material, n: int = 8, h: float = 2.0) -> list:
+    """The skin's mass as n slices across the exterior's longest axis:
+    (mass kg, centre, box). A drop's floor stops the shell as well as the
+    parts inside it, and the shell's mass is most of what resists the
+    landing's spin: with only the components' point masses the inertia was
+    a few grams at a few spots, and the spin that balanced an off-centre
+    landing put 619 N couples on a 30 g camera's mount. The designed
+    interior adds more mass still; the skin is the part known before the
+    run."""
+    from .materials import material_from_spec
+    try:
+        rho = material_from_spec(material).density * 1e-6   # kg/mm^3
+    except (ValueError, TypeError, KeyError):
+        return []
+    lo, hi = (np.asarray(v, float) for v in exterior.bounds())
+    h = max(h, float(np.max(hi - lo)) / 120.0)
+    ax = [np.arange(lo[i] + 0.5 * h, hi[i], h) for i in range(3)]
+    P = np.stack(np.meshgrid(*ax, indexing="ij"), -1).reshape(-1, 3)
+    sd = exterior.sdf(P)
+    P = P[(sd <= 0) & (sd > -t_skin)]
+    if not len(P):
+        return []
+    k = int(np.argmax(hi - lo))
+    edges = np.linspace(lo[k], hi[k], n + 1)
+    out = []
+    for a, c in zip(edges[:-1], edges[1:]):
+        Q = P[(P[:, k] >= a) & (P[:, k] < c)]
+        if not len(Q):
+            continue
+        blo, bhi = lo - 1.0, hi + 1.0
+        blo[k], bhi[k] = a, c
+        out.append((float(len(Q) * h ** 3 * rho), Q.mean(axis=0),
+                    {"type": "box", "min": _r(blo), "max": _r(bhi)}))
     return out
 
 
