@@ -39,7 +39,7 @@ import numpy as np
 
 from .ribs import _axis, _densify, _plane_basis
 
-__all__ = ["Ridges", "WallRidges", "profile", "section", "thin", "tidy"]
+__all__ = ["Ridges", "WallRidges", "network", "profile", "section", "split", "thin", "tidy"]
 
 
 def _smin(a, b, k):
@@ -269,16 +269,18 @@ class Ridges:
         return {"chin deg": self.chin, "window tops deg": 45.0, "web": "vertical"}
 
 
-def _nearest_lines(tree, A, B, ID, Q, k):
+def _nearest_lines(tree, A, B, ID, Q, k, raw=False):
     """For each query point, the k nearest distinct lines: (segment index, t on it, distance),
-    each line by its nearest segment, with a validity mask."""
+    each line by its nearest segment, with a validity mask (and, with raw, t unclamped: below 0
+    or above 1 past the segment's ends)."""
     n = len(Q)
     kk = min(k * 6, len(A))
     _, idx = tree.query(Q, k=kk)
     idx = np.asarray(idx).reshape(n, kk)
     a, b = A[idx], B[idx]
     ab = b - a
-    tt = np.clip(np.einsum("nkd,nkd->nk", Q[:, None] - a, ab) / np.maximum(np.einsum("nkd,nkd->nk", ab, ab), 1e-300), 0, 1)
+    t_raw = np.einsum("nkd,nkd->nk", Q[:, None] - a, ab) / np.maximum(np.einsum("nkd,nkd->nk", ab, ab), 1e-300)
+    tt = np.clip(t_raw, 0, 1)
     uu = np.linalg.norm(Q[:, None] - (a + tt[..., None] * ab), axis=2)
     ids = ID[idx]
     o = np.lexsort((uu, ids), axis=-1)
@@ -291,6 +293,8 @@ def _nearest_lines(tree, A, B, ID, Q, k):
     pick = np.take_along_axis(o, srt, 1)
     valid = np.isfinite(np.take_along_axis(us, srt, 1))
     g = lambda x: np.take_along_axis(x, pick, 1)
+    if raw:
+        return g(idx), g(tt), g(uu), valid, g(t_raw)
     return g(idx), g(tt), g(uu), valid
 
 
@@ -322,10 +326,11 @@ def tidy(lines, weight=None, smooth=4.0, min_length=35.0, step=1.0):
     return outL, (outW if weight is not None else None)
 
 
-def thin(lines, weight=None, spacing=22.0, parallel=0.8):
+def thin(lines, weight=None, spacing=22.0, parallel=0.8, limit=None):
     """Fewer, deeper ridges: keep lines most loaded first (weight times length), dropping a line
     when most of it runs within `spacing` of a kept line and parallel to it (|cos| > parallel).
-    Crossing lines are kept: they are the other family."""
+    Crossing lines are kept: they are the other family. `limit`: at most that many lines (the
+    most loaded)."""
     from scipy.spatial import cKDTree
 
     L = [np.asarray(x, float) for x in lines]
@@ -337,6 +342,8 @@ def thin(lines, weight=None, spacing=22.0, parallel=0.8):
     score = [float(np.sum(w[:-1] * np.linalg.norm(np.diff(x, axis=0), axis=1))) for x, w in zip(L, W, strict=True)]
     keep, KP, KT = [], [], []
     for i in np.argsort(score)[::-1]:
+        if limit is not None and len(keep) >= limit:
+            break
         if KP:
             tree = cKDTree(np.vstack(KP))
             dist, j = tree.query(L[i])
@@ -348,6 +355,129 @@ def thin(lines, weight=None, spacing=22.0, parallel=0.8):
     return [L[i] for i in keep], ([W[i] for i in keep] if weight is not None else None), keep
 
 
+def split(lines, weight=None, ok=None, min_length=35.0):
+    """Cut lines where ok(points) is False (too near a part, the part line, or out of room) and
+    keep the pieces at least `min_length` long. A cut end becomes a free end (WallRidges tapers
+    it into the skin) rather than a ridge sliced off where it meets the obstacle."""
+    outL, outW = [], []
+    for i, pl in enumerate(lines):
+        pl = np.asarray(pl, float)
+        w = None if weight is None else np.asarray(weight[i], float)
+        m = np.ones(len(pl), bool) if ok is None else np.asarray(ok(pl), bool)
+        edges = np.flatnonzero(np.diff(np.concatenate([[0], m.astype(int), [0]])))
+        for a, b in zip(edges[0::2], edges[1::2], strict=True):
+            q = pl[a:b]
+            if len(q) < 2 or np.linalg.norm(np.diff(q, axis=0), axis=1).sum() < min_length:
+                continue
+            outL.append(q)
+            outW.append(None if w is None else w[a:b])
+    return outL, (outW if weight is not None else None)
+
+
+def network(lines, weight=None, snap=10.0, stub=12.0, anchors=None, angle=70.0, touch=2.0):
+    """Join ridge lines into a network whose every end means something. For each end of each
+    line, in this order:
+
+    - within `snap` mm of another line (ahead of it, within `angle` degrees of its own direction),
+      it is carried straight on to meet that line: a T junction, blended by the ridges' union;
+    - within `snap` of an anchor (a boss or a post: (point, radius) pairs), carried on to the
+      anchor's edge;
+    - when the line crossed another within its last `stub` mm, the stub past that crossing is
+      cut off, so the line ends in the crossing;
+    - otherwise the end is free: WallRidges tapers its height to nothing over its `taper`, a
+      rounded run-out into the skin.
+
+    Returns (lines, weights or None, ends): ends[i] = (start joined, end joined)."""
+    from scipy.spatial import cKDTree
+
+    L = [np.asarray(x, float).copy() for x in lines]
+    W = None if weight is None else [np.asarray(w, float).copy() for w in weight]
+    joined = [[False, False] for _ in L]
+    ca = np.cos(np.radians(angle))
+    for i in range(len(L)):
+        for side in (0, 1):
+            pl = L[i]
+            if len(pl) < 3:
+                continue
+            end = pl[0] if side == 0 else pl[-1]
+            k = min(4, len(pl) - 1)
+            tan = (pl[0] - pl[k]) if side == 0 else (pl[-1] - pl[-1 - k])
+            tan = tan / max(np.linalg.norm(tan), 1e-9)
+            best = None
+            for j, q in enumerate(L):
+                if j == i:
+                    continue
+                d = np.linalg.norm(q - end, axis=1)
+                jj = int(np.argmin(d))
+                if d[jj] > snap:
+                    continue
+                v = q[jj] - end
+                nv = np.linalg.norm(v)
+                if nv > touch and v @ tan < ca * nv:
+                    continue                           # behind or beside the end: not a run-on
+                if best is None or d[jj] < best[0]:
+                    best = (d[jj], q[jj])
+            if best is None and anchors is not None:
+                for c, r in anchors:
+                    c = np.asarray(c, float)
+                    v = c - end
+                    nv = np.linalg.norm(v)
+                    if nv - r <= snap and (nv - r <= touch or v @ tan >= ca * nv):
+                        tgt = c - v / max(nv, 1e-9) * r * 0.5          # into the anchor by half its radius
+                        if best is None or nv < best[0]:
+                            best = (nv, tgt)
+            if best is not None:
+                d, tgt = best
+                n = max(1, int(np.ceil(d)))
+                ext = end + (tgt - end) * (np.arange(1, n + 1) / n)[:, None]
+                if side == 0:
+                    L[i] = np.vstack([ext[::-1], pl])
+                    if W is not None:
+                        W[i] = np.concatenate([np.full(n, W[i][0]), W[i]])
+                else:
+                    L[i] = np.vstack([pl, ext])
+                    if W is not None:
+                        W[i] = np.concatenate([W[i], np.full(n, W[i][-1])])
+                joined[i][side] = True
+                continue
+            # a stub past a crossing: cut it back to the crossing
+            others = [q for j, q in enumerate(L) if j != i]
+            if not others:
+                continue
+            tree = cKDTree(np.vstack(others))
+            d, _ = tree.query(pl)
+            s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pl, axis=0), axis=1))])
+            near = np.flatnonzero(d < touch)
+            if side == 0:
+                near = near[s[near] <= stub]
+                if len(near) and s[-1] - s[near.max()] > stub:
+                    c = int(near.max())
+                    L[i] = pl[c:]
+                    W = W if W is None else [*W[:i], W[i][c:], *W[i + 1:]]
+                    joined[i][0] = True
+            else:
+                near = near[s[-1] - s[near] <= stub]
+                if len(near) and s[near.min()] > stub:
+                    c = int(near.min())
+                    L[i] = pl[:c + 1]
+                    W = W if W is None else [*W[:i], W[i][:c + 1], *W[i + 1:]]
+                    joined[i][1] = True
+    return L, W, [tuple(e) for e in joined]
+
+
+def _taper(s, length, at_start, at_end):
+    """A smooth ramp 0 -> 1 over `length` from each free end (1 elsewhere)."""
+    f = np.ones_like(s)
+    if length <= 0:
+        return f
+    ramp = lambda x: np.where(x >= 1, 1.0, np.where(x <= 0, 0.0, 0.5 - 0.5 * np.cos(np.pi * np.clip(x, 0, 1))))
+    if at_start:
+        f = np.minimum(f, ramp(s / length))
+    if at_end:
+        f = np.minimum(f, ramp((s[-1] - s) / length))
+    return f
+
+
 class WallRidges:
     """Ridges that follow a curved skin, side walls included: each stands off the skin along
     its normal and leans toward the print direction just enough that no face under it is
@@ -356,20 +486,30 @@ class WallRidges:
 
     lines, weight, t, R, chin, blend: as Ridges. H: (at weight 0, at weight 1), the height off
     the skin; room: optional callable(points on the lines) -> the free height there (it caps
-    H, and a ridge with under `min_height` of room is left out). normal: callable(P) -> unit
-    vectors off the skin into the part. On skin facing away from the bed (a ceiling, normal
-    more than 135 degrees from the print direction) there is no ridge."""
+    H; where it leaves under `min_height` the ridge stops, tapering into the skin either side
+    rather than being sliced). normal: callable(points on the lines) -> unit vectors off the
+    skin into the part (taken on the lines, smoothed along them, and carried across each section).
+    On skin facing away from the bed (a ceiling, normal more than 135 degrees from the print
+    direction) there is no ridge.
+
+    Ends (network()'s): a free end tapers its height (and its web, to half) to nothing over
+    `taper` mm, a rounded run-out into the skin; a joined end runs into its neighbour at full
+    section and is blended. Where ridges cross or join, each takes the taller one's height
+    within `match` mm (smoothed along it), so their tops meet flush instead of a step. Every
+    ridge ends at its line's ends (a flat cap, of nothing where it tapered): it never runs on
+    past them."""
 
     def __init__(self, lines, direction, normal, weight=None, t=(1.8, 3.0), H=(6.0, 16.0), R=(1.4, 2.6),
-                 chin=45.0, room=None, min_height=3.0, blend=2.0, step=1.0, k=4):
-        from scipy.ndimage import gaussian_filter1d
+                 chin=45.0, room=None, min_height=3.0, blend=2.0, step=1.0, k=4, ends=None, taper=12.0,
+                 match=6.0):
+        from scipy.ndimage import gaussian_filter1d, maximum_filter1d
         from scipy.spatial import cKDTree
 
         self.b = _axis(direction)
         self.normal, self.chin, self.blend, self.k = normal, float(chin), float(blend), int(k)
         allw = np.concatenate([np.ravel(x) for x in weight]) if weight is not None else np.ones(1)
         w0, w1 = np.percentile(allw, 5), np.percentile(allw, 95)
-        A, Bs, PA, PB, ID = [], [], [], [], []
+        dense_all, par_all, ids_all = [], [], []
         for i, pl in enumerate(lines):
             pl = np.asarray(pl, float)
             if len(pl) < 2:
@@ -388,15 +528,58 @@ class WallRidges:
                 if len(rm) > 2:
                     rm = gaussian_filter1d(rm, 3.0 / step, mode="nearest")
                 Hv = np.minimum(Hv, rm)
-            Hv = np.where(Hv < min_height, 0.0, Hv)
-            Rv = np.minimum(Rv, np.maximum(0.3 * Hv, 0.5 * tv))
-            par = np.stack([tv, Hv, Rv], 1)
-            A.append(dense[:-1]); Bs.append(dense[1:]); PA.append(par[:-1]); PB.append(par[1:])
-            ID.append(np.full(len(dense) - 1, i))
-        if not A:
+            # runs with room for a ridge, each tapered at its ends: at a free end of the line, and
+            # wherever the room runs out mid-line; a joined end keeps its full section
+            ok = Hv >= min_height
+            f = np.zeros(len(dense))
+            je = (False, False) if ends is None else tuple(ends[i])
+            edges = np.flatnonzero(np.diff(np.concatenate([[0], ok.astype(int), [0]])))
+            for a0, b0 in zip(edges[0::2], edges[1::2], strict=True):
+                ss = sd[a0:b0] - sd[a0]
+                if len(ss) < 2 or ss[-1] < min(taper, 0.5 * sd[-1]):
+                    continue
+                f[a0:b0] = _taper(ss, taper, not (a0 == 0 and je[0]), not (b0 == len(dense) and je[1]))
+            Hv = Hv * f
+            tv = tv * (0.5 + 0.5 * f)
+            Rv = np.minimum(Rv, np.maximum(0.3 * Hv, 0.5 * tv * f))
+            dense_all.append(dense); par_all.append(np.stack([tv, Hv, Rv], 1)); ids_all.append(i)
+        if not dense_all:
             raise ValueError("no ridge lines")
+        # flush tops: within `match` of another ridge, a ridge takes the taller one's height
+        if match > 0 and len(dense_all) > 1:
+            pts = np.vstack(dense_all)
+            lid = np.concatenate([np.full(len(d), j) for j, d in enumerate(dense_all)])
+            Hall = np.concatenate([p_[:, 1] for p_ in par_all])
+            tree = cKDTree(pts)
+            for j, (d, p_) in enumerate(zip(dense_all, par_all, strict=True)):
+                nb = tree.query_ball_point(d, match)
+                Hn = np.array([max([Hall[q] for q in n_ if lid[q] != j and Hall[q] > 0] or [0.0]) for n_ in nb])
+                lift = np.where((Hn > p_[:, 1]) & (p_[:, 1] > 0), Hn, p_[:, 1])
+                if len(lift) > 2:                       # a plateau over the node, eased in either side
+                    lift = maximum_filter1d(lift, max(1, round(match / step)), mode="nearest")
+                    lift = np.maximum(gaussian_filter1d(lift, 3.0 / step, mode="nearest"), p_[:, 1])
+                    lift = np.where(p_[:, 1] > 0, lift, 0.0)
+                p_[:, 1] = lift
+        A, Bs, PA, PB, ID, END, NA, NB = [], [], [], [], [], [], [], []
+        for i, dense, par in zip(ids_all, dense_all, par_all, strict=True):
+            A.append(dense[:-1]); Bs.append(dense[1:]); PA.append(par[:-1]); PB.append(par[1:])
+            # the skin's normal on the line itself (smoothed along it), not at each query point: a
+            # point in a ridge near another wall would otherwise take that wall's normal, and the
+            # ridge tore where the two disagreed
+            nv = np.asarray(normal(dense), float)
+            if len(nv) > 2:
+                nv = gaussian_filter1d(nv, 2.0 / step, axis=0, mode="nearest")
+            nv /= np.maximum(np.linalg.norm(nv, axis=1, keepdims=True), 1e-12)
+            NA.append(nv[:-1]); NB.append(nv[1:])
+            ID.append(np.full(len(dense) - 1, i))
+            e = np.zeros(len(dense) - 1, np.int8)
+            e[0] |= 1
+            e[-1] |= 2
+            END.append(e)
         self.A, self.B = np.concatenate(A), np.concatenate(Bs)
         self.PA, self.PB, self.id = np.concatenate(PA), np.concatenate(PB), np.concatenate(ID)
+        self.end = np.concatenate(END)
+        self.NA, self.NB = np.concatenate(NA), np.concatenate(NB)
         self.tree = cKDTree(0.5 * (self.A + self.B))
 
     def __call__(self, P):
@@ -407,8 +590,11 @@ class WallRidges:
         return out
 
     def _eval(self, P):
-        idx, tt, _, valid = _nearest_lines(self.tree, self.A, self.B, self.id, P, self.k)
+        idx, tt, _, valid, traw = _nearest_lines(self.tree, self.A, self.B, self.id, P, self.k, raw=True)
         a, b = self.A[idx], self.B[idx]
+        seg = np.linalg.norm(b - a, axis=2)
+        e = self.end[idx]
+        over = np.maximum(np.where(e & 1, -traw, 0.0), np.where(e & 2, traw - 1.0, 0.0)) * seg   # past the line's end
         T = b - a
         T /= np.maximum(np.linalg.norm(T, axis=2, keepdims=True), 1e-12)
         C = a + tt[..., None] * (b - a)
@@ -417,7 +603,7 @@ class WallRidges:
         perp = lambda x: x - np.einsum("nkd,nkd->nk", x, T)[..., None] * T
         unit = lambda x: x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), 1e-12)
         d = perp(P[:, None] - C)
-        n = unit(perp(np.broadcast_to(np.asarray(self.normal(P), float)[:, None], C.shape).copy()))
+        n = unit(perp(self.NA[idx] + tt[..., None] * (self.NB[idx] - self.NA[idx])))
         g = perp(np.broadcast_to(self.b, C.shape).copy())
         sg = np.linalg.norm(g, axis=-1)
         gh = np.where(sg[..., None] > 1e-6, g / np.maximum(sg[..., None], 1e-12), n)
@@ -445,6 +631,7 @@ class WallRidges:
         cone = rad * sa - ax * ca
         tear = np.minimum(disk, np.maximum(cone, ax - (R / ca - R * ca)))
         f = _smin(web, tear, 1.0)                           # the bulb blended into the web
+        f = np.maximum(f, over)                             # ends at the line's end, never past it
         f = np.where(valid & ~ceiling & (H > 0), f, 1e6)
         out = f[:, 0]
         for j in range(1, f.shape[1]):

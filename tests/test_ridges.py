@@ -103,3 +103,60 @@ def test_tidy_smooths_a_wandering_line_and_drops_short_ones():
     L, W = tidy([wiggle, short], [np.ones(len(x)), np.ones(2)])
     assert len(L) == 1 and len(W) == 1
     assert np.abs(L[0][5:-5, 1]).max() < 0.1
+
+
+def _floor_ridges(L, **kw):
+    from loadpath.ridges import WallRidges
+    up = lambda Q: np.tile([0, 0, 1.0], (len(Q), 1))
+    return WallRidges(L, "+z", up, H=(8, 8), t=(2, 2), R=(1.5, 1.5), **kw)
+
+
+def _top(r, x, y):
+    zs = np.arange(0, 14, 0.1)
+    inside = r(np.column_stack([np.full_like(zs, x), np.full_like(zs, y), zs])) <= 0
+    return zs[inside].max() if inside.any() else 0.0
+
+
+def test_free_ends_taper_and_never_run_past_the_line():
+    L = [np.array([[-30, 0, 0], [30, 0, 0]], float)]
+    r = _floor_ridges(L, taper=12.0)
+    assert abs(_top(r, 0, 0) - 8.0) < 0.3                    # full height mid-line
+    assert _top(r, 26, 0) < 0.5 * _top(r, 0, 0)               # tapering toward the free end
+    assert _top(r, 31, 0) == 0.0 and _top(r, 45, 0) == 0.0    # nothing past the end
+    # a joined end keeps its section to the end
+    r = _floor_ridges(L, taper=12.0, ends=[(False, True)])
+    assert abs(_top(r, 29, 0) - 8.0) < 0.5 and _top(r, 31, 0) == 0.0
+
+
+def test_room_running_out_tapers_instead_of_slicing():
+    L = [np.array([[-40, 0, 0], [40, 0, 0]], float)]
+    room = lambda C: np.where(np.abs(C[:, 0]) < 6, 1.0, 20.0)          # an obstacle over the middle
+    r = _floor_ridges(L, room=room, taper=10.0)
+    assert _top(r, 0, 0) == 0.0 and abs(_top(r, -30, 0) - 8.0) < 0.3
+    tops = [_top(r, x, 0) for x in np.arange(-20, -6, 1.0)]
+    assert np.all(np.diff(tops) <= 0.11)                      # it runs down to the gap, no cliff
+    assert max(np.abs(np.diff(tops))) < 2.0
+
+
+def test_network_joins_near_ends_cuts_stubs_and_leaves_free_ends():
+    from loadpath.ridges import network
+    host = np.linspace([-40, 0, 0], [40, 0, 0], 81)
+    near = np.linspace([0, 30, 0], [0, 6, 0], 25)              # stops 6 mm short of the host
+    stub = np.linspace([20, 30, 0], [20, -8, 0], 39)           # crosses it and runs on 8 mm
+    far = np.linspace([-20, 40, 0], [-20, 25, 0], 16)          # nowhere near anything
+    L, _, ends = network([host, near, stub, far], snap=10.0, stub=12.0)
+    assert ends[1][1] and np.linalg.norm(L[1][-1] - [0, 0, 0]) < 1.0
+    assert ends[2][1] and L[2][-1][1] > -1.5
+    assert ends[3] == (False, False)
+    assert ends[0] == (False, False)
+
+
+def test_crossing_tops_meet_flush():
+    L = [np.array([[-30, 0, 0], [30, 0, 0]], float), np.array([[0, -30, 0], [0, 30, 0]], float)]
+    W = [np.ones(2), np.zeros(2)]
+    from loadpath.ridges import WallRidges
+    up = lambda Q: np.tile([0, 0, 1.0], (len(Q), 1))
+    r = WallRidges(L, "+z", up, weight=W, H=(4, 10), t=(2, 2), R=(1.5, 1.5), match=6.0)
+    # the low ridge rises to the tall one's height at the node, and is back down away from it
+    assert abs(_top(r, 0, 2.5) - _top(r, 0, 0)) < 0.6      # the node itself is 0.4 up: the blend
+    assert _top(r, 0, 20) < 6.0
