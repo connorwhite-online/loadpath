@@ -39,12 +39,33 @@ import numpy as np
 
 from .ribs import _axis, _densify, _plane_basis
 
-__all__ = ["Ridges", "WallRidges", "network", "profile", "section", "split", "thin", "tidy"]
+__all__ = ["Ridges", "WallRidges", "anchor_network", "fillet_union", "geodesic", "network", "profile", "section",
+           "split", "thin", "tidy"]
 
 
 def _smin(a, b, k):
     h = np.clip(0.5 + 0.5 * (b - a) / k, 0.0, 1.0)
     return b * (1 - h) + a * h - k * h * (1 - h)
+
+
+def _smin_c2(a, b, k):
+    """Smooth union with no step in curvature (cubic). The quadratic _smin's curvature jumps where
+    |a - b| = k, and on a glossy part that jump shows as a crease line along both edges of every
+    fillet. k may be an array (a fillet that grows and shrinks along a ridge)."""
+    k = np.maximum(k, 1e-9)
+    h = np.maximum(k - np.abs(a - b), 0.0) / k
+    return np.minimum(a, b) - k * h ** 3 / 6.0
+
+
+_C2_PER_R = 6.0 * (1.0 - 1.0 / np.sqrt(2.0))   # the cubic blend reaches k / 6 off each face on the bisector; a radius-r fillet, r (1 - 1 / sqrt 2)
+
+
+def fillet_union(a, b, r):
+    """a and b joined with a root fillet of about radius r (scalar or per point) that is
+    curvature-continuous where it meets both faces: no crease at either edge of the fillet,
+    which a circular (G1) fillet or the quadratic smooth min leave. r is the radius of the
+    circular fillet that fills a square corner as deep."""
+    return _smin_c2(a, b, _C2_PER_R * np.asarray(r, float))
 
 
 def _box2(x, y, bx, by):
@@ -201,7 +222,7 @@ class Ridges:
         f = np.where(valid, f, 1e6)
         out = f[:, 0]
         for j in range(1, m):
-            out = _smin(out, f[:, j], self.blend)
+            out = _smin_c2(out, f[:, j], 1.5 * self.blend)   # as deep as the quadratic blend's k, without its crease
         return out
 
     def _clear(self, H, R):
@@ -537,6 +558,151 @@ def network(lines, weight=None, snap=10.0, stub=12.0, anchors=None, angle=70.0, 
     return L, W, [tuple(e) for e in joined]
 
 
+
+def _edge_graph(V, F):
+    from scipy.sparse import coo_matrix
+    E = np.vstack([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    E = np.unique(np.sort(E, axis=1), axis=0)
+    w = np.linalg.norm(V[E[:, 0]] - V[E[:, 1]], axis=1)
+    n = len(V)
+    return coo_matrix((np.r_[w, w], (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n)).tocsr()
+
+
+def geodesic(V, F, a, b, graph=None):
+    """The shortest path over the surface mesh (V, F) from point a to point b (each snapped to
+    its nearest vertex), along the mesh's edges: a polyline of vertices. Fair it before use
+    (WallRidges does, laying it back on the skin)."""
+    from scipy.sparse.csgraph import dijkstra
+    from scipy.spatial import cKDTree
+    V = np.asarray(V, float)
+    g = _edge_graph(V, np.asarray(F)) if graph is None else graph
+    ia, ib = cKDTree(V).query([a, b])[1]
+    _, pred = dijkstra(g, indices=ia, return_predecessors=True)
+    path = [ib]
+    while path[-1] != ia and pred[path[-1]] >= 0:
+        path.append(pred[path[-1]])
+    return V[path[::-1]]
+
+
+def anchor_network(V, F, anchors, k=5, max_length=90.0, min_length=8.0, clear=8.0, min_angle=40.0,
+                   ok=None, pairs=None, smooth=3.0, mirror=None):
+    """Ribs as load paths between hard points: the shortest paths over a skin (the surface mesh
+    V, F) between anchors (bosses, posts, cradles: the points where they meet the skin), chosen
+    the way a designer lays out ribs, so every rib starts and ends at something it ties together
+    and none is an accident of a stress field:
+
+    - candidates are each anchor's `k` nearest anchors over the surface, `min_length` to
+      `max_length` mm apart (or the given `pairs`, index pairs, alone);
+    - shortest first, a candidate is kept when it stays `clear` mm from every rib already kept
+      (but where both meet at a shared anchor), leaves each of its anchors at `min_angle` degrees
+      or more from the ribs already there, and `ok(points) -> bool array` holds all along it
+      (room for a rib: the parts' keep-outs);
+    - so the network is planar on the skin: ribs meet only at anchors, never cross mid-span.
+
+    mirror: a scale such as (-1, 1, 1) for a symmetric part: each anchor is paired with its
+    mirror image's (the nearest, within 2 mm) and each rib is kept together with its mirror image
+    (the same path, mirrored), or neither is, so the layout is exactly symmetric.
+
+    The paths are smoothed over `smooth` mm (ends held) here only to judge their directions;
+    returns (lines, kept pairs). Pass the lines to network(..., anchors=...) and WallRidges."""
+    from scipy.ndimage import gaussian_filter1d
+    from scipy.sparse.csgraph import dijkstra
+    from scipy.spatial import cKDTree
+
+    V = np.asarray(V, float)
+    A = np.asarray(anchors, float).reshape(-1, 3)
+    g = _edge_graph(V, np.asarray(F))
+    ia = cKDTree(V).query(A)[1]
+    D, pred = dijkstra(g, indices=ia, return_predecessors=True)
+    Dab = D[:, ia]
+    if pairs is None:
+        cand = set()
+        for i in range(len(A)):
+            order = [j for j in np.argsort(Dab[i]) if j != i and min_length <= Dab[i, j] <= max_length]
+            for j in order[:k]:
+                cand.add((min(i, j), max(i, j)))
+        cand = sorted(cand, key=lambda q: Dab[q])
+    else:
+        cand = [tuple(q) for q in pairs]
+
+    def path(i, j):
+        out, v = [ia[j]], ia[j]
+        while v != ia[i] and pred[i, v] >= 0:
+            v = pred[i, v]
+            out.append(v)
+        P = V[out[::-1]]
+        if len(P) > 4:
+            sm = np.column_stack([gaussian_filter1d(P[:, c], smooth, mode="nearest") for c in range(3)])
+            r = np.linspace(0, 1, len(P))[:, None]
+            P = sm + (1 - r) * (P[0] - sm[0]) + r * (P[-1] - sm[-1])
+        return P
+
+    def leave(P, at_start, reach=6.0):
+        s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
+        if at_start:
+            q = P[min(np.searchsorted(s, reach), len(P) - 1)] - P[0]
+        else:
+            q = P[max(np.searchsorted(s, s[-1] - reach), 0)] - P[-1]
+        return q / max(np.linalg.norm(q), 1e-9)
+
+    if mirror is not None:
+        mv = np.asarray(mirror, float)
+        dm, mi = cKDTree(A).query(A * mv)
+        mmap = np.where(dm < 2.0, mi, -1)
+    kept, lines, dirs = [], [], {i: [] for i in range(len(A))}
+    trees = []
+    ca = np.cos(np.radians(min_angle))
+
+    def fits(i, j, P, extra=()):
+        if len(P) < 3 or (ok is not None and not np.all(ok(P))):
+            return None
+        di, dj = leave(P, True), leave(P, False)
+        if any(np.dot(di, d) > ca for d in dirs[i]) or any(np.dot(dj, d) > ca for d in dirs[j]):
+            return None
+        for (a, b), t in list(zip(kept, trees, strict=True)) + list(extra):
+            # clear of every kept rib, judged away from the anchors either rib ends at
+            far = np.ones(len(P), bool)
+            for q in {a, b, i, j}:
+                far &= np.linalg.norm(P - A[q], axis=1) > clear
+            Q = P[far]
+            if len(Q) and t.query(Q)[0].min() < clear:
+                return None
+        return di, dj
+
+    def keep(i, j, P, d):
+        kept.append((i, j))
+        lines.append(P)
+        trees.append(cKDTree(P))
+        dirs[i].append(d[0])
+        dirs[j].append(d[1])
+
+    done = set()
+    for i, j in cand:
+        if (i, j) in done:
+            continue
+        P = path(i, j)
+        d = fits(i, j, P)
+        if d is None:
+            continue
+        if mirror is None:
+            keep(i, j, P, d)
+            continue
+        a, b = mmap[i], mmap[j]
+        if a < 0 or b < 0:
+            continue
+        if {a, b} == {i, j}:                       # a rib that is its own mirror image
+            keep(i, j, P, d)
+            done.add((i, j))
+            continue
+        Pm = P * mv
+        dm_ = fits(a, b, Pm, extra=[((i, j), cKDTree(P))])
+        if dm_ is None:
+            continue
+        keep(i, j, P, d)
+        keep(a, b, Pm, dm_)
+        done |= {(i, j), (min(a, b), max(a, b))}
+    return lines, kept
+
 def _taper(s, length, at_start, at_end):
     """A smooth ramp 0 -> 1 over `length` from each free end (1 elsewhere)."""
     f = np.ones_like(s)
@@ -572,16 +738,23 @@ class WallRidges:
     section and is blended. Where ridges cross or join, each takes the taller one's height
     within `match` mm (smoothed along it), so their tops meet flush instead of a step. Every
     ridge ends at its line's ends (a flat cap, of nothing where it tapered): it never runs on
-    past them."""
+    past them.
+
+    room_smooth: mm over which the room is taken at its lowest and eased (the ridge's top line).
+    root: (fraction of the height, least, most) mm, the root fillet's radius where the ridges meet
+    the skin and the features they run into. root_radius(P) gives it at any point, eased between
+    neighbouring ridges, for fillet_union(skin, ridges, r): it grows with a ridge's height and
+    shrinks with it into a taper, so a run-out fades into the skin."""
 
     def __init__(self, lines, direction, normal, weight=None, t=(1.8, 3.0), H=(6.0, 16.0), R=(1.4, 2.6),
                  chin=45.0, room=None, min_height=3.0, blend=2.0, step=1.0, k=4, ends=None, taper=12.0,
-                 match=6.0, skin=None, smooth=3.0, normal_smooth=4.0):
+                 match=6.0, skin=None, smooth=3.0, normal_smooth=4.0, root=(0.3, 1.0, 3.0), room_smooth=3.0):
         from scipy.ndimage import gaussian_filter1d, maximum_filter1d
         from scipy.spatial import cKDTree
 
         self.b = _axis(direction)
         self.normal, self.chin, self.blend, self.k = normal, float(chin), float(blend), int(k)
+        self.root = tuple(float(v) for v in root)
         allw = np.concatenate([np.ravel(x) for x in weight]) if weight is not None else np.ones(1)
         w0, w1 = np.percentile(allw, 5), np.percentile(allw, 95)
         dense_all, par_all, ids_all, f_all = [], [], [], []
@@ -602,7 +775,12 @@ class WallRidges:
             if room is not None:
                 rm = np.asarray(room(dense), float)
                 if len(rm) > 2:
-                    rm = gaussian_filter1d(rm, 3.0 / step, mode="nearest")
+                    # the lowest room within room_smooth either side, then eased over it: the top
+                    # runs in long even curves under every obstruction instead of following each
+                    # dip of the room (a rib whose height, and so its bulb's width, wobbled)
+                    from scipy.ndimage import minimum_filter1d
+                    w_ = max(1, int(round(2 * room_smooth / step)) | 1)
+                    rm = gaussian_filter1d(minimum_filter1d(rm, w_, mode="nearest"), room_smooth / step, mode="nearest")
                 Hv = np.minimum(Hv, rm)
             # runs with room for a ridge, each tapered at its ends: at a free end of the line, and
             # wherever the room runs out mid-line; a joined end keeps its full section
@@ -664,6 +842,24 @@ class WallRidges:
         self.NA, self.NB = np.concatenate(NA), np.concatenate(NB)
         self.TA, self.TB = np.concatenate(TA), np.concatenate(TB)
         self.tree = cKDTree(0.5 * (self.A + self.B))
+
+    def root_radius(self, P, ease=4.0):
+        """The root fillet's radius at points P: each nearby ridge's (root[0] x its height there,
+        held within root[1:]), weighted by exp(-(distance / ease)^2) so it changes smoothly from
+        one ridge to the next instead of stepping where the nearest ridge changes; root[1] far
+        from every ridge."""
+        P = np.asarray(P, float).reshape(-1, 3)
+        fr, lo, hi = self.root
+        out = np.full(len(P), lo)
+        for a0 in range(0, len(P), 100_000):
+            Q = P[a0:a0 + 100_000]
+            idx, tt, uu, valid = _nearest_lines(self.tree, self.A, self.B, self.id, Q, self.k)
+            H = self.PA[idx][..., 1] + tt * (self.PB[idx][..., 1] - self.PA[idx][..., 1])
+            r = np.clip(fr * H, lo, hi)
+            w = np.where(valid, np.exp(-(np.where(valid, uu, 0.0) / ease) ** 2), 0.0)
+            far = np.exp(-4.0)                      # beyond about 2 ease of every ridge, the least radius
+            out[a0:a0 + 100_000] = (np.sum(w * r, axis=1) + far * lo) / (np.sum(w, axis=1) + far)
+        return out
 
     def _fair(self, dense, sig, skin):
         """The line faired: kinks (a joined end's straight run-on, a traced line's jitter) smoothed
@@ -745,13 +941,23 @@ class WallRidges:
         rad = np.linalg.norm(q - np.einsum("nkd,nkd->nk", q, gh)[..., None] * gh, axis=-1)
         cone = rad * sa - ax * ca
         tear = np.minimum(disk, np.maximum(cone, ax - (R / ca - R * ca)))
-        f = _smin(web, tear, 1.0)                           # the bulb blended into the web
+        f = _smin_c2(web, tear, 1.5)                        # the bulb blended into the web (C2: no crease line)
         f = np.maximum(f, over)                             # ends at the line's end, never past it
-        f = np.maximum(f, 0.3 - H)                          # under 0.3 mm tall it is nothing (no sliver line on the skin)
+        # under 0.6 mm tall it is nothing, and the field climbs fast as it goes: held at 0.3 - H it
+        # sat a hair off the skin along every tapered-out line, and a root fillet (any smooth union
+        # with the skin) raised it into a faint ghost ridge there
+        f = np.maximum(f, 6.0 * (0.6 - H))
         f = np.where(valid & ~ceiling, f, 1e6)              # a ridge tapered to nothing is a sliver in the skin
-        out = f[:, 0]
+        # where ridges join, the blend is full at the skin and eases off toward their tops (to a
+        # quarter at the top): a blend as deep at the tops raised a knuckle over every node
+        frac = np.clip(along / np.maximum(Lw, 1e-6), 0.0, 1.0)
+        frac = np.where(np.isfinite(f) & (f < 1e5), frac, 1.0)
+        out, fo = f[:, 0], frac[:, 0]
         for j in range(1, f.shape[1]):
-            out = _smin(out, f[:, j], self.blend)
+            lift = np.minimum(fo, frac[:, j])
+            k = 1.5 * self.blend * np.clip(1.15 - lift, 0.25, 1.0)
+            out = _smin_c2(out, f[:, j], k)                     # as deep as the quadratic blend's k, without its crease
+            fo = np.maximum(fo, frac[:, j])
         return out
 
 

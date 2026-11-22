@@ -194,3 +194,64 @@ def test_network_merges_an_end_running_alongside_another_line():
     assert ends[1][1]
     d = np.min(np.linalg.norm(L[1][:, None] - a[None], axis=2), axis=1)
     assert (d[-5:] < 6.0).any() and np.sum((d > 1.0) & (d < 4.0)) < 6      # no long run alongside
+
+
+def test_anchor_network_is_planar_and_ties_anchors():
+    import trimesh
+    from loadpath.ridges import anchor_network
+    m = trimesh.creation.box((100.0, 100.0, 2.0)).subdivide().subdivide().subdivide().subdivide()
+    top = m.vertices[:, 2] > 0.5
+    keep = top[m.faces].all(axis=1)
+    sub = m.submesh([np.where(keep)[0]], append=True)
+    A = np.array([[-30, -30, 1], [30, -30, 1], [30, 30, 1], [-30, 30, 1], [0, 0, 1]], float)
+    lines, kept = anchor_network(sub.vertices, sub.faces, A, k=4, max_length=100, clear=5.0, min_angle=30.0)
+    assert len(kept) >= 6                          # the square's sides and spokes to its middle
+    assert (0, 2) not in kept and (1, 3) not in kept   # its diagonals would cross the spokes
+    for (i, j), P in zip(kept, lines):
+        assert np.linalg.norm(P[0] - A[i]) < 4 and np.linalg.norm(P[-1] - A[j]) < 4
+
+
+def test_anchor_network_mirror_is_symmetric():
+    import trimesh
+    from loadpath.ridges import anchor_network
+    m = trimesh.creation.box((100.0, 100.0, 2.0)).subdivide().subdivide().subdivide().subdivide()
+    keep = (m.vertices[:, 2] > 0.5)[m.faces].all(axis=1)
+    sub = m.submesh([np.where(keep)[0]], append=True)
+    A = np.array([[-30, -30, 1], [30, -30, 1], [30, 30, 1], [-30, 30, 1], [0, 0, 1], [-35, 5, 1], [35, 5, 1]], float)
+    lines, kept = anchor_network(sub.vertices, sub.faces, A, k=4, max_length=100, clear=5.0, min_angle=30.0,
+                                 mirror=(-1, 1, 1))
+    pts = np.vstack(lines)
+    from scipy.spatial import cKDTree
+    assert cKDTree(pts).query(pts * [-1, 1, 1])[0].max() < 1e-6
+
+
+def test_fillet_union_is_curvature_continuous_and_as_deep_as_its_radius():
+    from loadpath.ridges import fillet_union
+    # a floor (y < 0 solid) and a wall (x < 0 solid): the fillet fills the corner's bisector
+    # r (sqrt 2 - 1) deep, as a circular fillet of radius r would
+    r = 3.0
+    s = np.linspace(0.0, 4.0, 4001)
+    x = s / np.sqrt(2.0)                             # along the bisector, both fields x = y = s / sqrt 2 off the faces
+    f = fillet_union(x, x, r)
+    depth = s[np.argmin(np.abs(f))]
+    assert abs(depth - r * (np.sqrt(2.0) - 1.0)) < 0.02
+    # along the floor, the second difference never jumps (no crease at the fillet's edge)
+    y = 0.5
+    xs = np.linspace(-1.0, 12.0, 13001)
+    g = fillet_union(np.full_like(xs, y), -xs, r)
+    d2 = np.diff(g, 2) / (xs[1] - xs[0]) ** 2
+    assert np.abs(np.diff(d2)).max() < 0.05
+
+
+def test_wall_ridges_root_grows_with_height():
+    from loadpath.ridges import WallRidges
+    line = np.c_[np.linspace(0, 80, 81), np.zeros(81), np.zeros(81)]
+    up = lambda P: np.tile([0.0, 0.0, 1.0], (len(P), 1))
+    lo = WallRidges([line], "+z", up, H=(4.0, 4.0), taper=10.0, root=(0.3, 1.0, 3.0))
+    hi = WallRidges([line], "+z", up, H=(9.0, 9.0), taper=10.0, root=(0.3, 1.0, 3.0))
+    mid = np.array([[40.0, 3.0, 0.5]])
+    assert abs(lo.root_radius(mid)[0] - 1.2) < 0.1 and abs(hi.root_radius(mid)[0] - 2.7) < 0.1
+    end = np.array([[0.5, 3.0, 0.5]])                   # the tapered end: back to the least radius
+    assert hi.root_radius(end)[0] < 1.3
+    far = np.array([[40.0, 40.0, 0.5]])
+    assert abs(hi.root_radius(far)[0] - 1.0) < 1e-6
