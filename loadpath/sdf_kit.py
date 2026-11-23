@@ -41,7 +41,7 @@ from skimage import measure
 import trimesh
 
 __all__ = [
-    "smin", "smax", "subtract", "union", "intersect",
+    "smin", "smax", "subtract", "soft_subtract", "union", "intersect",
     "sphere", "box", "capsule", "tapered_capsule", "spline_tube", "cyl_z",
     "sq_prism", "pocket", "largest_body",
     "superellipsoid",
@@ -110,6 +110,26 @@ def intersect(a, b):
 def subtract(d, hole):
     """Cut `hole` out of `d` (hard edge — use for exact bores/pockets)."""
     return np.maximum(d, -hole)
+
+
+@_lift
+def soft_subtract(d, hole, rim):
+    """Cut `hole` out of `d` with a rounded rim of radius about `rim` mm, for
+    a keep-out cut into a drawn or organic form BEFORE it is surfaced.
+
+    A keep-out cut exactly after surfacing (a slot, a pocket, a phone's way
+    in) leaves a knife edge wherever it crosses the smooth skin, the one
+    place a hand or a phone touches. Cut here, every such edge is a round;
+    the exact cut afterwards only trims the fit's tolerance, or is skipped.
+    For a B-rep keep-out, `hole` is `surfacing.sdf(shape.wrapped, band=rim +
+    1.5)` (the blend reads the field up to `rim` away).
+
+    The round is taken from the solid, so a face of `d` meant to land ON the
+    keep-out's face (a pad the phone rests on, a seat) is shaved: by rim/4
+    where the two faces coincide. Draw such a face at least `rim` proud,
+    into the keep-out; the blend then ends before it and the keep-out cuts
+    it flat exactly where it should be."""
+    return smax(d, -hole, rim)
 
 
 # ---- primitives (negative = inside) ----------------------------------------
