@@ -226,3 +226,11 @@ def test_solvers_refuse_a_part_in_pieces():
     solid[5:7, 5:7, 5:7] = True
     with pytest.raises(I.IntegrityError):
         airflow.solve(solid, 1.0, k=1.0, parts={"half": solid}, verbose=False, max_iter=1)
+
+
+def test_a_boss_joined_by_its_root_fillet_alone_is_attached_and_without_it_is_not():
+    """The boss stops 0.5 mm short of the wall; a 1.5 mm root fillet bridges it (fused), a plain union does not."""
+    for r, ok in ((1.5, True), (None, False)):
+        f = boss_fields(lift=0.5, fillet=r)
+        res = I.attachment(f, [I.Feature("boss")], (LO, HI), pitch=P)
+        assert res[0]["passed"] is ok, res

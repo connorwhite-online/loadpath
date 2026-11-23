@@ -373,24 +373,57 @@ def attachment(fields, features, box, solid: str = "solid", pitch: float = 0.25,
                 ijk = np.clip(np.floor((P_s - org) / coarse + 0.5).astype(int), 0, np.array(shape) - 1)
                 near = binary_dilation(pm, iterations=1)[tuple(ijk.T)]
             P_s, fb_s, h_s, sv_s = P_s[near], fb_s[near], h_s[near], sv_s[near]
-            fused = h_s <= pitch                                  # in or on the host
+            seat = f.attach if isinstance(f.attach, str) else f.attach[0]
+            direct = h_s <= pitch                                 # on or in the host
+            buried = sv_s < -0.5 * pitch                          # the feature's face is inside the part here
+            fused = direct.copy()
+            # a face buried in material that runs on to the host (a root fillet, a web): walk from it
+            # toward the host; it is fused if the part stays solid all the way to the host
+            walk = buried & ~direct & (h_s < f.reach)
+            if walk.any():
+                ix = np.nonzero(walk)[0]
+                if len(ix) > 20000:
+                    ix = np.sort(np.random.default_rng(0).choice(ix, 20000, replace=False))
+                Q = P_s[ix]
+                e = 0.5 * pitch
+                g = np.zeros_like(Q)
+                for a_ in range(3):
+                    d = np.zeros(3)
+                    d[a_] = e
+                    g[:, a_] = _host(_eval(fields, Q + d), f.attach) - _host(_eval(fields, Q - d), f.attach)
+                n_ = g / (np.linalg.norm(g, axis=1, keepdims=True) + 1e-12)
+                ok = np.ones(len(Q), bool)
+                done = np.zeros(len(Q), bool)
+                for k in range(1, int(np.ceil(f.reach / (0.5 * pitch))) + 1):
+                    live = ok & ~done
+                    if not live.any():
+                        break
+                    v = _eval(fields, Q[live] - (k * 0.5 * pitch) * n_[live])
+                    li = np.nonzero(live)[0]
+                    reached = _host(v, f.attach) <= 0.0
+                    solid_ = v[solid] < 0.0
+                    done[li[reached & solid_]] = True
+                    ok[li[~solid_ & ~reached]] = False
+                fused[ix[done]] = True
             contact = float(fused.sum() * pitch ** 2)
-            cand = (h_s > pitch) & (h_s < f.reach)                # faces near the host, not fused
+            # its underside: faces on the part's surface that look at the seat host across air
+            cand = ~fused & ~buried & (h_s > pitch) & (h_s < f.reach)
             gapfacing = np.zeros(len(P_s), bool)
             if cand.any():
                 Q = P_s[cand]
                 e = 0.5 * pitch
                 g_f, g_h = np.zeros_like(Q), np.zeros_like(Q)
-                for a in range(3):
+                hs = np.zeros(len(Q))
+                for a_ in range(3):
                     d = np.zeros(3)
-                    d[a] = e
+                    d[a_] = e
                     vp, vm = _eval(fields, Q + d), _eval(fields, Q - d)
-                    g_f[:, a] = np.maximum(vp[f.name], vp[solid]) - np.maximum(vm[f.name], vm[solid])
-                    g_h[:, a] = _host(vp, f.attach) - _host(vm, f.attach)
+                    g_f[:, a_] = np.maximum(vp[f.name], vp[solid]) - np.maximum(vm[f.name], vm[solid])
+                    g_h[:, a_] = vp[seat] - vm[seat]
+                    hs += 0.5 * (vp[seat] + vm[seat]) / 3.0
                 nf = g_f / (np.linalg.norm(g_f, axis=1, keepdims=True) + 1e-12)
                 nh = g_h / (np.linalg.norm(g_h, axis=1, keepdims=True) + 1e-12)
-                looks = (nf * nh).sum(1) < -0.5                    # the face looks at the host
-                # and the air between is open: the part's own field is not filling it
+                looks = ((nf * nh).sum(1) < -0.5) & (hs < f.reach)   # the face looks at its seat
                 gapfacing[np.nonzero(cand)[0]] = looks
             fused_under = fused.sum()
             gap_under = gapfacing.sum()
@@ -402,7 +435,7 @@ def attachment(fields, features, box, solid: str = "solid", pitch: float = 0.25,
                 reasons.append(f"fused over {contact:.1f} mm^2 < {f.min_contact} to {f.attach}"
                                + (" (floating)" if contact == 0 else ""))
             if under and f.min_cover > 0 and cover < f.min_cover:
-                reasons.append(f"{100 * (1 - cover):.0f}% of its underside is off {f.attach} (gap up to {gmax:.2f} mm)")
+                reasons.append(f"{100 * (1 - cover):.0f}% of its underside is off {seat} (gap up to {gmax:.2f} mm)")
             if not under and contact == 0:
                 reasons.append(f"floating: no face within {f.reach} mm of {f.attach}")
             gp = P_s[gapfacing]
@@ -421,13 +454,16 @@ def attachment(fields, features, box, solid: str = "solid", pitch: float = 0.25,
 
 # -- correct by construction ------------------------------------------------------
 
-def seated(feature, host, direction, reach: float = 4.0, step: float = 0.2):
+def seated(feature, host, direction, reach: float = 4.0, step: float = 0.1):
     """A feature carried onto its host: its own field, plus the material swept
     from it along `direction` (toward the host) for up to `reach` mm, kept only
     within reach of the host. Where the host is nearer than `reach` the
     feature's root is solid to it; union the result with the host by
     ridges.fillet_union for the root fillet. Placing a feature on a fixed plane
-    and hoping the surface is there is what left rings 1-4 mm off a surfaced face."""
+    and hoping the surface is there is what left rings 1-4 mm off a surfaced face.
+    The sweep is sampled every `step` mm, so a face slanted to `direction`
+    comes out scalloped that finely; for a prism along `direction`, lengthen
+    the prism instead (exact)."""
     d = np.asarray(direction, float)
     d = d / np.linalg.norm(d)
     ts = np.arange(0.0, reach + 1e-9, step)
