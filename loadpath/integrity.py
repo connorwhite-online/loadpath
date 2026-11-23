@@ -620,6 +620,66 @@ def _section_png(m, fields, r, path, solid, half=8.0, res=0.1):
     plt.close(fig)
 
 
+def closeup(mesh, item, path, radius: float = 7.0, title: str = "", px: float | None = None):
+    """A close look at one defect (a crease, a sliver, a stray body: a dict with
+    centre, lo and hi): the surface within `radius` mm of it, seen square to its
+    own faces (orthographic, software z-buffer), the defect's own box in red.
+    Two views: along the faces' mean normal, and turned 60 degrees about the
+    defect's long axis, so a corner is seen into and across."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    m = _tm(mesh)
+    c0 = np.asarray(item["centre"], float)
+    lo, hi = np.asarray(item.get("lo", c0), float), np.asarray(item.get("hi", c0), float)
+    tc = m.triangles_center
+    k = np.linalg.norm(tc - c0, axis=1) < radius
+    if not k.any():
+        return
+    T, nrm = m.triangles[k], m.face_normals[k]
+    hot = np.all((tc[k] >= lo - 0.35) & (tc[k] <= hi + 0.35), axis=1)
+    near = np.linalg.norm(tc[k] - c0, axis=1) < 2.0
+    vd = nrm[near].mean(0) if near.any() else nrm.mean(0)
+    vd = vd / (np.linalg.norm(vd) + 1e-12) if np.linalg.norm(vd) > 1e-6 else np.array([0, 0, 1.0])
+    ax_ = hi - lo
+    ax_ = ax_ - (ax_ @ vd) * vd
+    ax_ = ax_ / np.linalg.norm(ax_) if np.linalg.norm(ax_) > 1e-6 else np.cross(vd, [0, 0, 1.0] if abs(vd[2]) < 0.9 else [1.0, 0, 0])
+    ax_ /= np.linalg.norm(ax_)
+    side = np.cross(vd, ax_)
+    v2 = np.cos(np.radians(60)) * vd + np.sin(np.radians(60)) * side
+    if px is None:
+        px = max(0.6 * float(np.median(m.edges_unique_length)), radius / 250.0)
+    bary = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [.5, .5, 0], [0, .5, .5], [.5, 0, .5], [1 / 3, 1 / 3, 1 / 3]])
+    pts = np.einsum("kj,fjd->fkd", bary, T).reshape(-1, 3) - c0
+    fid = np.repeat(np.arange(len(T)), len(bary))
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+    for ax, view in zip(axs, (vd, v2)):
+        u = np.cross(view, side if abs(view @ side) < 0.9 else ax_)
+        u /= np.linalg.norm(u)
+        w = np.cross(view, u)
+        pu, pw, dep = pts @ u, pts @ w, pts @ view
+        W = H = int(2 * radius / px) + 3
+        iu = np.clip(((pu + radius) / px).astype(int), 0, W - 1)
+        iw = np.clip(((pw + radius) / px).astype(int), 0, H - 1)
+        pix = iw * W + iu
+        o = np.lexsort((-dep, pix))
+        first = np.ones(len(o), bool)
+        first[1:] = pix[o][1:] != pix[o][:-1]
+        sel = o[first]
+        shade = np.clip(nrm[fid[sel]] @ view, 0, 1) * 0.65 + 0.3
+        base = np.where(hot[fid[sel]][:, None], [[0.92, 0.18, 0.12]], [[0.72, 0.73, 0.76]])
+        back = (nrm[fid[sel]] @ view) < 0                       # a face seen from behind: inside out, or a sliver's far side
+        base[back] = [0.25, 0.35, 0.85]
+        img = np.ones((H * W, 3)) * 0.97
+        img[pix[sel]] = base * shade[:, None]
+        ax.imshow(img.reshape(H, W, 3)[::-1], extent=(-radius, radius, -radius, radius), interpolation="nearest")
+        ax.set_xlabel("mm")
+    fig.suptitle(title or f"at {np.round(c0, 1).tolist()}", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path, dpi=80)
+    plt.close(fig)
+
+
 def _sheet(paths, out, cols=4, w=500):
     from PIL import Image
     if not paths:
@@ -726,6 +786,20 @@ def gate(mesh, name: str, out_dir, *, fields=None, features=(), box=None, solid:
         bp = out / f"{name}-bodies.png"
         body_map(m, bp, title=name)
         imgs["bodies"] = str(bp)
+        # a close look at each crease, sliver and stray body (red: the defect; blue: a face seen from behind)
+        dd = out / f"{name}-defects"
+        dd.mkdir(exist_ok=True)
+        items = [(f"body {i}: {abs(b['volume']):.1f} mm3", b) for i, b in enumerate(bs[1:], 1)]
+        items += [(f"crease {c['length']} mm, {c['angle_max']} deg", c) for c in cr]
+        items += [(f"{k} gap {x['gap_min']} mm over {x['area']} mm2", x) for k in ("air", "material") for x in sl[k]]
+        dpaths = []
+        for i, (lab, it) in enumerate(items[:48]):
+            p = dd / f"{i:02d}.png"
+            closeup(m, it, p, title=f"{lab} at {np.round(it['centre'], 1).tolist()}")
+            dpaths.append(p)
+        if dpaths:
+            _sheet(dpaths, out / f"{name}-defects.png")
+            imgs["defects"] = str(out / f"{name}-defects.png")
         if att and fields is not None:
             sd = out / f"{name}-sections"
             sd.mkdir(exist_ok=True)
