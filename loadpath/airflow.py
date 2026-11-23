@@ -165,7 +165,7 @@ class AirflowResult:
 def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, sides=None, gravity=(0.0, 0.0, -G),
           fixed=None, fan: Fan | None = None, film: float | None = None, max_iter: int = 3000, tol: float = 1e-4,
           relax=(0.6, 0.8, 1.0), deferred: float = 1.0, init: AirflowResult | None = None, report_every: int = 50,
-          verbose: bool = True, pressure: float = 1.01325) -> AirflowResult:
+          verbose: bool = True, pressure: float = 1.01325, parts: dict | None = None) -> AirflowResult:
     """Steady laminar buoyant flow and conjugate heat on a voxel box.
 
     solid: bool (nx, ny, nz), True where there is a solid (no flow); the rest
@@ -181,7 +181,9 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
     follow the walls. relax: under-relaxation of velocity, pressure and
     temperature. deferred: weight of the central-difference correction to
     upwind convection (0 pure upwind). init: a previous result on the same
-    grid to start from.
+    grid to start from. parts: {name: bool mask} of the printed parts in
+    `solid`; each must be one piece of material (loadpath.integrity), or the
+    solve refuses to run: a loose cradle in the air is not a result.
 
     Converged when the mass residual is under `tol` of the largest face
     flow, the temperature moves less than 1e-3 K per pass and the heat
@@ -192,6 +194,13 @@ def solve(solid, pitch: float, *, k=None, heat=None, ambient: float = 25.0, side
     shape = solid.shape
     if solid.ndim != 3:
         raise ValueError("solid must be a 3D voxel mask")
+    if parts:
+        from .integrity import require_one_body_mask
+        for pn, pm in parts.items():
+            pm = np.asarray(pm, bool)
+            if (pm & ~solid).any():
+                raise ValueError(f"part {pn} has cells outside `solid`")
+            require_one_body_mask(pm, f"part {pn}")
     nx, ny, nz = shape
     N = solid.size
     fluid = ~solid

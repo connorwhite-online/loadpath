@@ -161,6 +161,8 @@ def surface_thickness(mesh, samples: int = 6000, seed: int = 0, study: Study | N
     surfaces (preserved or keep-out) is left out: that thickness is the
     study's, not the optimizer's (the robot arm's wrist yoke: its J5 servo sits 1.9 mm
     above the J4 horn, so the preserved horn plate between them is 1.9 mm)."""
+    from .integrity import require_one_body
+    require_one_body(mesh, "the part surface_thickness reads")
     import trimesh
 
     # a fresh, merged copy: a part straight from the booleans can carry
@@ -1824,6 +1826,8 @@ def reaction_margin(reactions) -> float | None:
 def verify_part(study: Study, mesh, *args, **kwargs) -> dict:
     """verify_part_ with the study's impact cases at their coupled forces
     for this part only (study.impact_scale is cleared before and after)."""
+    from .integrity import require_one_body
+    require_one_body(mesh, "the part verify_part analyses", allow=kwargs.pop("allow_bodies", 1))
     study.impact_scale = {}
     try:
         return _verify_part(study, mesh, *args, **kwargs)

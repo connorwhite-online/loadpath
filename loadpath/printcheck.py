@@ -130,7 +130,9 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
     import trimesh
 
     from .verify import voxelize
+    from .integrity import require_one_body
 
+    require_one_body(mesh, "the part check_print slices")
     rot = rotation_to_z(direction)
     m = mesh.copy()
     m.apply_transform(np.block([[rot, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))
