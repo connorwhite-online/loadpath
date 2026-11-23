@@ -122,7 +122,7 @@ def _hull_margin(pts2, com2):
 
 def check_print(mesh, direction, process: str = "fdm", pitch: float | None = None,
                 bridge_span: float | None = None, ledge: float = _LEDGE, material=None,
-                max_cells: int = 1_500_000) -> dict:
+                max_cells: int = 1_500_000, allow_bodies: int | None = 1) -> dict:
     """Slice `mesh` (trimesh, mm) along the build `direction` ((axis, sign)
     or a vector, the way layers stack) and report support, bridges, islands
     and bed contact. Nothing here passes or fails a part: the numbers are
@@ -130,7 +130,10 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
     import trimesh
 
     from .verify import voxelize
+    from .integrity import require_one_body
 
+    # a part in pieces is refused unless the caller counts and fails it itself (integrity.COUNTED)
+    require_one_body(mesh, "the part check_print slices", allow=allow_bodies)
     rot = rotation_to_z(direction)
     m = mesh.copy()
     m.apply_transform(np.block([[rot, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]))

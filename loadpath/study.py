@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .integrity import COUNTED   # outcomes in pieces are counted (report["bodies"]) and failed here
 from .domain import Domain, build_domain, cell_cap
 from .manufacture import report as manufacturing_report
 from .reconstruct import ReconstructOptions, reconstruct
@@ -776,7 +777,8 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     note({"stage": "verify", "volumeFraction": vf})
     try:
         report = verify_part(study, mesh, max_cells=verify_cells, min_pitch=0.5 * domain.pitch,
-                             contact_band=contact_band(study, domain), refine=refine, max_pitch=domain.pitch)
+                             contact_band=contact_band(study, domain), refine=refine, max_pitch=domain.pitch,
+                             allow_bodies=COUNTED)
     except (RuntimeError, ValueError) as exc:
         # one outcome verification cannot solve (a piece the supports do
         # not hold) is a failed outcome, not a failed study: the search
@@ -2927,7 +2929,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         try:
             # the search's own reading: its pick is read again (_confirm, tet_confirm)
             report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=contact_band(study, domain),
-                                 max_pitch=domain.pitch, shell_cells=SEARCH_SHELL_CELLS)
+                                 max_pitch=domain.pitch, shell_cells=SEARCH_SHELL_CELLS, allow_bodies=COUNTED)
         except (RuntimeError, ValueError) as exc:
             # one outcome verification cannot solve (or a load pad the
             # design let go of: the robot arm's wrist link at 5% after 43 g at 6%) (a piece the supports do
@@ -2940,7 +2942,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             mesh, rinfo, report = _round_hotspots(
                 study, domain, xphys if xlevel is None else xlevel, mesh, rinfo, report,
                 lambda m: verify_part(study, m, min_pitch=0.5 * domain.pitch, contact_band=contact_band(study, domain),
-                                      max_pitch=domain.pitch, shell_cells=SEARCH_SHELL_CELLS))
+                                      max_pitch=domain.pitch, shell_cells=SEARCH_SHELL_CELLS, allow_bodies=COUNTED))
         if buck_state["sf"] is not None and report.get("bucklingFactor") is not None:
             # Buckling in the search (simp.optimize's buckling constraint):
             # on from the first part whose buckling factor comes within
@@ -3133,7 +3135,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 ap = o.report.get("analysisPitch")
                 rep = verify_part(study, o.mesh, max_cells=cc, min_pitch=0.3 * domain.pitch,
                                   contact_band=contact_band(study, domain),
-                                  max_pitch=min(domain.pitch, 0.9 * ap) if ap else domain.pitch)
+                                  max_pitch=min(domain.pitch, 0.9 * ap) if ap else domain.pitch, allow_bodies=COUNTED)
             except RuntimeError as exc:
                 o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
                 o.report["margin"] = 0.0
@@ -3607,7 +3609,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             prefetch.submit(study, job, contact_band(study, domain))
         try:
             report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=contact_band(study, domain),
-                                 max_pitch=domain.pitch)
+                                 max_pitch=domain.pitch, allow_bodies=COUNTED)
         except BaseException:
             if job is not None:
                 prefetch.drop(job)

@@ -88,6 +88,8 @@ def body_from_mesh(name: str, mesh, samples: int = 6000, sdf=None, seed: int = 0
     vertices, so sharp corners are there) and the mesh's distance, or `sdf`
     if one is given (a field the mesh was made from is exact)."""
     import trimesh
+    from .integrity import require_one_body
+    require_one_body(mesh, f"retention body {name}")
     rng = np.random.default_rng(seed)
     pts, _ = trimesh.sample.sample_surface(mesh, samples, seed=int(rng.integers(1 << 31)))
     v = np.asarray(mesh.vertices)

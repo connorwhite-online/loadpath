@@ -912,6 +912,8 @@ def swept_keepouts(robot: Robot, link: str, *, box, pitch: float = 1.0, clearanc
 def intrusion(entries, mesh, pitch=None) -> dict:
     """mm³ of `mesh` (study frame, a part as designed) inside each swept
     keep-out: where the part hits a neighbour somewhere in its range."""
+    from .integrity import require_one_body
+    require_one_body(mesh, "the part intrusion checks")
     out = {}
     for e in entries:
         p = e["pitch"] if pitch is None else pitch

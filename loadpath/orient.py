@@ -51,6 +51,7 @@ import types
 
 import numpy as np
 
+from .integrity import COUNTED
 from .am import build_vector, direction_label, parse_build_direction
 from .printcheck import check_print
 
@@ -197,7 +198,9 @@ def _candidate(args):
 
 def _row(c, o, proc, study, overhangs=None):
     rep = o.report
-    pc = check_print(o.mesh, c, process=proc.kind, material=study.material, bridge_span=proc.bridge_span)
+    # a design in pieces is sliced for its row but never chosen: _sound ranks it out on its count
+    pc = check_print(o.mesh, c, process=proc.kind, material=study.material, bridge_span=proc.bridge_span,
+                     allow_bodies=COUNTED)
     inter = [cs.get("interlayerStress") for cs in rep.get("cases", []) if cs.get("interlayerStress") is not None]
     return {"direction": direction_label(c), "build": c, "safetyFactor": rep["safetyFactor"],
             "mass": rep["mass"], "interlayerStress": max(inter) if inter else None,
@@ -354,7 +357,7 @@ def choose_build_direction(study, candidates=None, max_elements: int = _COMPARE_
             key = tuple(np.round(np.abs(build_vector(c)), 6))
             if key not in by_axis:
                 by_axis[key] = verify_part(variant(c, overhangs=False), shared.mesh, min_pitch=0.5 * domain.pitch,
-                                           contact_band=domain.pitch)
+                                           contact_band=domain.pitch, allow_bodies=COUNTED)
             rows.append(_row(c, types.SimpleNamespace(mesh=shared.mesh, report=by_axis[key]), proc, study,
                              overhangs=False)
                         | {"designed": True})
@@ -442,7 +445,8 @@ def _delivered_cost(study, o, proc) -> float:
     """What a delivered outcome costs to make as it stands (_make_cost at
     its own strength): its mass, its height and its own supports along its
     study's build direction."""
-    pc = check_print(o.mesh, proc.build, process=proc.kind, material=study.material, bridge_span=proc.bridge_span)
+    pc = check_print(o.mesh, proc.build, process=proc.kind, material=study.material, bridge_span=proc.bridge_span,
+                     allow_bodies=COUNTED)   # the outcome's own report counts and fails its pieces
     r = {"mass": o.report["mass"], "strength": 1.0, "partVolume": pc["volume"], "height": pc["height"],
          "supportVolume": pc["supportVolume"], "supportArea": pc["supportArea"],
          "trappedSupportArea": pc.get("trappedSupportArea", 0.0), "cost": _cost(pc)}

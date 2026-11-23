@@ -616,6 +616,46 @@ user picks. `--plan` lists the routes without running them. It costs about
 one study per route (routes of one method share designs), so start with the
 methods that are plausible for the user.
 
+## A part must be one sound solid (integrity)
+
+`loadpath.integrity` is the last step before a part leaves the tool, and every
+analysis refuses a part in pieces. Watertight is a property of each closed
+surface, so a half of seven loose bodies passes it. An enclosure half did
+exactly that: its cradles hung in the air after the web that held them was
+removed, and its glass rings sat on a fixed plane 1 to 4 mm behind a surfaced
+face. Declare each feature with what holds it, and gate the export:
+
+    from loadpath import integrity as I
+    feats = [I.Feature("rings", "skin", min_cover=0.97),           # seated: its underside fused
+             I.Feature("cradle", "skin", min_cover=0.0)]           # spans: contact alone
+    I.export(mesh, "half.stl", fields=fields, features=feats, box=(lo, hi), solid="half")
+
+`fields(P)` returns the part's fields by name, with the finished part under
+`solid`. The gate fails, raising IntegrityError, on any of these:
+
+- more than one body;
+- a piece of a feature fused over less than `min_contact` mm², or with
+  less than `min_cover` of its underside on its host;
+- air gaps or walls under 0.4 mm;
+- re-entrant creases sharper than 50 degrees (a root with no fillet).
+
+It writes a section cut through every feature piece's root, a map of the
+bodies each in its own colour, and a stamp beside the file. Renders,
+drawings and uploads call `I.require_passed(path)` first, so a failed or
+edited file stops there.
+
+To make a part sound by construction, build each feature with
+`I.seated(feature, host, direction, reach)`, which carries it onto the real
+surface wherever that is, and union it with `ridges.fillet_union`. Never
+place a feature on a plane the surface is assumed to be on. Never drop
+"debris" components after meshing: a loose piece is a design error to fix.
+
+`verify_part`, `check_print`, `surface_thickness`,
+`retention.body_from_mesh` and `assembly.intrusion` all refuse a mesh that
+is more than one body. `airflow.solve(parts={name: mask})` refuses a part
+that is more than one piece. Overlapping primitives concatenated into one
+file count as one body.
+
 ## Inside a designer's exterior (push pads, switches)
 
 When the user hands over industrial-design surfacing and the inside is

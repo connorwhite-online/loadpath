@@ -116,7 +116,7 @@ jobs:
               tests/test_exterior.py tests/test_scan.py tests/test_surfacecheck.py tests/test_envelope.py
               tests/test_reference_sketch.py
             pytest: >-
-              tests/test_materials.py tests/test_preview.py tests/test_interfaces.py tests/test_multimat.py
+              tests/test_integrity.py tests/test_materials.py tests/test_preview.py tests/test_interfaces.py tests/test_multimat.py
               tests/test_interlock.py tests/test_threemf_multi.py tests/test_voxelprint.py
               tests/test_field_materials.py tests/test_published_experiments.py tests/test_fieldjit.py
               tests/test_print.py tests/test_mixed_lu.py

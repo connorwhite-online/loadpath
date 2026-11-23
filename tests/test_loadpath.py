@@ -786,7 +786,8 @@ def test_surface_thickness_leaves_out_the_users_own_walls():
     from loadpath.verify import surface_thickness
 
     plate = trimesh.creation.box(bounds=[[-20, -20, 0], [20, 20, 1.5]])
-    block = trimesh.creation.box(bounds=[[-30, -20, 1.5], [-20, 20, 5.5]])
+    # the block overlaps the plate by 1 mm (meeting it only along an edge, it was two bodies: integrity refuses that)
+    block = trimesh.creation.box(bounds=[[-30, -20, 1.5], [-19, 20, 5.5]])
     part = trimesh.boolean.union([plate, block], engine="manifold")
     study = SimpleNamespace(preserve=[SimpleNamespace(shape=Box([-20, -20, 0], [20, 20, 1.5]))], keep_out=[])
     assert surface_thickness(part, samples=3000)[1] < 1.6
