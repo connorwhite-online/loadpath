@@ -2001,10 +2001,12 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             (proc.build if proc is not None and proc.build != "auto" else None)
         if build is not None:
             # sliced as a printer would: bridges, islands, support volume, bed
+            from .integrity import COUNTED
             from .printcheck import check_print
 
             report["print"] = check_print(mesh, build, process=proc.kind if proc is not None else "fdm",
-                                          material=mat, bridge_span=getattr(proc, "bridge_span", None))
+                                          material=mat, bridge_span=getattr(proc, "bridge_span", None),
+                                          allow_bodies=COUNTED)   # verify_part's entry held the caller to its count; report["bodies"] has it
         return report
 
     from .pools import SerialExecutor, pool

@@ -141,9 +141,17 @@ def _merge_overlapping(m, parts):
     return out
 
 
-def require_one_body(mesh, what: str = "part", allow: int = 1):
+COUNTED = None   # allow_bodies for a caller that counts the pieces itself and fails the part on them
+
+
+def require_one_body(mesh, what: str = "part", allow: int | None = 1):
     """Raise IntegrityError unless the mesh is at most `allow` solid pieces
-    (allow > 1 only for a file that is an assembly on purpose)."""
+    (allow > 1 only for a file that is an assembly on purpose). `allow=COUNTED`
+    is for a pipeline that counts the pieces itself and fails the part on them
+    in its own report (the study's outcomes: report["bodies"], "the part came
+    out in N pieces"); it never raises then, and nothing else may pass it."""
+    if allow is COUNTED:
+        return None
     b = bodies(mesh)
     if len(b) > allow:
         lines = [f"  {i}: {abs(x['volume']):.1f} mm^3 at {x['centre']}" for i, x in enumerate(b[:12])]
