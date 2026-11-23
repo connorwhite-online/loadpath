@@ -460,3 +460,21 @@ def test_basis_cache_keeps_no_large_evaluations():
     SF.basis(12, 3, False, t)
     SF.basis(12, 3, False, t[:50])
     assert len(SF._BASIS_CACHE) == 1
+
+
+def test_soft_subtract_rounds_the_rim_and_cuts_a_proud_face_flat():
+    from loadpath.sdf_kit import box, soft_subtract, subtract
+    plate = lambda P: box(P, (0, 0, -2), (10, 10, 2))           # top face z = 0
+    hole = lambda P: box(P, (0, 0, 5), (3, 3, 5))               # a pocket from z = 0 up, 6 x 6
+    rim = 1.0
+    # just outside the pocket's corner on the plate's top: solid with a hard cut, rounded away with a soft one
+    P = np.array([[3.1, 3.1, -0.05]])
+    assert subtract(plate(P), hole(P))[0] < 0
+    assert soft_subtract(plate(P), hole(P), rim)[0] > 0
+    # a pad meant to land on the pocket's floor (z = 0): flush, it is shaved by rim / 4
+    flush = lambda P: np.minimum(plate(P), box(P, (0, 0, -0.5), (2, 2, 0.5)))
+    top = lambda f: max(z for z in np.arange(-1, 1, 0.005) if f(np.array([[0, 0, z]]))[0] < 0)
+    assert abs(top(lambda P: soft_subtract(flush(P), hole(P), rim)) + rim / 4) < 0.02
+    # drawn `rim` proud, the pocket cuts it flat where it should be
+    proud = lambda P: np.minimum(plate(P), box(P, (0, 0, -0.5 + rim / 2), (2, 2, 0.5 + rim / 2)))
+    assert abs(top(lambda P: soft_subtract(proud(P), hole(P), rim))) < 0.01
