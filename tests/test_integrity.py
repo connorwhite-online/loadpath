@@ -79,6 +79,18 @@ def test_a_boss_hovering_off_the_wall_is_two_bodies_and_not_attached():
     assert r[0]["gap_max"] == pytest.approx(1.0, abs=0.3)
 
 
+def test_a_boss_floating_beyond_reach_is_reported_and_pictured(tmp_path):
+    # a piece with no face within reach of its host still gets a section cut (A9.3's gate
+    # died drawing one: the far-floating record carried no host)
+    f = boss_fields(lift=4.0)
+    m = part(f, LO, HI)
+    rep = I.gate(m, "far", tmp_path, fields=f, features=[I.Feature("boss", reach=1.0)],
+                 box=(LO, HI), coarse=0.5, raise_on_fail=False, verbose=False)
+    assert not rep.passed
+    assert any("no face within" in x for x in rep.failures), rep.failures
+    assert (tmp_path / "far-sections" / "boss-1.png").exists()
+
+
 def test_a_cradle_whose_web_was_removed_fails_the_gate(tmp_path):
     """The web held the cradle; delete the web and the cradle floats 3 mm off."""
     cradle = box((0, 0, 4.5), (6, 1.0, 1.5))

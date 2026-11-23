@@ -356,7 +356,7 @@ def attachment(fields, features, box, solid: str = "solid", pitch: float = 0.25,
             band = binary_dilation(pm, iterations=2) & (np.abs(built) < 2.0 * coarse + pitch) & (hostc < f.reach + 2 * coarse)
             cells = np.argwhere(band)
             if not len(cells):
-                results.append(dict(feature=f.name, piece=j, centre=centre, volume=round(vol, 1), contact=0.0,
+                results.append(dict(feature=f.name, attach=f.attach, piece=j, centre=centre, volume=round(vol, 1), contact=0.0,
                                     cover=0.0, gap_max=None, passed=False,
                                     reasons=[f"floating: no face within {f.reach} mm of {f.attach}"]))
                 continue
@@ -680,6 +680,10 @@ def gate(mesh, name: str, out_dir, *, fields=None, features=(), box=None, solid:
             if not r["passed"]:
                 fails.append(f"{r['feature']} #{r['piece']} at {r.get('centre')}: " + "; ".join(r["reasons"]))
     imgs = {}
+    clean_bodies = [{k: v for k, v in b.items() if not k.startswith("_")} for b in bs]
+    # the verdict goes to disk before the pictures, so a picture that fails loses no analysis
+    (out / f"{name}-gate.json").write_text(json.dumps(asdict(GateReport(name, not fails, clean_bodies, sl, cr, att, fails, imgs)),
+                                                      indent=1, default=float))
     if images:
         say(f"gate {name}: pictures")
         bp = out / f"{name}-bodies.png"
@@ -698,7 +702,6 @@ def gate(mesh, name: str, out_dir, *, fields=None, features=(), box=None, solid:
             _sheet(paths, out / f"{name}-sections.png")
             imgs["sections"] = str(out / f"{name}-sections.png")
             imgs["section_dir"] = str(sd)
-    clean_bodies = [{k: v for k, v in b.items() if not k.startswith("_")} for b in bs]
     rep = GateReport(name, not fails, clean_bodies, sl, cr, att, fails, imgs)
     (out / f"{name}-gate.json").write_text(json.dumps(asdict(rep), indent=1, default=float))
     say(rep.summary())
