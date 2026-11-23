@@ -290,12 +290,18 @@ class Feature:
     reach: how far from the host a face of the feature counts as its underside;
     a piece with no face within reach is floating. A feature that spans or
     overhangs on purpose (a cradle on a web, a bridge) takes min_cover=0: only
-    its contact counts."""
+    its contact counts.
+    open_angle: an underside that opens from the fused root at this angle or
+    steeper (degrees off the host) is an overhang, not a gap: a rib leaned 45
+    degrees has air under it, but nothing hovers. Shallower is a crevice (a ring
+    lifting off a curved face over its circumference opens at a few degrees, a
+    shelf parallel to the wall at none) and counts against min_cover."""
     name: str
     attach: str | tuple = "skin"
     min_contact: float = 3.0
     min_cover: float = 0.97
     reach: float = 4.0
+    open_angle: float = 30.0
     min_volume: float = 0.5
     note: str = ""
 
@@ -382,8 +388,23 @@ def attachment(fields, features, box, solid: str = "solid", pitch: float = 0.25,
                 near = binary_dilation(pm, iterations=1)[tuple(ijk.T)]
             P_s, fb_s, h_s, sv_s = P_s[near], fb_s[near], h_s[near], sv_s[near]
             seat = f.attach if isinstance(f.attach, str) else f.attach[0]
-            direct = h_s <= pitch                                 # on or in the host
             buried = sv_s < -0.5 * pitch                          # the feature's face is inside the part here
+            # on or in the host: inside it, or within a sample of it with material between (half way
+            # to the host is solid). Within a sample is not enough: a hairline gap one pitch wide
+            # (a lip an edge round pulled 0.25 mm off its wall) read as fused
+            direct = h_s <= 0.0
+            near_ = (h_s > 0.0) & (h_s <= pitch) & ~buried
+            if near_.any():
+                Q = P_s[near_]
+                e = 0.5 * pitch
+                g = np.zeros_like(Q)
+                for a_ in range(3):
+                    d = np.zeros(3)
+                    d[a_] = e
+                    g[:, a_] = _host(_eval(fields, Q + d), f.attach) - _host(_eval(fields, Q - d), f.attach)
+                n_ = g / (np.linalg.norm(g, axis=1, keepdims=True) + 1e-12)
+                mid = _eval(fields, Q - 0.5 * h_s[near_, None] * n_)
+                direct[np.nonzero(near_)[0]] = mid[solid] < 0.0
             fused = direct.copy()
             # a face buried in material that runs on to the host (a root fillet, a web): walk from it
             # toward the host; it is fused if the part stays solid all the way to the host
@@ -432,6 +453,14 @@ def attachment(fields, features, box, solid: str = "solid", pitch: float = 0.25,
                 nf = g_f / (np.linalg.norm(g_f, axis=1, keepdims=True) + 1e-12)
                 nh = g_h / (np.linalg.norm(g_h, axis=1, keepdims=True) + 1e-12)
                 looks = ((nf * nh).sum(1) < -0.5) & (hs < f.reach)   # the face looks at its seat
+                # an overhang opens from the root at open_angle or steeper: its gap is at least
+                # tan(open_angle) times its distance from the nearest fused face. A crevice is shallower
+                if looks.any() and fused.any() and f.open_angle < 90.0:
+                    from scipy.spatial import cKDTree
+                    d_root, _ = cKDTree(P_s[fused]).query(Q[looks])
+                    steep = hs[looks] >= np.tan(np.radians(f.open_angle)) * d_root - pitch
+                    li = np.nonzero(looks)[0]
+                    looks[li[steep]] = False
                 gapfacing[np.nonzero(cand)[0]] = looks
             fused_under = fused.sum()
             gap_under = gapfacing.sum()
