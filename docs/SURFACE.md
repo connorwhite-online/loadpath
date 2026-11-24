@@ -188,6 +188,19 @@ density search (the next cage's size from the error rate the last two
 tries show, aiming just under the tolerance: the old step overshot to a
 cage half again as fine as needed, with more star points).
 
+Fewer faces again (2026-11-24): rectangles side by side that together
+make one rectangle are merged into one B-spline (the motorcycle graph runs
+every line on until it meets another, so a line often parts two
+rectangles of the same width; a B-rep face may meet several neighbours
+along one side); the star points the worst-point insets cut in (eight a
+rectangle) are cancelled in a second pass held to the pulls' aim; and the
+density search steps without a 4x cap, with a rate floor of 3 (near the
+tolerance the bench parts converge at 2.6-4.5; a floor of 2.5 laid the
+pebble's cage 40% finer than needed). Pebble: 4 lays -> 3, 5642 -> 4223
+cage faces, 86 -> 71 star points, 230 -> 174 STEP faces, 172 -> 147 s.
+Arm link: 646 -> 547-587 STEP faces (18-37 merges, 257 -> 219 star points
+after the insets), valid, every place within the bound.
+
 **Face by face (the fallback).** Rectangles of regular cage faces are grown
 greedily and each becomes one clamped bicubic B-spline; faces at a star
 point stay whole as degree-7 patches, split once toward it where that
