@@ -636,6 +636,12 @@ def _size(study: Study, o: LatticeOptions, lo, step, inside, solid_zone):
     stiff = Stiffness(hm, mat.nu, bc.fixed)
     solver = Solver(hm, rtol=1e-6, maxiter=3000)
     aniso = _use_tensors(o)
+    # supports that only push (pushseat.py): the lattice is sized under the
+    # forces the seats actually carry (none where the load lifts the part
+    # off), on springs that hold the seat for the solves and come out again
+    from .pushseat import direct_many, seated_solver
+
+    bc_s, seated = seated_solver(bc, hm.node_xyz, pitch, mat.E)
     if aniso:
         from .fem import elastic_c
         from .homogenized import _center_strain, solve_anisotropic
@@ -665,7 +671,11 @@ def _size(study: Study, o: LatticeOptions, lo, step, inside, solid_zone):
         if aniso:
             c_lat = tensors_at(kind, rho)[0]
             c_cell = mat.E * (fs[:, None, None] * c_solid + fc[:, None, None] * c_lat)
-            us = solve_anisotropic(hm, mat.nu, c_cell, bc, mat.E, rhs, proxy=e_cell)
+            if seated is not None:
+                us = seated(lambda r: (None, solve_anisotropic(hm, mat.nu, c_cell, bc_s, mat.E, r, proxy=e_cell)),
+                            rhs)
+            else:
+                us = solve_anisotropic(hm, mat.nu, c_cell, bc, mat.E, rhs, proxy=e_cell)
             need, wall_u, se = _tensor_need(kind, us, hm, mat, rho, rho_max, cand, cand_t, allow,
                                             _center_strain, stress_surface, c_solid)
             need = np.where(lattice_cell, need, 0.0)
@@ -691,9 +701,13 @@ def _size(study: Study, o: LatticeOptions, lo, step, inside, solid_zone):
             analyzed, rho = rho, new
             continue
         k = stiff.assemble(e_cell)
-        if bc.springs is not None:
-            k = (k + mat.E * bc.springs).tocsr()
-        us = solver.solve_many(k, rhs)
+        if seated is not None:
+            k_s = (k + mat.E * bc_s.springs).tocsr()
+            us = seated(lambda r: (None, direct_many(k_s, hm.node_ijk, bc.fixed, r)), rhs)
+        else:
+            if bc.springs is not None:
+                k = (k + mat.E * bc.springs).tocsr()
+            us = solver.solve_many(k, rhs)
         # stress at the solid's modulus for each cell's strain: what the
         # skin carries, and E*/E of it is the lattice's macro stress
         se = np.max([von_mises(stiff.stress(u, mat.E)) for u in us], axis=0)

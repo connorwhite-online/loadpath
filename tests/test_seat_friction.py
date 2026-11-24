@@ -328,6 +328,59 @@ def test_seats_hold_a_part_in_buckling_and_vibration_where_they_bear():
                        b) is None
 
 
+def test_lattice_sizing_and_mechanisms_honor_seats():
+    """The lattice is sized under what the seats carry: a block resting on
+    a table and pressed down sizes as the block fixed there, and a push
+    across it held by friction asks for more. A compliant mechanism's
+    large-deflection check reads a seat as contact: a bar stroked into its
+    seat pushes back E A / L x stroke, stroked off it lifts away free, and
+    a force pressing it in is carried by the seat."""
+    from types import SimpleNamespace
+
+    import trimesh
+
+    from loadpath.domain import build_domain
+    from loadpath.lattice import LatticeOptions, _part_distance, _size
+    from loadpath.nonlinear import stroke_mechanism, verify_mechanism
+
+    def block(sup, f):
+        return study_from_dict({
+            "designSpace": [_box([0, 0, 0], [60, 20, 20])], "supports": [sup],
+            "loadCases": [{"name": "a", "loads": [{"shape": _box([0, 0, 19.9], [60, 20, 20.1]), "force": f}]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 2.0}})
+
+    m = trimesh.creation.box(extents=[60, 20, 20])
+    m.apply_translation([30, 10, 10])
+    lo = np.array([-2.0, -2.0, -2.0])
+    inside = _part_distance(m, 1.0, lo, (64, 24, 24)) < 0
+    o = LatticeOptions(target_sf=2.0, analysis_cells=4000, iterations=3, anisotropic=False)
+    table = _box([0, 0, -0.5], [60, 20, 0.1])
+    fills = {}
+    for name, sup, f in (("fixed", {"shape": table}, [0, 0, -2000]),
+                         ("seat", {"shape": table, "push": "+z"}, [0, 0, -2000]),
+                         ("across", {"shape": table, "push": "+z", "friction": 0.4}, [300, 0, -2000])):
+        info = _size(block(sup, f), o, lo, 1.0, inside, np.zeros_like(inside))[4]
+        fills[name] = info["history"][-1]["fill"]
+    assert abs(fills["seat"] / fills["fixed"] - 1) < 0.1 and fills["across"] > fills["seat"], fills
+
+    d = build_domain(study_from_dict({
+        "designSpace": [_box([0, 0, 0], [4, 4, 40])],
+        "supports": [{"shape": _box([-1, -1, -1], [5, 5, 0.1]), "push": "+z", "friction": 0.5}],
+        "loadCases": [{"name": n, "loads": [{"shape": _box([-1, -1, 39.9], [5, 5, 41]), "force": [0, 0, -1]}]}
+                      for n in ("in", "out")],
+        "material": {"E": 26, "nu": 0.45, "strength": 30, "density": 1.2},
+        "goal": {"volumeFraction": 0.3}, "resolution": {"pitch": 1.0}}))
+    solid = np.ones(d.mesh.n_elem)
+    ea_l, s = 26.0 * 16 / 40, 0.05
+    into = stroke_mechanism(d, solid, 26.0, 0.45, s, steps=2)
+    assert into["converged"] and abs(into["actuatorForce"] / (ea_l * s) - 1) < 0.05, into["actuatorForce"]
+    off = SimpleNamespace(mesh=d.mesh, fixed=d.fixed, seats=d.seats, loads=[-d.loads[0], -d.loads[1]])
+    away = stroke_mechanism(off, solid, 26.0, 0.45, s, steps=2)
+    assert away["converged"] and abs(away["actuatorForce"]) < 0.02 * ea_l * s, away["actuatorForce"]
+    rep = verify_mechanism(d, solid, 26.0, 0.45, steps=3, buckling=False)
+    assert rep["converged"] and abs(rep["seats"][0]["force"][2] + 1.0) < 0.01, rep.get("seats")
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 

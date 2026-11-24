@@ -385,24 +385,37 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
             c_lat, t_rot = rotate_stiffness(c_lat, rot), stress_rotation(rot)
         c_cell = (mat.E * fill)[:, None, None] * (fs[:, None, None] * elastic_c(1.0, nu)[None]
                                                     + (fc * knock)[:, None, None] * c_lat)
-        us = solve_anisotropic(hm, nu, c_cell, bc, mat.E, rhs, proxy=e_cell)
-    elif _use_mg(hm.n_elem):
-        # a fine grid (a thin skin's re-check runs to a million cells and
-        # more): matrix-free multigrid, as verify_part, a fraction of the
-        # assembled matrix's memory (13 GB at 1M cells)
-        from .mg import GridElasticity
+    # supports that only push (pushseat.py): the cases solved with the seats'
+    # forces, on springs that hold the seat for the solves and come out again
+    from .pushseat import seated_solver
 
-        stiff = GridElasticity(hm, study.elastic(mat), bc.fixed,
-                               springs=mat.E * bc.springs if bc.springs is not None else None,
-                               rtol=1e-6, maxiter=3000)
-        stiff.set_moduli(np.asarray(e_cell, float))
-        us = stiff.solve_many(rhs)
-    else:
+    bc_s, seated = seated_solver(bc, hm.node_xyz, pitch, mat.E)
+
+    def solve_on(bc, rhs):
+        if aniso:
+            return solve_anisotropic(hm, nu, c_cell, bc, mat.E, rhs, proxy=e_cell)
+        if _use_mg(hm.n_elem):
+            # a fine grid (a thin skin's re-check runs to a million cells and
+            # more): matrix-free multigrid, as verify_part, a fraction of the
+            # assembled matrix's memory (13 GB at 1M cells)
+            from .mg import GridElasticity
+
+            stiff = GridElasticity(hm, study.elastic(mat), bc.fixed,
+                                   springs=mat.E * bc.springs if bc.springs is not None else None,
+                                   rtol=1e-6, maxiter=3000)
+            stiff.set_moduli(np.asarray(e_cell, float))
+            return stiff.solve_many(rhs)
         stiff = Stiffness(hm, study.elastic(mat), bc.fixed)
         k = stiff.assemble(e_cell)
         if bc.springs is not None:
             k = (k + mat.E * bc.springs).tocsr()
-        us = Solver(hm, rtol=1e-6, maxiter=3000).solve_many(k, rhs)
+        if seated is not None:
+            from .pushseat import direct_many
+
+            return direct_many(k, hm.node_ijk, bc.fixed, rhs)
+        return Solver(hm, rtol=1e-6, maxiter=3000).solve_many(k, rhs)
+
+    us = solve_on(bc, rhs) if seated is None else seated(lambda r: (None, solve_on(bc_s, r)), rhs)
     if contact_band is None:
         from .domain import choose_pitch
         contact_band = choose_pitch(study)

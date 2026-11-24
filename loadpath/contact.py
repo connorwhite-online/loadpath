@@ -195,8 +195,10 @@ class RigidObstacle(_Base):
 
     def __init__(self, shape: str, *, point=None, normal=None, center=None, radius=None, axis=None,
                  lo=None, hi=None, inside: bool = False, move=None, stiffness: float = 20.0,
-                 smooth: float = 0.02, friction: float = 0.0, name: str | None = None):
+                 smooth: float = 0.02, friction: float = 0.0, name: str | None = None, nodes=None):
         super().__init__(stiffness, smooth, friction)
+        # only these mesh nodes meet it (a seat: the face it holds), or every surface node
+        self.only = None if nodes is None else np.asarray(nodes, int)
         if shape not in ("plane", "sphere", "cylinder", "box"):
             raise ValueError(f"RigidObstacle: shape must be plane, sphere, cylinder or box, not {shape!r}")
         self.shape, self.inside, self.name = shape, bool(inside), name
@@ -265,6 +267,8 @@ class RigidObstacle(_Base):
 
     def _setup(self, mesh, modulus=1.0):
         self._setup_common(mesh, modulus)
+        if self.only is not None:
+            self.snodes = self.only
         self._dofs = 3 * self.snodes[:, None] + np.arange(3)[None, :]
         # friction: where each surface node sticks to the object (in the
         # object's own frame, which moves with it), updated at each

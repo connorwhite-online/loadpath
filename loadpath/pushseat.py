@@ -54,7 +54,7 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = ["patches", "hold", "resolve", "solve", "solve_cases", "Seat", "SeatedSpread", "worst_stress", "Patches",
-           "Rows", "linearized"]
+           "Rows", "bilateral", "linearized", "direct_many", "obstacles", "seated_solver"]
 
 # a patch's spring for the solves, over the modulus times its width: soft beside
 # the material under the patch (about E * width), far from nothing. The answer
@@ -961,10 +961,6 @@ def linearized(seats, mesh, nu: float, modulus, fixed, springs, forces, pitch: f
         if release is not None:
             release()
     seat = Seat(ps, us[len(rhs):], e_ref * ks)
-    pm = np.array(ps)
-    width = np.array([float(np.ptp(mesh.node_xyz[np.unique(np.nonzero(p)[0] // 3)], axis=0).max())
-                      if np.count_nonzero(p) > 3 else pitch for p in ps])
-    kr = RIGID * e_ref * np.maximum(width, pitch)
     out = []
     for u0 in us[:len(rhs)]:
         _, _, lam, _ = seat.push(seat.gaps(u0))
@@ -976,7 +972,96 @@ def linearized(seats, mesh, nu: float, modulus, fixed, springs, forces, pitch: f
         if not on.any():
             out.append(None)
             continue
-        idx = np.nonzero(on)[0]
-        q = sp.csr_matrix(pm[idx])
-        out.append((q.T @ sp.diags(kr[idx]) @ q).tocsr())
+        out.append(_rigid(ps, on, mesh.node_xyz, pitch, e_ref))
     return out
+
+
+def _rigid(ps, on, xyz, pitch, modulus):
+    """Rigid springs (N/mm) on the patch rows `on` of `ps`."""
+    import scipy.sparse as sp
+
+    idx = np.nonzero(on)[0]
+    width = np.array([float(np.ptp(xyz[np.unique(np.nonzero(ps[i])[0] // 3)], axis=0).max())
+                      if np.count_nonzero(ps[i]) > 3 else pitch for i in idx])
+    q = sp.csr_matrix(np.array([ps[i] for i in idx]))
+    return (q.T @ sp.diags(RIGID * modulus * np.maximum(width, pitch)) @ q).tocsr()
+
+
+def bilateral(seats, xyz, pitch: float, modulus: float, fixed=None):
+    """The seats held both ways as rigid springs (N/mm, on xyz's dofs): along
+    each patch's normal, and across where it has friction. For a linear
+    design that assumes its seats stay shut (a compliant mechanism's: the
+    large-deflection check then reads them as contact, `obstacles`). None
+    without seats."""
+    if not seats:
+        return None
+    ps = patches(seats, xyz, 3 * len(xyz))
+    if not len(ps):
+        return None
+    k = _rigid(ps, np.ones(len(ps), bool), xyz, pitch, modulus)      # tangent rows only where mu > 0
+    if fixed is not None:
+        import scipy.sparse as sp
+
+        free = sp.diags((~np.asarray(fixed, bool)).astype(float))
+        k = (free @ k @ free).tocsr()
+    return k
+
+
+def obstacles(seats, xyz):
+    """The seats as rigid planes the part may not enter
+    (contact.RigidObstacle, for the large-deflection solve), each meeting
+    only its own face's nodes, with the seat's friction: a seat the part
+    lifts off holds nothing, one it slides on holds mu times its push.
+    Seats with a preload are left out (the caller holds them as
+    `bilateral`: the clamp keeps the joint shut)."""
+    from .contact import RigidObstacle
+
+    out = []
+    for s_ in seats or ():
+        if len(s_) > 4 and s_[4]:
+            continue
+        idx = np.asarray(s_[0], int)
+        n = np.asarray(s_[1], float)
+        n = n / np.linalg.norm(n)
+        h = xyz[idx] @ n
+        out.append(RigidObstacle("plane", point=xyz[idx[np.argmin(h)]], normal=n, nodes=idx,
+                                 friction=float(s_[3] or 0.0) if len(s_) > 3 else 0.0))
+    return out
+
+
+def seated_solver(bc, xyz, pitch: float, modulus: float):
+    """For a check that solves the study's cases on its own grid (the
+    lattice sizing, the field graph's homogenized check): (bc, solve) where
+    bc carries the seats' holding springs beside its own (relative to the
+    modulus, as bc.springs) and solve(inner, rhs) -> displacements with the
+    seats pushing, `inner(rhs) -> (stiffness or None, displacements)` on
+    that bc. (bc, None) without seats."""
+    if not getattr(bc, "seats", None):
+        return bc, None
+    from dataclasses import replace
+
+    ps = patches(bc.seats, xyz, 3 * len(xyz))
+    ks, held = hold(ps, xyz, pitch)
+    bc_s = replace(bc, springs=held if bc.springs is None else (bc.springs + held).tocsr())
+
+    def run(inner, rhs):
+        return solve(inner, rhs, ps, modulus * ks, True, xyz)[1]
+
+    return bc_s, run
+
+
+def direct_many(k, node_ijk, fixed, rhs):
+    """K u = f for a block of right-hand sides (a seated solve's cases and
+    unit pushes: a hundred and more) by one factorization; `fixed` dofs
+    held at 0. An iterative solve pays for each again."""
+    from .bucklingopt import _factor
+
+    fixed = np.asarray(fixed, bool)
+    solve, release = _factor(k.tocsr(), node_ijk)
+    try:
+        b = np.stack([np.where(fixed, 0.0, np.asarray(r, float)) for r in rhs], axis=1)
+        x = np.asarray(solve(b)).reshape(b.shape)
+    finally:
+        if release is not None:
+            release()
+    return [x[:, j] for j in range(x.shape[1])]
