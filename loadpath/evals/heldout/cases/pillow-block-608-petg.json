@@ -1,0 +1,199 @@
+{
+ "id": "pillow-block-608-petg",
+ "batch": 3,
+ "brief": "A pillow block in PETG (FDM, printed base down, layers along Z) that holds a 608 bearing (22 mm OD, 7 mm wide, 8 mm bore) for an 8 mm shaft running along X at height z = 20. The block bolts to a flat plate (the plane z = 0) with two M5 bolts and nuts at y = -24 and y = +24, through a 6 mm thick base. It stays inside x = -7 to 7, y = -32 to 32, z = 0 to 34. The bearing presses in from the -X side and sits against a shoulder. A belt on the shaft pulls the bearing up to 300 N down, up, or either way sideways (Y), and the shaft can push 60 N along X into the shoulder. Safety factor 2.5.",
+ "attachments": [],
+ "tags": [
+  "bearing",
+  "pillow-block",
+  "fdm",
+  "fasteners",
+  "push-support"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -7,
+     -32,
+     0
+    ],
+    "max": [
+     7,
+     32,
+     34
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "seat",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -2.25,
+      0,
+      20
+     ],
+     "axis": "x",
+     "length": 11.5,
+     "r": 11
+    },
+    "fit": "press"
+   },
+   {
+    "id": "shaft",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      20
+     ],
+     "axis": "x",
+     "length": 24,
+     "r": 6
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "a",
+    "size": "M5",
+    "seat": [
+     0,
+     -24,
+     6
+    ],
+    "direction": "-z",
+    "grip": 6,
+    "end": "face"
+   },
+   {
+    "id": "b",
+    "size": "M5",
+    "seat": [
+     0,
+     24,
+     6
+    ],
+    "direction": "-z",
+    "grip": 6,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "a-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "b-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -7,
+      -32,
+      -0.5
+     ],
+     "max": [
+      7,
+      32,
+      0.3
+     ]
+    },
+    "push": "+z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "down",
+    "loads": [
+     {
+      "region": "seat",
+      "force": [
+       0,
+       0,
+       -300
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "up",
+    "loads": [
+     {
+      "region": "seat",
+      "force": [
+       0,
+       0,
+       300
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "side+",
+    "loads": [
+     {
+      "region": "seat",
+      "force": [
+       0,
+       300,
+       0
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "side-",
+    "loads": [
+     {
+      "region": "seat",
+      "force": [
+       0,
+       -300,
+       0
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "thrust",
+    "loads": [
+     {
+      "region": "seat",
+      "force": [
+       60,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "pillow-block-608-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5
+ }
+}

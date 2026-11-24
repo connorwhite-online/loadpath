@@ -1,0 +1,166 @@
+{
+ "id": "under-desk-laptop-bracket-pla",
+ "batch": 3,
+ "brief": "One of a pair of brackets screwed under a desk that hold a 2.2 kg laptop flat in a 22 mm tall slot, PLA on FDM, printed on its side so the layers stack along Y. The desk's underside is the plane z = 0 and the bracket hangs below it inside x = 0 to 30, y = 0 to 60, z = -30 to 0. The laptop's edge slides in from the -X side into the slot x = 0 to 18, z = -25 to -3, open at both ends along Y; it rests on the lip under the slot. Two M4 wood screws go up into the desk at x = 24, y = 12 and y = 48, heads 8 mm below the desk. Each bracket carries half the laptop, dropped in (3 g), and a 50 N shove sideways into the back of the slot. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "bracket",
+  "under-desk",
+  "hanging",
+  "fdm",
+  "fasteners",
+  "push-support"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0,
+     0,
+     -30
+    ],
+    "max": [
+     30,
+     60,
+     0
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "laptop",
+    "shape": {
+     "type": "box",
+     "min": [
+      -1,
+      -1,
+      -25
+     ],
+     "max": [
+      18,
+      61,
+      -3
+     ]
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "s1",
+    "size": "M4",
+    "seat": [
+     24,
+     12,
+     -8
+    ],
+    "direction": "+z",
+    "grip": 8,
+    "end": "face"
+   },
+   {
+    "id": "s2",
+    "size": "M4",
+    "seat": [
+     24,
+     48,
+     -8
+    ],
+    "direction": "+z",
+    "grip": 8,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "s1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "s2-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      0,
+      0,
+      -0.3
+     ],
+     "max": [
+      30,
+      60,
+      0.5
+     ]
+    },
+    "push": "-z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "laptop",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        1,
+        4,
+        -25.6
+       ],
+       "max": [
+        17,
+        56,
+        -25
+       ]
+      },
+      "mass": 1.1,
+      "dynamic": 3,
+      "gravity": "-z"
+     }
+    ]
+   },
+   {
+    "name": "shove",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        18,
+        4,
+        -24
+       ],
+       "max": [
+        18.6,
+        56,
+        -4
+       ]
+      },
+      "force": [
+       50,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+y"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "under-desk-laptop-bracket-pla",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}
