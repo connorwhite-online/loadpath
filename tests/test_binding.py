@@ -104,7 +104,29 @@ def test_weighting_by_what_binds_lowers_the_worst_deflection():
     assert worst[1] < 0.95 * worst[0], worst
 
 
+def test_clearances_bind_too():
+    # held by the tip's travel alone (SF far over the goal, no maxDeflection):
+    # the wrist link's case. Each case's ratio is its travel over its limit.
+    d = dict(BEAM, goal={"safetyFactor": 2.0, "clearances": [
+        {"name": "tip-down", "shape": {"type": "box", "min": [58, 0, 0], "max": [61, 20, 20]},
+         "maxTravel": 1.0, "cases": ["down"]},
+        {"name": "tip-side", "shape": {"type": "box", "min": [58, 0, 0], "max": [61, 20, 20]},
+         "maxTravel": 0.5, "cases": ["side"]}]})
+    st = study_from_dict(d)
+    dom = build_domain(st)
+    src = _outcome([{"name": "down", "safetyFactor": 15.0,
+                     "clearances": [{"name": "tip-down", "travel": 0.95, "maxTravel": 1.0}]},
+                    {"name": "side", "safetyFactor": 30.0,
+                     "clearances": [{"name": "tip-side", "travel": 0.2, "maxTravel": 0.5}]}],
+                   15.0, [9.0, 6.0], 1 / 0.95)
+    beta = _binding(st, dom, src)
+    assert beta is not None
+    b = np.asarray(beta) * np.array([9.0, 6.0])
+    assert abs(b[1] / b[0] - 0.4 / 0.95) < 1e-9
+
+
 TESTS = [test_weights_are_the_p_norm_and_its_gradient, test_ratios_read_off_the_verified_part,
+         test_clearances_bind_too,
          test_weighting_by_what_binds_lowers_the_worst_deflection]
 
 
