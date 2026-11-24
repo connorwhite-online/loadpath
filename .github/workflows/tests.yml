@@ -11,6 +11,11 @@ on:
 # One run at a time per branch: a newer push replaces a run still waiting
 # for runners (the latest run covers every earlier commit), and a run
 # already started finishes. 19 main runs once queued behind each other.
+# A replaced run shows "cancelled" on its commit, so on main the verdict
+# job at the end gives every commit a finished result: the commit status
+# "tests / verdict". Read that, not the run, to know if a main commit is
+# green. (A run per commit instead would queue ~32 jobs per push: a burst
+# of 9 pushes on 2026-11-24 would have held the runners for hours.)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -221,3 +226,56 @@ jobs:
       - run: pip install -e ".[render]"
       - run: npm install -g playwright@1.64.1 && npx playwright install --with-deps chromium
       - run: NODE_PATH="$(npm root -g)" python tests/test_editor.py
+
+  # Every commit on main gets a finished verdict, also one whose own run was
+  # replaced while queued: the status "tests / verdict" on each commit since
+  # the head of the last run that finished, set to this run's result (this
+  # tree holds all of them). A failure names the red jobs and the commit they
+  # ran at; which of the covered commits broke it is for the reader to find.
+  verdict:
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [tests, macos-workqueue, tutorials, editor]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case " $RESULTS " in *" cancelled "*) echo "run cancelled: no verdict"; exit 0;; esac
+          state=success
+          for r in $RESULTS; do [ "$r" = success ] || [ "$r" = skipped ] || state=failure; done
+          short=${SHA:0:7}
+          if [ $state = success ]; then
+            what="passed at $short"
+          else
+            red=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" --paginate \
+              --jq '.jobs[] | select(.conclusion=="failure" or .conclusion=="timed_out") | .name' \
+              | sed -E 's/^tests \((.*)\)$/\1/' | paste -sd, - | sed 's/,/, /g')
+            what="failed at $short: ${red:-see run}"
+          fi
+          # the head of the newest earlier main run that ran to the end
+          prev=$(gh api "repos/$REPO/actions/workflows/tests.yml/runs?branch=main&event=push&status=completed&per_page=30" \
+            --jq "[.workflow_runs[] | select(.id != $RUN_ID and (.conclusion == \"success\" or .conclusion == \"failure\"))][0].head_sha // \"\"")
+          shas=$SHA
+          if [ -n "$prev" ] && [ "$prev" != "$SHA" ]; then
+            cmp=$(gh api "repos/$REPO/compare/$prev...$SHA" --jq '.status + " " + ([.commits[].sha] | join(" "))' || echo "")
+            # ahead: prev is an ancestor; anything else (a rewrite) covers this commit only
+            [ "${cmp%% *}" = ahead ] && shas=${cmp#* }
+          fi
+          n=$(echo $shas | wc -w)
+          [ $n -gt 1 ] && what="$what (covers $n commits)"
+          for c in $shas; do
+            gh api "repos/$REPO/statuses/$c" -f state=$state -f context="tests / verdict" \
+              -f description="${what:0:140}" \
+              -f target_url="https://github.com/$REPO/actions/runs/$RUN_ID" > /dev/null
+            echo "$c: $state"
+          done
