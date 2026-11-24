@@ -432,7 +432,7 @@ def refit(cage, H, mesh, touched, data, rings=RINGS, iterations=None, smooth=Non
     Msub = M[idx]
     at_rows = np.searchsorted(idx, rows)
     lam = smooth * M.shape[0] / n
-    LL = Lap @ Lap
+    LL = subd.cage_bending(cage, Lap)
     Bend = (fair * M.shape[0] / n) * (LL.T @ LL)
     MtM = (MfT @ Mf).tocsc()
     stiff = np.ones(n) if stiff is None else stiff      # raised where the surface folds, as fit_cage does

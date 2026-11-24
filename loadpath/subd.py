@@ -137,6 +137,20 @@ def cage_laplacian(cage):
     return (sp.diags((deg > 0).astype(float)) - sp.diags(1.0 / np.maximum(deg, 1.0)) @ W).tocsr()
 
 
+def cage_bending(cage, Lap):
+    """The bending operator (the Laplacian twice) without rows on a crease:
+    a curved crease bent toward straight along itself shortens like a
+    string pulled tight (a 4 mm hole's rim drew in 0.6-1.7 mm at the
+    bending the 99th percentile allowed), and the crease line is the
+    part's own, held by the data. The membrane keeps its spacing even."""
+    if not cage.crease.any():
+        return Lap @ Lap
+    # no crease row, outside or inside: a smooth point's bending reads its
+    # crease neighbours' Laplacian too, and through it would bend the crease
+    keep = _sp().diags((cage.sharpness < 2).astype(float))
+    return (keep @ Lap @ keep @ Lap).tocsr()
+
+
 def _sp():
     import scipy.sparse as sp
     return sp
@@ -327,14 +341,16 @@ def _quads(mesh, faces, crease):
     kw = dict(target_face_count=max(8, int(faces) // 4), pure_quad=True, deterministic=True,
               smooth_iterations=2, crease_angle=-1.0 if crease is None else float(crease), extrinsic=crease is not None)
     step = float(np.sqrt(mesh.area / max(int(faces), 1)))
-    if crease is not None and float(mesh.edges_unique_length.max()) > step:
+    if crease is not None:
         # the sharp edges kept (an even resampling rounds them, and the field
-        # then has no crease to turn along): long edges split instead
-        import trimesh
+        # then has no crease to turn along): an even remesh with its edges
+        # along the feature lines (subdcrease.feature_remesh)
+        from .subdcrease import feature_remesh
 
-        sub = trimesh.Trimesh(*trimesh.remesh.subdivide_to_size(mesh.vertices, mesh.faces, max_edge=step / 3),
-                              process=False)
-        v, f = _instant_quads(sub, kw)
+        # (its size on a quarter-octave ladder: the nudged densities of one
+        # lay share one remesh)
+        rs = 2.0 ** (np.floor(4.0 * np.log2(step * REMESH_STEP)) / 4.0)
+        v, f = _instant_quads(feature_remesh(mesh, rs, np.radians(float(crease))), kw)
         if len(f):
             return v, f
     # Instant Meshes lays its field over the input's own vertex graph: an
@@ -680,8 +696,9 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
     stiff = np.ones(n)                      # local membrane factor, raised where the surface folds
     MT = M.T.tocsr()
     MtM = (MT @ M).tocsc()
-    LL = Lap @ Lap
+    LL = cage_bending(cage, Lap)
     Bend = (fair * M.shape[0] / n) * (LL.T @ LL)
+    cf = np.unique(H.fine.sharp) if cage.crease.any() else None     # limit points on a crease
     for rnd in range(4):
         Reg = (Lap.T @ sp.diags(lam * stiff) @ Lap + Bend).tocsc()
         pre = None
@@ -694,6 +711,10 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
             # away) is not this point's surface: no pull
             ok1 = np.einsum("ij,ij->i", nq, NP) > 0.3
             t1 = P - np.where(ok1, np.einsum("ij,ij->i", P - q, nq), 0.0)[:, None] * nq
+            if cf is not None:
+                # a crease point goes to the edge itself: across one face's
+                # normal it would slide off the other face unheld
+                t1[cf] = np.where(ok1[cf, None], q[cf], P[cf])
             # mesh -> surface: every input sample pulls its nearest limit point
             j = cKDTree(P).query(X, workers=-1)[1]
             Nj = NP[j]
@@ -929,6 +950,9 @@ def noise(mesh, n=20000, rings=2):
     return float(np.median(r)) if r else 0.0
 
 
+REMESH_STEP = 0.25  # the even remesh under a creased lay: a quarter of the cage's faces (as `_even`)
+CREASE_GAP = 2.0 / 3.0  # faces no wider than this share of the narrowest flat between creases
+CREASE_TRIES = 3  # densities a crease lay is tried at before the part is fitted smooth
 CREASES_LAID = 0.95  # creases are laid only when nearly all of the feature lines' length lies on cage edges
 NEARLY = 1.15       # a cage whose 99th percentile is within this of the tolerance is fitted on, not laid again
 ACCURACY = 0.3      # mm: FDM's typical +- (dfm_reference: PLA/PETG/ABS/nylon), loadpath's first process
@@ -1024,7 +1048,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     pulls harder until it is within (`misses`). Holes under `min_hole`
     the cage closed are reported, not chased: the printer would not have
     left them open. Returns (cage, hierarchy, report)."""
-    from .subdcrease import feature_lines, lay_creases
+    from .subdcrease import feature_gap, feature_lines, lay_creases
 
     t0 = time.time()
     ext = float(np.linalg.norm(mesh.bounds[1] - mesh.bounds[0]))
@@ -1044,6 +1068,21 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     # the one laid after it, 1.4 times the faces, met it: a second lay
     # each time for the sake of a fifth of an edge.)
     edge = min(ext / 12.0, _thickness(mesh))
+    if creases and crease is None and not faces:
+        # a face no wider than the narrowest flat between two creases (a 2 mm
+        # pocket wall between its rims): a crease row each side needs a row
+        # of faces between them, and Instant Meshes fits a whole number of
+        # rows across, so the faces there are stretched by up to half a row;
+        # held to a third (as a traced line may wander), h <= 2/3 of the gap
+        # (which lines are features depends on the face size: a pocket's
+        # short walls are lines only at faces short enough to hold them,
+        # so the size is settled by a few passes)
+        for _ in range(3):
+            lines0, _ = feature_lines(mesh, tol, edge)
+            e2 = min(edge, CREASE_GAP * feature_gap(mesh, lines0, 0.1 * edge, edge / CREASE_GAP)) if lines0 else edge
+            if e2 > 0.95 * edge:
+                break
+            edge = e2
     n = int(faces) if faces else min(max_faces, max(96, int(area / edge ** 2)))
     data = _samples(mesh, 300_000)
     check = _samples(mesh, 200_000, seed=1)
@@ -1053,6 +1092,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     lay_ok = creases    # feature lines still to be laid as creases
     for r in range(rounds):
         cage = None
+        crease_tries, best_lay = 0, None
         while cage is None:
             for k, f in enumerate((1.0, 1.08, 0.93, 1.17, 1.3, 1.5, 1.8, 2.2)):
                 # an odd or pinched hole, a fold at this density: nudge it
@@ -1077,18 +1117,34 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
                         cage = quad_cage(mesh, nf, crease=crease, finer=spots)
                     if sharp_lines:
                         c2, crep = lay_creases(cage, mesh, tol, h=hf, progress=progress)
+                        crease_tries += 1
+                        if crep["takenLength"] > (best_lay[1]["takenLength"] if best_lay else 0.0):
+                            best_lay = (c2, crep)
                         if crep["takenLength"] >= CREASES_LAID * crep["length"]:
                             cage = c2
-                        else:
-                            # some lines could not be laid on this cage's
-                            # edges: a part creased in places fits worse than
-                            # one rounded everywhere (the box cover: 5 of 31
-                            # lines, p99 0.36 mm against 0.18 smooth, and the
-                            # patch layout tears round a crease that stops);
-                            # the cage is laid again without the crease field
+                        elif crease_tries < CREASE_TRIES:
+                            # Instant Meshes' rows fall differently at a
+                            # density a few per cent off: the next nudge
                             if progress:
                                 progress(f"creases: {crep['takenLength']:.0f} of {crep['length']:.0f} mm of "
-                                         "feature line laid; the part is fitted smooth")
+                                         f"feature line laid at {nf} faces; another density")
+                            cage = None
+                            continue
+                        elif best_lay is not None:
+                            # the networks laid whole on the best try are
+                            # creases, the rest rounded (a whole network has
+                            # no crease that stops); a finer round lays again
+                            cage, crep = best_lay
+                            if progress:
+                                progress(f"creases: {crep['takenLength']:.0f} of {crep['length']:.0f} mm of "
+                                         f"feature line laid ({crep['networksLaid']} of {crep['networks']} "
+                                         "networks); the rest is rounded")
+                        else:
+                            # no network could be laid on the cage's edges:
+                            # the cage is laid again without the crease field
+                            if progress:
+                                progress(f"creases: none of {crep['length']:.0f} mm of feature line laid; "
+                                         "the part is fitted smooth")
                             lay_ok = False
                             cage = quad_cage(mesh, nf, crease=crease, finer=spots)
                     break
@@ -1221,14 +1277,27 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     if dev["p99"] <= tol:
         V0 = cage.V.copy()
         f = 4e-3
+
+        def open_holes(C, d):
+            dd, (e1, e2, Xf) = d
+            if dd["max"] <= bound:
+                return 0
+            return sum(p.get("printable", False) for p in misses(H, C, mesh, e1, e2, Xf, bound, min_hole)[0])
+        holes0 = open_holes(cage.V, deviation(H, cage.V, mesh, data=check))
         while f < 1e3:
             c2 = Cage(V0.copy(), cage.Q, sharp=cage.sharp)
             c2, _ = fit_cage(c2, mesh, level=level, data=data, fair=f, iterations=6, H=H, settle=tol / 50)
-            d2, _ = deviation(H, c2.V, mesh, data=check)
+            dx = deviation(H, c2.V, mesh, data=check)
+            d2 = dx[0]
             fairs.append({"bending": f, "p99": d2["p99"], "max": d2["max"]})
             if progress:
                 progress(f"bending {f:g}: p99 {d2['p99']:.4f} mm")
             if d2["p99"] > tol:
+                break
+            # nor may it close a hole the process prints: bending pulls a
+            # closed crease in like a curve shortening (a 4 mm hole's rim
+            # shrank 1.7 mm at the bending its 99th percentile allowed)
+            if open_holes(c2.V, dx) > holes0:
                 break
             fair, V0, dev = f, c2.V.copy(), d2
             f *= 8
@@ -1334,7 +1403,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     worst["within"] = bool(not surface and not worst["printableHolesClosed"])
     rep = {"bending": fair, "fairing": fairs, "folds": int(len(_folds(H, cage.V))), "tolerance": round(tol, 4),
            "noise": round(nz, 5), "tolerancePicked": why, "cageFaces": len(cage.Q),
-           "irregularVertices": int((cage.valence != 4).sum()),
+           "irregularVertices": int((cage.valence != 4).sum()), "creaseEdges": int(cage.crease.sum()),
            "deviation": dev, "within": bool(dev["p99"] <= tol), "worst": worst, "starPointsCancelled": cancelled,
            "tries": tries, "seconds": round(time.time() - t0, 1)}
     return cage, H, rep
@@ -1534,6 +1603,12 @@ def patches(H, C, degree=3, irregular=IRREGULAR_DEGREE, tangent=TANGENT, refine=
     XG = (H.M @ C)[G]
     lay = cells(H, refine)
     NG = grid_normals(H, C) if any(c[4] for c in lay) else None
+    if NG is not None and cage.crease.any():
+        # beside a crease each face leans on its own side's tangent plane
+        # (the two-sided mean there is neither side's: a patch held to it
+        # folds over the corner)
+        from .subdlines import _one_sided
+        NG = _one_sided(H, XG, NG)
     evv = np.zeros(len(H.fine.V), bool)
     evv[G[:, [0, s, s, 0], [0, 0, s, s]][cage.valence[cage.Q] != 4]] = True
 
