@@ -924,6 +924,16 @@ class Study:
         minMember came out a 1 mm skin sealed round its cable channel)."""
         return float(self.min_member) if self.min_member else DEFAULT_MIN_MEMBER
 
+    # the part is held in one piece (onepiece.py): switched on by the search
+    # when a run comes out in pieces on separate supports
+    one_piece_held: bool = False
+
+    @property
+    def one_piece(self) -> bool:
+        """The part is held in one piece in the optimizer (study `onePiece`,
+        or switched on by the search once a run came out in pieces)."""
+        return bool((self.raw or {}).get("onePiece")) or self.one_piece_held
+
     @property
     def inertia_relief(self) -> bool:
         """No supports: the part floats free and its own inertia balances
