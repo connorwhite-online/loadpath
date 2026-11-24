@@ -2702,6 +2702,18 @@ def _prefetch_main(work: str) -> None:
     with open(os.path.join(work, "in.pkl"), "rb") as fh:
         study, v, f, band = pickle.load(fh)
     try:
+        # gone with the search's process, however it ends (it runs in a
+        # session of its own, so a kill of the search's group misses it: an
+        # out-of-memory kill of a run left this 8 GB check running alone)
+        import ctypes
+        import signal
+
+        ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+        if os.getppid() == 1:
+            return
+    except (AttributeError, OSError):
+        pass
+    try:
         # behind the search: a check that a lighter part may make moot takes
         # only the cores the search leaves idle (at the same priority it took
         # the robot-arm upper arm's search 60 s; the pegboard holder's checks
@@ -2740,6 +2752,21 @@ class _TetPrefetch:
         # (study._share_cores) or an eval case on one core (evals --jobs)
         cores = int(os.environ.get("LOADPATH_THREADS") or (os.cpu_count() or 1))
         self.on = os.environ.get("LOADPATH_TET_PREFETCH", "1") != "0" and cores >= 2
+        if self.on:
+            from . import direct
+
+            direct._SPECULATIVE.append(self.give_way)
+
+    def give_way(self) -> bool:
+        """Stop the running check (direct.make_room): a solve this process
+        needs now wants its memory. Its outcome is checked inline if the
+        search confirms it."""
+        stopped = False
+        for j in list(self.jobs):
+            if j[2] is not None and j[2].poll() is None:
+                self._remove(j)
+                stopped = True
+        return stopped
 
     def submit(self, study: Study, o, band: float) -> None:
         if not self.on or getattr(o, "mesh", None) is None or any(j[0] is o for j in self.jobs):
@@ -2770,6 +2797,9 @@ class _TetPrefetch:
         queued = [j for j in self.jobs if j[2] is None]
         if not queued:
             return
+        avail = _available_bytes()
+        if avail is not None and avail < 3e9:
+            return   # not with the memory for a second solve (checked inline if confirmed)
         import subprocess
         import sys
 
@@ -2837,6 +2867,10 @@ class _TetPrefetch:
     def close(self) -> None:
         for j in list(self.jobs):
             self._remove(j)
+        from . import direct
+
+        if self.give_way in direct._SPECULATIVE:
+            direct._SPECULATIVE.remove(self.give_way)
 
 
 def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool = True) -> StudyResult:

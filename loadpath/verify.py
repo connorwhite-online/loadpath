@@ -1020,11 +1020,19 @@ def _memo_solve(memo, rhs):
         return []
     if memo.get("direct", True) and 0 < k.shape[0] <= direct.large_dofs():
         ds = memo.get("ds") or direct.DirectSolver(hm.node_ijk, refine=False)
-        if len(rhs) >= direct.MANY_RHS:
-            ds.share = direct.MANY_RHS_SHARE
         try:
             with direct._ONE_SHOT:
-                us = ds.solve_many(k, rhs)
+                try:
+                    us = ds.solve_many(k, rhs)
+                except MemoryError:
+                    # many right-hand sides: the factor is worth more of the
+                    # memory (direct.MANY_RHS_SHARE), once what other
+                    # processes do ahead of need has given way
+                    if len(rhs) < direct.MANY_RHS or ds.share:
+                        raise
+                    direct.make_room()
+                    ds.share = direct.MANY_RHS_SHARE
+                    us = ds.solve_many(k, rhs)
             memo["ds"] = ds
             return us
         except (RuntimeError, MemoryError):

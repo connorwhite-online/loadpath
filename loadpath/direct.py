@@ -113,6 +113,24 @@ FACTOR_SHARE = 1.0 / 3.0
 MANY_RHS = 16
 MANY_RHS_SHARE = 0.6
 
+# Work another process does ahead of need (study._TetPrefetch: a tet check of
+# an outcome the search may confirm later) gives way to a solve the check
+# needs now: each callable stops its process and returns True if it did. A
+# tet check of 8 GB beside the tube tee's 4.1 GB factor was out of memory.
+_SPECULATIVE: list = []
+
+
+def make_room() -> bool:
+    """Stop the speculative work in other processes (_SPECULATIVE); True if
+    any was stopped."""
+    stopped = False
+    for f in list(_SPECULATIVE):
+        try:
+            stopped = bool(f()) or stopped
+        except Exception:  # noqa: BLE001 - a courtesy, never a reason a solve fails
+            pass
+    return stopped
+
 
 def factor_budget(share: float | None = None) -> float | None:
     """Bytes one factor may hold: `share` (FACTOR_SHARE by default) of the
