@@ -729,6 +729,14 @@ def _submodel_gate():
 # budget, the box shrinks toward the eight global cells (no smaller): the
 # same hotspots, the same 2.5x finer cells, a smaller neighbourhood.
 _SUB_MAX_DOFS = 250_000
+# The most a submodel box has raised a hotspot's stress over the global
+# grid's reading of it: 2.24 at the pegboard hammer holder's peg root (a
+# re-entrant corner, 105 boxes over the held-out runs; the rest under 1.5).
+# A hotspot that this rise would still leave under the most stressed case's
+# global peak cannot govern the part (the boxes only raise peaks), so it
+# gets no box: the caster fork's preload case (SF 139 against 3.5) had three,
+# each a factorization of up to 250k unknowns, one at a time.
+_SUB_RISE_MOST = 4.0
 
 
 def _submodel_dofs(hm, center, half, pitch) -> float:
@@ -2359,6 +2367,9 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     # case's numbers made as the boxes come in (pass 2), in case order
     pending = []
     sub_pool = sub_gate = None
+    # the boxes are started once every case is read: a hotspot whose box
+    # cannot raise it to the most stressed case's peak is not refined
+    deferred, top_util = [], 0.0
     for ci, case in enumerate(study.load_cases):
         load_nodes = bc.case_load_nodes[ci]
         # Exclude nodes within the contact band of an applied load or support.
@@ -2443,9 +2454,18 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                 return _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
                                       hm.node_xyz[contact], band, case, edges=edges, cut=cg is not None,
                                       ratio=m_c, gate=gate)
-            futs = [sub_pool.submit(sub, c) for c in spots]
+            futs = []
+            if spots:
+                deferred.append((futs, sub, spots, util))
+        top_util = max(top_util, float(util[pk]))
         pending.append((case, idx, direction, f, u, sig_u, vm, util, pk, peak, at, keep, global_peak, body,
                         load_nodes, futs))
+    if deferred:
+        tree_ = cKDTree(hm.node_xyz)
+        for futs, sub, spots, util in deferred:
+            for c in spots:
+                if _SUB_RISE_MOST * float(util[tree_.query(c)[1]]) >= top_util:
+                    futs.append(sub_pool.submit(sub, c))
     try:
         subs_of = [[fu.result() for fu in pend[-1]] for pend in pending]
     finally:
