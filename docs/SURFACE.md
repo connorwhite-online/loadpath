@@ -198,8 +198,12 @@ density search steps without a 4x cap, with a rate floor of 3 (near the
 tolerance the bench parts converge at 2.6-4.5; a floor of 2.5 laid the
 pebble's cage 40% finer than needed). Pebble: 4 lays -> 3, 5642 -> 4223
 cage faces, 86 -> 71 star points, 230 -> 174 STEP faces, 172 -> 147 s.
-Arm link: 646 -> 547-587 STEP faces (18-37 merges, 257 -> 219 star points
-after the insets), valid, every place within the bound.
+Arm link: no change beyond run-to-run scatter (back to back, same machine:
+605 -> 610 STEP faces, 325 -> 358 s; five runs span 547-646): its cage
+meets the tolerance on the first lay, merges take 18-37 faces off, and
+Instant Meshes' scatter in star points is larger. Its remaining star points
+are mostly 3-5 pairs one or two edges apart (dislocations): they cancel only
+by gliding to a partner, which the local moves do not do.
 
 **Face by face (the fallback).** Rectangles of regular cage faces are grown
 greedily and each becomes one clamped bicubic B-spline; faces at a star
