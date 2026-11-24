@@ -697,6 +697,55 @@ the run, and each PARDISO call timed by its caller).
   run cannot start beside the search on 15 GB (`_Speculative.wanted`: its grid is fitted to the
   memory there is), and the wait on each tet confirm is serial by design.
 
+## Tet mesher: isosurface stuffing replaces fTetWild (2026-11-24)
+
+The tet confirm meshed every delivered part with fTetWild: 30-130 s a
+confirm, mostly on one core, and a different mesh (and a 3-10% different
+peak) every run. Loadpath's parts are closed surfaces it made itself, so
+the cross-check now fills them with isosurface stuffing (Labelle &
+Shewchuk 2007, `loadpath/stuffing.py`): a body-centred cubic lattice at the
+element size, every lattice edge that crosses the surface cut exactly on
+its triangles, lattice points near a cut warped onto it, and surface
+vertices beside a crease moved onto the crease. Numba, about a second,
+bit-for-bit repeatable, and it needs nothing beyond loadpath's own
+dependencies, so a plain `pip install loadpath` gets the tet confirm.
+
+Delivered eval parts (old STLs, /mnt/project-files/evals/full-crosscheck),
+same element size, 4 cloud cores. "Converged" is stuffing at 0.6x the
+edge (4-5x the tets), within about 1% of the next refinement.
+
+| Part | fTetWild SF | Stuffing SF | Converged | Mesh s (fTetWild / stuffing) | Solve s |
+|---|---|---|---|---|---|
+| printed hook | 1.225 | 1.241 | 1.205 | 43 / 0.9 | 9.7 / 9.7 |
+| bell crank | 3.524 | 3.478 | 3.544 | 30 / 0.5 | 8.6 / 8.1 |
+| MBB beam | 1.689 | 1.669 | 1.731 | 32 / 0.6 | 8.6 / 7.9 |
+| motor mount | 6.968 | 7.031 | 7.431 | 53 / 0.5 | 14 / 14 |
+| arm link | 15.74 | 15.66 | 14.98 | 90 / 1.6 | 35 / 39 |
+| arm link (cast) | 22.28 | 22.64 | | 68 / 1.5 | 41 / 45 |
+| arm link (driven) | 21.65 | 21.15 | | 82 / 1.3 | 113 / 149 |
+| wall bracket | 4.356 | 4.311 | 4.263 | 30 / 0.4 | 4.5 / 5.8 |
+| wall bracket, fasteners | 3.167 | 3.113 | | 29 / 0.4 | 6.4 / 6.8 |
+| robot-arm wrist yoke | 3.721 | 3.369 | 3.702 | 51 / 0.4 | 13 / 9.5 |
+| robot-arm wrist link | 7.938 | 7.684 | | 74 / 1.2 | 113 / 137 |
+| robot-arm turret | 2.309 | 2.334 | | 103 / 2.8 | 76 / 94 |
+| robot-arm upper arm | 8.998 | 8.824 | | 130 / 4.4 | 100 / 214 |
+
+- Against the converged meshes both are off by a few percent (fTetWild
+  0.5-6%, stuffing 1-5%), except the wrist yoke, where stuffing reads its
+  peak 10% high (3.37 at 1x, 3.57 at 0.8x, 3.70 at 0.6x: it converges from
+  the safe side; fTetWild's own meshes of it spread 3.2-3.9).
+- Creases matter: a 10 mm square beam meshed at 2.5 mm off the lattice
+  came out 3.5% light and 13% too soft with its edges chamfered; with the
+  vertices beside them moved onto the edges it is within 1% of beam
+  theory (`tests/test_stuffing.py`).
+- Stuffing makes about 1.25x fTetWild's tets at the same size, so the
+  solve takes 0-30% longer. The upper arm is the exception: its CG takes
+  31-35 iterations on the stuffed mesh against 16-19 (not the crease
+  snapping: 31-34 without it), so its solve doubles and the whole confirm
+  only drops 232 -> 206 s. Open lead.
+- `LOADPATH_TET_MESHER=tetwild` (with pytetwild installed) brings fTetWild
+  back; `LOADPATH_STUFF_SCALE` scales the lattice edge.
+
 ## Wall time against nTop and Fusion 360
 
 There is no like-for-like benchmark: neither vendor publishes solver timings

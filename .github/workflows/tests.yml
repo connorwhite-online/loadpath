@@ -61,7 +61,7 @@ jobs:
             files: tests/test_enclosure.py
             pytest: tests/test_retention.py
           - group: vibration       # vibration 9.5 min, direct 2, tetsolve 0.5
-            pytest: tests/test_pools.py tests/test_bucklingopt.py tests/test_direct.py tests/test_vibration.py tests/test_tetsolve.py
+            pytest: tests/test_pools.py tests/test_bucklingopt.py tests/test_direct.py tests/test_vibration.py tests/test_tetsolve.py tests/test_stuffing.py
           - group: analysis        # ~12 min (study_limits 3, reactions 2)
             pytest: >-
               tests/test_mass_properties.py tests/test_inertia_relief.py tests/test_point_maps.py
