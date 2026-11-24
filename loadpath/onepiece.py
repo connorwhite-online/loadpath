@@ -55,9 +55,15 @@ CAP = 20.0
 
 def support_groups(domain) -> list[np.ndarray]:
     """The node sets that hold the part, one per separate contact (a screw's
-    bore, a seat face, a pin): what holds it in any dof, by a pin's spring
-    or as a seat, split into pieces that touch on the node grid. Largest
-    first."""
+    bore, a pin, a clamped face): what holds it in any dof, fixed or by a
+    pin's spring, split into pieces that touch on the node grid. Largest
+    first.
+
+    Not a seat (supports[].push): a face the part presses on (the wall
+    behind a wall mount, a screw head's seat) holds nothing in the handled
+    state, where the wall is not there yet, and it is no interface the part
+    has to locate. Counted, a seat over the whole back of a wall mount made
+    its two screws one group and the requirement had nothing to join."""
     mesh = domain.mesh
     held = np.zeros(mesh.n_nodes, bool)
     held |= np.asarray(domain.fixed).reshape(-1, 3).any(axis=1)
@@ -65,8 +71,6 @@ def support_groups(domain) -> list[np.ndarray]:
     if pins is not None:
         rows = np.unique(pins.tocoo().row) // 3
         held[rows] = True
-    for seat in getattr(domain, "seats", None) or []:
-        held[np.asarray(seat[0], int)] = True
     if not held.any():
         return []
     ijk = mesh.node_ijk

@@ -1962,8 +1962,9 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                            f"{f['id']}-head", f"{f['id']}-tap"}
 
         def mine_target(it):
-            if "region" in it:
+            if "region" in it and "shape" not in it:
                 return it["region"] in region_ids
+            # (a region within a shape, a drop's skin slice: by the shape)
             try:
                 P_ = _samples(shape_from_spec(it["shape"], base_dir), 0.8, 800)
             except Exception:  # noqa: BLE001

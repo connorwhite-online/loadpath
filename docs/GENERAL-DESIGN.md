@@ -442,7 +442,9 @@ by one interface (the hand, the first screw) and itself locates the others
 holes). In that state a part in two pieces drops one.
 
 `onepiece.py` writes that state on the study's own grid: held at the
-largest support group and free at the others, each other group pushed by a
+largest support group and free at the others (a group is a screw's
+bore, a pin, a clamped face; not a seat the part only presses on, since
+the wall is not there yet in that state), each other group pushed by a
 unit force along x, y and z. The requirement is that the part be at least
 as stiff there as the least the process makes: a round bar of the minimum
 member straight from the held group to each other one (L/EA plus two

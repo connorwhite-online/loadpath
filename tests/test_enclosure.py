@@ -298,7 +298,7 @@ def test_enclosure_study():
     # their mass is the skin's: each loads the skin inside its slice, not
     # every node of the slice's box (on the box the domain pinned the open
     # interior solid and the desk hub had nothing left to design)
-    assert all(ld["shape"]["type"] == "intersect" for ld in shell), shell
+    assert all(ld.get("region") == "skin" for ld in shell), shell
     from loadpath.domain import build_domain
     from loadpath.enclosure import _localize
     from loadpath.spec import study_from_dict
@@ -313,7 +313,7 @@ def test_enclosure_study():
     from loadpath.shells import _load_force
     F = sum((_load_force(ld) for ld in drop), np.zeros(3))
     assert np.linalg.norm(F) < 1e-3 * total, F
-    spin = [ld for ld in drop if "force" in ld and "region" in ld]
+    spin = [ld for ld in drop if "force" in ld and "region" in ld and "shape" not in ld]
     assert spin and all("at" in ld for ld in spin), drop
     assert st["thermal"]["heat"] == [{"region": "board", "watts": 0.2}]
     assert st["skin"]["thickness"] == 1.0 and len(st["skin"]["openings"]) == 2

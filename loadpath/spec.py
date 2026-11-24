@@ -1338,6 +1338,10 @@ def _zoned(ds, t, faces, zones):
 
 
 def _target(item, label, base_dir):
+    if "region" in item and "shape" in item:
+        # both: the region's material inside the shape (study_from_dict
+        # joins them once every region is drawn)
+        return str(item["region"]), shape_from_spec(item["shape"], base_dir)
     if "region" in item:
         return str(item["region"]), None
     if "shape" in item:
@@ -2086,6 +2090,17 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             st.material = st.materials[0] = st.multi_material.materials[0]
     # mesh paths in blocks read later (switch.output.bearsOn, switch.clearance)
     st.base_dir = base_dir
+    # a load or support given a region and a shape acts on the region's
+    # material inside the shape (a drop's shell slice: the skin in the
+    # slice, not every node of its box)
+    from .shapes import Boolean
+
+    for i, it in enumerate(list(st.supports) + [ld for c in st.load_cases for ld in c.loads]):
+        if getattr(it, "region", None) is not None and getattr(it, "shape", None) is not None:
+            try:
+                it.shape = Boolean("intersect", [st.region_shape(it.region)[0], it.shape])
+            except ValueError as exc:
+                raise ValueError(f"a load or support on {it.region!r} within a shape: {exc}") from None
     for i, c in enumerate(goal.clearances):
         if c.region is not None:
             try:
