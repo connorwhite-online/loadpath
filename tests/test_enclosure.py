@@ -295,6 +295,18 @@ def test_enclosure_study():
     fi = max((i for i, ld in enumerate(drop) if "shape" in ld), key=lambda i: drop[i]["force"][2])
     shell = [ld for ld in drop[:fi] if "shape" in ld]       # the skin's slices, before the floor
     assert shell, drop
+    # their mass is the skin's: each loads the skin inside its slice, not
+    # every node of the slice's box (on the box the domain pinned the open
+    # interior solid and the desk hub had nothing left to design)
+    assert all(ld["shape"]["type"] == "intersect" for ld in shell), shell
+    from loadpath.domain import build_domain
+    from loadpath.enclosure import _localize
+    from loadpath.spec import study_from_dict
+
+    loc = json.loads(json.dumps(st))
+    _localize(loc, out)
+    dom = build_domain(study_from_dict(loc, out))
+    assert (~dom.preserve).sum() > 0.3 * dom.mesh.n_elem, ((~dom.preserve).sum(), dom.mesh.n_elem)
     total = parts - sum(ld["force"][2] for ld in shell)
     assert abs(drop[fi]["force"][2] - total) < 1e-3 * total, drop
     # and the landing's spin balances the moment: the support carries nothing

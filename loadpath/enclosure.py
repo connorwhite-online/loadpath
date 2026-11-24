@@ -656,6 +656,22 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     if drop:
         g = float(drop.get("g", 50.0))
         shell_slices = _shell_slices(exterior, t_skin, b.get("material", "pa12"))
+        # A slice's mass is the skin's, so its inertia acts on the skin in
+        # the slice, not on every node of the slice's box: on the box, the
+        # load ran through the open interior, the domain pinned every cell
+        # under a loaded node solid (a force acts on material), and the desk
+        # hub, the remote and the tool grip had nothing left to design
+        # ("every cell is preserved").
+        skin_mass = None
+        if shell_slices:
+            try:
+                p = _write_mesh(trimesh_from_manifold(skin_shape.to_manifold()), os.path.join(cad, "skin-mass.stl"))
+                skin_mass = {"type": "mesh", "path": os.path.abspath(p)}
+            except Exception:  # noqa: BLE001 - the box stands in
+                warnings.append("loads.drop: the skin could not be meshed; the shell's mass loads its slices' boxes")
+
+        def _on_skin(box):
+            return box if skin_mass is None else {"type": "intersect", "shapes": [box, skin_mass]}
         faces = drop.get("faces") or _FACES
         massed = {k: v for k, v in mounts.items() if v["mass"] > 0}
         if not massed:
@@ -677,7 +693,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
                 pts.append((k, float(v["mass"]), np.asarray(at, float), {"region": f"mount-{k}"}))
             # the shell's own mass lands too: its weight goes into the
             # floor's push and its inertia into the spin, slice by slice
-            pts += [(f"shell-{j}", sm, sc, {"shape": box}) for j, (sm, sc, box) in enumerate(shell_slices)]
+            pts += [(f"shell-{j}", sm, sc, {"shape": _on_skin(box)}) for j, (sm, sc, box) in enumerate(shell_slices)]
             slab = face_slab(f, t_skin + crush)
             slab = _landing_patch(exterior, slab, pts, d)
             at_floor = _contact_centre(exterior, slab)
