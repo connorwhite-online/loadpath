@@ -274,6 +274,60 @@ def test_the_optimizer_designs_a_part_that_stands_on_its_friction():
     assert np.isfinite(c) and c > 0
 
 
+def test_seats_hold_a_part_in_buckling_and_vibration_where_they_bear():
+    """A column standing on a seat with friction buckles at the fixed base's
+    load (the seat bears all across its foot and sticks); a bar held by a
+    preloaded clamp with friction rings within a few % of the bar fixed at
+    that end, while a clamp without friction holds nothing along the bar (a
+    zero mode); a seat that nothing presses (no weight, no preload) holds
+    nothing, and a part on it alone has no modal check."""
+    import trimesh
+
+    from loadpath.verify import _buckling, modal_check
+
+    def column(sup):
+        return study_from_dict({
+            "designSpace": [_box([0, 0, 0], [10, 10, 60])], "supports": [sup],
+            "loadCases": [{"name": "down", "loads": [{"shape": _box([0, 0, 59.9], [10, 10, 60.1]),
+                                                      "force": [0, 0, -100]}]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 2.0}})
+
+    m = trimesh.creation.box(extents=[10, 10, 60])
+    m.apply_translation([5, 5, 30])
+    foot = _box([0, 0, -0.5], [10, 10, 0.1])
+    fixed = _buckling(column({"shape": foot}), m, float(m.volume), 2.0, None, [None])["factor"]
+    seat = _buckling(column({"shape": foot, "push": "+z", "friction": 0.5}), m, float(m.volume), 2.0, None,
+                     [None])["factor"]
+    assert abs(seat / fixed - 1) < 0.03, (seat, fixed)
+
+    def bar(sups):
+        return study_from_dict({
+            "designSpace": [_box([0, 0, 0], [80, 10, 4])], "supports": sups,
+            "loadCases": [{"name": "tip", "loads": [{"shape": _box([79.9, 0, 0], [80.1, 10, 4]),
+                                                     "force": [0, 0, -5]}]}],
+            "vibration": {"minFrequency": 50},
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}})
+
+    b = trimesh.creation.box(extents=[80, 10, 4])
+    b.apply_translation([40, 5, 2])
+    lo, hi = _box([0, 0, -0.5], [10, 10, 0.1]), _box([0, 0, 3.9], [10, 10, 4.5])
+
+    def jaws(mu):
+        out = [{"shape": lo, "push": "+z", "preload": 200}, {"shape": hi, "push": "-z", "preload": 200}]
+        if mu:
+            for j in out:
+                j["friction"] = mu
+        return out
+
+    f_fixed = modal_check(bar([{"shape": _box([0, 0, -0.5], [10, 10, 4.5])}]), b)["frequencies"][0]
+    f_clamp = modal_check(bar(jaws(0.3)), b)["frequencies"][0]
+    assert 0.9 < f_clamp / f_fixed <= 1.0 + 1e-6, (f_clamp, f_fixed)
+    loose = modal_check(bar(jaws(None)), b)
+    assert loose["frequencies"][0] < 1.0 and not loose["ok"], loose
+    assert modal_check(bar([{"shape": _box([0, 0, -0.5], [80, 10, 0.1]), "push": "+z", "friction": 0.5}]),
+                       b) is None
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 

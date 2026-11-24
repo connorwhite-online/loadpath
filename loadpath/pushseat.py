@@ -54,7 +54,7 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = ["patches", "hold", "resolve", "solve", "solve_cases", "Seat", "SeatedSpread", "worst_stress", "Patches",
-           "Rows"]
+           "Rows", "linearized"]
 
 # a patch's spring for the solves, over the modulus times its width: soft beside
 # the material under the patch (about E * width), far from nothing. The answer
@@ -871,3 +871,72 @@ def solve_cases(inner, rhs, ps, ks, strict: bool = True, xyz=None, layout=None, 
     out_u = [done[i][0] if i in done else u0s[i] for i in range(len(rhs))]
     out_l = [done[i][1] @ back if i in done else None for i in range(len(rhs))]
     return stiff, out_u, out_l, cases
+
+
+# a seat held for a small motion about a state: its patch's spring, over the
+# modulus times its width (HOLD's ten thousand times: a rigid seat to 0.1%)
+RIGID = 1000.0
+
+
+def linearized(seats, mesh, nu: float, modulus, fixed, springs, forces, pitch: float):
+    """The seats as springs for a small motion about the state each force
+    leaves them in (modal: the rest state, the preload and the part's own
+    weight; buckling: each load case's), on `mesh`'s dofs: per force a
+    sparse matrix, or None where no seat bears. A patch that bears holds
+    the part along its normal both ways (the motion is small beside what
+    presses it: the contact stays shut); across it too where it has
+    friction and sticks (|tau| below mu lambda). A patch that is open, or
+    slides, holds nothing that way. `springs`: the other supports' springs
+    (absolute, or None). Seats with nothing to hold (no force, no preload)
+    leave the part as the other supports hold it."""
+    import scipy.sparse as sp
+
+    from .bucklingopt import _factor
+    from .fem import Stiffness
+
+    fixed = np.asarray(fixed, bool)
+    mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)).copy()
+    e_ref = float(np.mean(mod)) if mod.size else 1.0
+    ps = patches(seats, mesh.node_xyz, mesh.n_dof)
+    if not len(ps):
+        return [None] * len(forces)
+    ks, held = hold(ps, mesh.node_xyz, pitch)
+    free = sp.diags((~fixed).astype(float))
+    k = Stiffness(mesh, nu, fixed).assemble(mod) + free @ (e_ref * held) @ free
+    if springs is not None:
+        k = k + free @ springs @ free
+    solve_k, release = _factor(k.tocsr(), mesh.node_ijk)
+    try:
+        def inner(rhs):
+            out = []
+            for r in rhs:
+                r = np.asarray(r, float).copy()
+                r[fixed] = 0.0
+                out.append(np.asarray(solve_k(r)).ravel())
+            return None, out
+
+        rhs = [np.zeros(mesh.n_dof) if f is None else np.asarray(f, float) for f in forces]
+        _, us = inner(rhs + list(ps))
+    finally:
+        if release is not None:
+            release()
+    seat = Seat(ps, us[len(rhs):], e_ref * ks)
+    pm = np.array(ps)
+    width = np.array([float(np.ptp(mesh.node_xyz[np.unique(np.nonzero(p)[0] // 3)], axis=0).max())
+                      if np.count_nonzero(p) > 3 else pitch for p in ps])
+    kr = RIGID * e_ref * np.maximum(width, pitch)
+    out = []
+    for u0 in us[:len(rhs)]:
+        _, _, lam, _ = seat.push(seat.gaps(u0))
+        bear = seat.normal & (lam > 1e-9 * max(float(np.abs(lam).max()), 1e-300))
+        on = bear.copy()
+        for i, t, m in zip(seat.fi, seat.ft, seat.fmu):
+            if bear[i] and np.linalg.norm(lam[t]) < m * lam[i] * (1.0 - 1e-6):
+                on[t] = True                                     # stuck: held across too
+        if not on.any():
+            out.append(None)
+            continue
+        idx = np.nonzero(on)[0]
+        q = sp.csr_matrix(pm[idx])
+        out.append((q.T @ sp.diags(kr[idx]) @ q).tocsr())
+    return out

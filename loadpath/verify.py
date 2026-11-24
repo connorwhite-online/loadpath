@@ -1058,7 +1058,7 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
     hm = HexMesh(np.argwhere(solid), pb, origin)
     hm.stock_elastic = mat.nu
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pb)
-    if not bc.fixed.any() and not bc.pinned:
+    if not bc.fixed.any() and not bc.pinned and not bc.seats:
         return None
     # Face connectivity, as the stress check has it: a piece that meets the
     # rest only at a cell's edge or corner hangs on a hinge the stiffness
@@ -1091,6 +1091,8 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
     hold = bc.fixed.copy()
     if springs is not None and bc.pinned and not getattr(study, "stock", None):
         hold |= np.asarray(abs(springs).sum(axis=1)).ravel() > 0
+    for s_ in bc.seats or ():
+        hold[(3 * np.asarray(s_[0])[:, None] + np.arange(3)).ravel()] = True      # a seat holds its piece
     sub, el, _, vecs = solid_submesh(hm, np.ones(hm.n_elem, bool), hold, [bc.fixed.astype(float)] + forces)
     fixed, forces = vecs[0] > 0.5, vecs[1:]
     loaded = [i for i, f in enumerate(forces) if np.any(f)]
@@ -1106,9 +1108,37 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
             # the margin asked (the wrist yoke's lateral case, 207 for 2,
             # took 13 block iterations of the check's 25)
             sf = study.goal.safety_factor
-            res = linear_buckling(sub, mat.nu, mat.E, fixed, [forces[i] for i in loaded], n_modes=1,
-                                  springs=ks, direct_max_dof=10 ** 6, tol=1e-5,
-                                  rough_above=4.0 * max(sf, 1.0) if sf else None)
+            rough = 4.0 * max(sf, 1.0) if sf else None
+            if bc.seats:
+                # seats (supports[].push) hold the part, for the small motion of
+                # buckling, where each case presses it on them (pushseat.linearized):
+                # a factorization per case
+                from .pushseat import linearized
+
+                back = np.full(hm.n_nodes, -1)
+                back[hm.node_id(sub.node_ijk)] = np.arange(sub.n_nodes)
+                seats_s = []
+                for s_ in bc.seats:
+                    on = back[np.asarray(s_[0])]
+                    m_ = on >= 0
+                    if m_.any():
+                        w_ = np.asarray(s_[2], float)[m_]
+                        seats_s.append((on[m_], s_[1], w_ / w_.sum(), *s_[3:]))
+                lins = linearized(seats_s, sub, mat.nu, mat.E, fixed, ks, [forces[i] for i in loaded], pb)
+                res = []
+                for i, lin in zip(loaded, lins):
+                    kc = lin if ks is None else (ks if lin is None else (ks + lin).tocsr())
+                    try:
+                        res += linear_buckling(sub, mat.nu, mat.E, fixed, [forces[i]], n_modes=1, springs=kc,
+                                               direct_max_dof=10 ** 6, tol=1e-5, rough_above=rough)
+                    except (RuntimeError, ValueError, ArithmeticError) as exc:
+                        cases[i]["error"] = str(exc)
+                        res.append(None)
+                pairs = [(i, r) for i, r in zip(loaded, res) if r is not None]
+                loaded, res = [p[0] for p in pairs], [p[1] for p in pairs]
+            else:
+                res = linear_buckling(sub, mat.nu, mat.E, fixed, [forces[i] for i in loaded], n_modes=1,
+                                      springs=ks, direct_max_dof=10 ** 6, tol=1e-5, rough_above=rough)
         except (RuntimeError, ValueError, ArithmeticError) as exc:
             for i in loaded:
                 cases[i]["error"] = str(exc)
@@ -1214,7 +1244,7 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
     hm = members_on(HexMesh(np.argwhere(solid), pm, origin))
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pm)
     free = bool(study.inertia_relief)
-    if not free and not bc.fixed.any() and not bc.pinned:
+    if not free and not bc.fixed.any() and not bc.pinned and not bc.seats:
         return None
     lbl, nb = ndimage.label(solid)
     ijk = hm.elem_ijk
@@ -1275,6 +1305,17 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
     eta = loss_factor(mat)
     tops = [k[1] for k in (band_keepout_(ex, eta) for ex in vib.excitations) if k is not None]
     n_modes = vib.modes if not tops else max(vib.modes, 12)
+    if bc.seats and not free:
+        # seats (supports[].push) hold the part, for a small vibration, where they
+        # bear at rest: under its preload and its own weight (pushseat.linearized)
+        from .pushseat import linearized
+
+        fg = gravity_force(hm, fill, bc.gravity, bc.fixed) if bc.gravity is not None else None
+        lin = linearized(bc.seats, hm, float(mat.nu), moduli, bc.fixed, springs, [fg], pm)[0]
+        if lin is not None:
+            springs = lin if springs is None else (springs + lin).tocsr()
+        elif not bc.fixed.any() and not bc.pinned:
+            return None                        # nothing presses it on its seat: nothing holds it
     while True:
         res = modal_analysis(hm, moduli, rho, float(mat.nu), bc.fixed, n_modes,
                              masses,
