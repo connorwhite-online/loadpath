@@ -394,6 +394,9 @@ def _smooth(x):
 
 BACKING_MARGIN = 1.25   # the backing wall over the process's minimum: a wall drawn at the limit is a coin flip
 BACKING_SHARP = 4.0     # how sharply the backing stops where the face leaves the material (see _backed)
+BACKING_GATE = 20.0     # ... and where the face enters another cut: within ~0.05 mm, a sign, not a taper
+BACKING_REACH = 0.1     # mm past the material's edge the face still counts as slicing it: a cavity that
+                        # grazes a cut face within the field's resolution leaves no unbacked fringe
 
 
 def _backing_frames(P, shapes, h=0.02):
@@ -402,7 +405,7 @@ def _backing_frames(P, shapes, h=0.02):
     cut's face nearest each, w). Depends on the cuts alone, so a mass solve
     reads it once."""
     frames = []
-    for sh, w in shapes:
+    for i, (sh, w) in enumerate(shapes):
         d = sh.sdf(P)
         m = (d > -h) & (d < w)
         if not m.any():
@@ -410,7 +413,14 @@ def _backing_frames(P, shapes, h=0.02):
         X, dm = P[m], d[m]
         g = np.stack([sh.sdf(X + h * e) - sh.sdf(X - h * e) for e in np.eye(3)], axis=1)
         g = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
-        frames.append((m, dm, X - dm[:, None] * g, w))
+        Q = X - dm[:, None] * g
+        # the face slices material only where the other cuts leave it: a
+        # face inside another cut (a pocket's face in an opening) backs nothing
+        o = np.full(len(Q), -np.inf)
+        for j, (sj, _) in enumerate(shapes):
+            if j != i:
+                o = np.maximum(o, -sj.sdf(Q))
+        frames.append((m, dm, Q, w, o))
     return frames
 
 
@@ -421,15 +431,16 @@ def _backed(sol, frames, sol_at):
     material is kept to w from the face. `sol_at(Q)` is the solid before the
     cuts at any points. A face of the cut that lies in the cavity (an
     opening's inner end) runs through no material, so nothing grows on it
-    and the opening stays open. Continuous: the backing is
+    and the opening stays open; nor does a face inside another cut or
+    pocket (a mating part's pocket inside the opening it closes). Continuous: the backing is
     max(d - w, k sol(Q)), Q the point on the face nearest P: k > 1 ends it
     within a fraction of a millimetre of where the material at the face
     ends, as a flat continuation of that edge, not a taper (a taper is a
     feather edge the print loses)."""
     out = sol
-    for m, dm, Q, w in frames:
+    for m, dm, Q, w, o in frames:
         out = out.copy() if out is sol else out
-        out[m] = np.minimum(out[m], np.maximum(dm - w, BACKING_SHARP * sol_at(Q)))
+        out[m] = np.minimum(out[m], np.maximum(dm - w, BACKING_SHARP * np.maximum(sol_at(Q) - BACKING_REACH, BACKING_GATE * o)))
     return out
 
 

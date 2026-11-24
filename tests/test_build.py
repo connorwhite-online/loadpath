@@ -363,6 +363,40 @@ def test_a_cut_is_backed_by_the_process_wall_and_an_opening_stays_open():
     assert bad and "under the 0.3 mm" in bad[0]["declaredButFails"], bad
 
 
+def test_a_pocket_face_inside_another_cut_is_not_backed():
+    """Backing grows only beside a face that slices material. A mating
+    part's pocket whose face lies inside the opening it closes (the
+    Touch-Mic flap in its underside opening, 2026-11-24) slices nothing
+    there: the opening removes that body anyway, so nothing grows on it."""
+    from loadpath.build import _backed, _backing_frames
+
+    class Box:
+        def __init__(self, lo, hi):
+            self.lo, self.hi = np.asarray(lo, float), np.asarray(hi, float)
+
+        def sdf(self, P):
+            c, h = (self.lo + self.hi) / 2, (self.hi - self.lo) / 2
+            q = np.abs(np.asarray(P, float) - c) - h
+            return np.linalg.norm(np.maximum(q, 0), axis=-1) + np.minimum(q.max(axis=-1), 0)
+
+    opening = Box((-10, -10, -5), (10, 10, 5.45))      # the opening, up into the cavity
+    pocket = Box((-8, -8, 0), (8, 8, 5.39))            # the closing part, inside it
+    solid = lambda Q: -np.ones(len(Q))                 # the body before its cuts: all material
+    P = np.array([[0.0, 0.0, 5.9], [0.0, 0.0, 6.2]])   # above both: in the cavity
+    sol = np.full(len(P), 1.0)
+    for shapes in ([(pocket, 1.0)], [(opening, 1.0), (pocket, 1.0)]):
+        out = _backed(sol, _backing_frames(P, shapes), solid)
+        if len(shapes) == 1:
+            assert (out < 0).all(), out                # alone, its top face slices the body: backed
+        else:
+            # the pocket's face is inside the opening: it backs nothing; the
+            # opening's top is backed only because the stand-in solid is all material
+            fr = _backing_frames(P, [(pocket, 1.0)])
+            assert len(fr) == 1
+            only = _backed(sol, _backing_frames(P, [(pocket, 1.0), (opening, 0.0)]), solid)
+            assert (only > 0).all(), only
+
+
 TESTS = [
     test_spec_lints_and_parses,
     test_pod_builds_and_passes_every_check,
@@ -370,6 +404,7 @@ TESTS = [
     test_checks_run_on_a_part_made_elsewhere,
     test_a_part_drawn_whole_is_checked_without_a_skin,
     test_a_cut_is_backed_by_the_process_wall_and_an_opening_stays_open,
+    test_a_pocket_face_inside_another_cut_is_not_backed,
     test_a_patched_seam_fails_the_region_check,
     test_a_round_against_a_mesh_exterior,
     test_a_mass_out_of_reach_says_so,
