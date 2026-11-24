@@ -129,7 +129,7 @@ def motorcycles(cage):
     return cut
 
 
-def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None):
+def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=True):
     """The cage's limit surface as rectangles along its lines: (surfaces,
     report) or (None, report) when the layout does not come out. A
     surface is ("nurbs", poles (nu, nv, 3), u breakpoints, v breakpoints)
@@ -240,6 +240,9 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None):
                 wrapped += 1
         if not wrapped:
             break
+    merged = _merge(cage, cut, find_pieces, rect, evv) if merge else 0
+    if merged:
+        pieces = find_pieces()
 
     # ---- lines: maximal straight runs of drawn edges
     line_of = {}                              # edge -> (line, index, same direction as the line)
@@ -459,7 +462,8 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None):
         out.append(("nurbs", poles, bu, bv))
         if progress and len(out) % 200 == 0:
             progress(f"lines: {len(out)} rectangles")
-    rep = {"layout": "lines", "lines": len(lines), "rectangles": len(out), "bandFaces": int(band.sum()),
+    rep = {"layout": "lines", "lines": len(lines), "rectangles": len(out), "merged": merged,
+           "bandFaces": int(band.sum()),
            "patchToLimit": {"max": round(worst, 5), "regularMax": exact},
            "packedSurfaces": len(out),
            "edgeAngle": {"max": round(float(max(angles)) if angles else 0.0, 4),
@@ -470,6 +474,71 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None):
     if band.any():
         out += [("band", np.flatnonzero(band))]
     return out, rep
+
+
+def _merge(cage, cut, find_pieces, rect, evv):
+    """Rectangles side by side that together make one rectangle become one:
+    the stretch of line between them is taken out (`cut` changed in place).
+    The motorcycle graph runs every line on until it meets another, so a
+    line often parts two rectangles of the same width; one B-spline covers
+    both, its knots holding both rectangles' (a B-rep face may meet several
+    neighbours along one side). A stretch touching a star point stays: a
+    star point is a corner of every surface round it. A union whose
+    opposite sides meet (wrapped round a member) is not taken. Returns the
+    number of merges."""
+    Q, QE = cage.Q, cage.QE
+    star_edge = evv[cage.E].any(axis=1)
+    merges = 0
+    for _ in range(64):
+        pieces = find_pieces()
+        lab = np.empty(len(Q), np.int64)
+        for i, comp in enumerate(pieces):
+            lab[comp] = i
+        shape = {}
+        for i, comp in enumerate(pieces):
+            R = rect(comp)
+            if R is not None:
+                shape[i] = (len(R), len(R[0]))
+        # the two pieces each drawn edge parts
+        fe = QE.ravel()
+        ff = np.repeat(np.arange(len(Q)), 4)
+        drawn = cut[fe]
+        o = np.argsort(fe[drawn], kind="stable")
+        e2, f2 = fe[drawn][o], ff[drawn][o]
+        pairs = {}
+        for k in range(0, len(e2) - 1, 2):
+            a, b = int(lab[f2[k]]), int(lab[f2[k + 1]])
+            if a == b or a not in shape or b not in shape:
+                continue
+            pairs.setdefault((min(a, b), max(a, b)), []).append(int(e2[k]))
+        used = set()
+        n0 = merges
+        # largest unions first: they take the most lines out
+        for (a, b), es in sorted(pairs.items(), key=lambda kv: -(np.prod(shape[kv[0][0]]) + np.prod(shape[kv[0][1]]))):
+            if a in used or b in used or star_edge[es].any():
+                continue
+            cut[es] = False
+            R = rect(pieces[a] + pieces[b])
+            if R is None or _wraps(Q, R):
+                cut[es] = True
+                continue
+            used |= {a, b}
+            merges += 1
+        if merges == n0:
+            break
+    return merges
+
+
+def _wraps(Q, R):
+    """A rectangle (rows of (face, side)) whose opposite sides share a
+    cage vertex."""
+    def vs(hs):
+        return {int(Q[q, k]) for q, k in hs} | {int(Q[q, (k + 1) % 4]) for q, k in hs}
+    v0 = vs([(q, r % 4) for q, r in R[0]])
+    v1 = vs([(q, (r + 2) % 4) for q, r in R[-1]])
+    u0 = vs([(q, (r + 3) % 4) for q, r in (row[0] for row in R)])
+    u1 = vs([(q, (r + 1) % 4) for q, r in (row[-1] for row in R)])
+    return bool(v0 & v1) or bool(u0 & u1)
 
 
 def _vert(Q, qr, corner):

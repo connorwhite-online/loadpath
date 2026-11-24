@@ -229,6 +229,25 @@ def test_star_points_cancelled_in_pairs():
     assert c2.valence.min() >= 3 and len(touched) > 0
 
 
+def test_rectangles_side_by_side_merge():
+    """Two rectangles of the lines layout that together make one rectangle
+    become one B-spline: fewer faces, still on the limit surface, every
+    star point still a corner."""
+    import trimesh
+
+    from loadpath import subdlines
+
+    m = trimesh.creation.icosphere(5, radius=10.0)
+    c = subd.quad_cage(m, 1500)
+    c, _ = subd.fit_cage(c, m, iterations=4)
+    H = subd.Hierarchy(subd.Cage(c.V, c.Q), subd.LEVEL + 1)      # as export_surface lays it out
+    plain, r0 = subdlines.lay_out(H, c.V, 0.1, merge=False)
+    out, r1 = subdlines.lay_out(H, c.V, 0.1)
+    assert plain is not None and out is not None, (r0, r1)
+    assert r1["merged"] > 0 and r1["rectangles"] == r0["rectangles"] - r1["merged"], (r0, r1)
+    assert r1["patchToLimit"]["max"] < 0.1 / 3 and r1["edgeAngle"]["max"] < 1.0, r1
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
