@@ -110,6 +110,7 @@ class BuildSpec:
     skin_hi: float | None = None
     build_direction: object = None
     solid: bool = False                # skin "solid": the designSpace is the part, no cavity
+    min_wall: float | None = None      # the process's minimum wall (mm): every cut is backed by at least this
     _ext_man: object = None
     _ext_mesh: object = None
 
@@ -175,6 +176,23 @@ def _brep_of(shape_spec, base_dir, label):
             and str(shape_spec["path"]).lower().endswith((".step", ".stp")):
         return load_brep(shape_spec["path"], base_dir)
     return load_brep(shape_spec, base_dir)
+
+
+def process_min_wall(doc: dict, proc, material) -> float | None:
+    """The thinnest wall the process forms (mm): process.minFeature when
+    the spec states one, else the process card's (processcheck.RULES, never
+    under Materialize's published minimum). None for a process without a
+    wall rule here."""
+    pd = doc.get("process") if isinstance(doc.get("process"), dict) else {}
+    if pd.get("minFeature"):
+        return float(pd["minFeature"])
+    if proc is None:
+        return None
+    from .processcheck import RULES, rules_for
+
+    if str(proc).lower() not in RULES:
+        return None
+    return float(rules_for(proc, material)["minWall"])
 
 
 def build_spec(doc: dict, base_dir: str | None = None) -> BuildSpec:
@@ -284,7 +302,8 @@ def build_spec(doc: dict, base_dir: str | None = None) -> BuildSpec:
     spec = BuildSpec(name=str(doc.get("name", "part")), exterior=exterior, skin=float(t0), zones=zones,
                      interfaces=interfaces, components=components, material=material, process=proc,
                      target=None, asserts=list(doc.get("assert") or []), references=list(doc.get("references") or []),
-                     doc=doc, base_dir=base_dir, build_direction=build_dir, solid=solid)
+                     doc=doc, base_dir=base_dir, build_direction=build_dir, solid=solid,
+                     min_wall=process_min_wall(doc, proc, material))
     if solid and spec.adjustable():
         raise ValueError("a solid part has no wall to move: targetMass.adjust needs a skin")
 
@@ -373,6 +392,57 @@ def _smooth(x):
     return x * x * (3 - 2 * x)
 
 
+BACKING_MARGIN = 1.25   # the backing wall over the process's minimum: a wall drawn at the limit is a coin flip
+BACKING_SHARP = 4.0     # how sharply the backing stops where the face leaves the material (see _backed)
+
+
+def _backing_frames(P, shapes, h=0.02):
+    """Where each backing reaches at the points P: per cut, (mask of the
+    points within its wall, their distance d to the cut, Q: the point on the
+    cut's face nearest each, w). Depends on the cuts alone, so a mass solve
+    reads it once."""
+    frames = []
+    for sh, w in shapes:
+        d = sh.sdf(P)
+        m = (d > -h) & (d < w)
+        if not m.any():
+            continue
+        X, dm = P[m], d[m]
+        g = np.stack([sh.sdf(X + h * e) - sh.sdf(X - h * e) for e in np.eye(3)], axis=1)
+        g = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+        frames.append((m, dm, X - dm[:, None] * g, w))
+    return frames
+
+
+def _backed(sol, frames, sol_at):
+    """The solid `sol` (negative in material, at points P) grown to each
+    cut's backing wall: within w of a cut, where the cut's face beside the
+    point runs through material (the cut sliced the body there), the
+    material is kept to w from the face. `sol_at(Q)` is the solid before the
+    cuts at any points. A face of the cut that lies in the cavity (an
+    opening's inner end) runs through no material, so nothing grows on it
+    and the opening stays open. Continuous: the backing is
+    max(d - w, k sol(Q)), Q the point on the face nearest P: k > 1 ends it
+    within a fraction of a millimetre of where the material at the face
+    ends, as a flat continuation of that edge, not a taper (a taper is a
+    feather edge the print loses)."""
+    out = sol
+    for m, dm, Q, w in frames:
+        out = out.copy() if out is sol else out
+        out[m] = np.minimum(out[m], np.maximum(dm - w, BACKING_SHARP * sol_at(Q)))
+    return out
+
+
+class _Pocket:
+    """A component's pocket (its solid grown by the clearance) as a shape."""
+
+    def __init__(self, shape, clearance):
+        self.shape, self.c = shape, float(clearance)
+
+    def sdf(self, P):
+        return self.shape.sdf(P) - self.c
+
+
 class BodyField:
     """The fields a build is made of, at one setting `s` in [0, 1] of the
     adjustable walls (0: their minimum, 1: their maximum).
@@ -409,6 +479,17 @@ class BodyField:
                 self.walls.append((MeshShape(m), i.wall, i.blend))
         self.cuts = [i.brep.as_shape() for i in spec.interfaces if i.op == "cut"]
         self.comps = [(c.brep.as_shape(), c.clearance) for c in spec.components]
+        # every cut face is backed by the process's minimum wall: where the
+        # cavity would come nearer a cut than that, the material beside the
+        # cut is grown to it (backing). A cut's own `wall` keeps material all
+        # round it; this keeps only what the print needs where the cut meets
+        # the body, so an opening into the cavity stays open
+        self.backing = []
+        w = spec.min_wall * BACKING_MARGIN if spec.min_wall else None
+        if w and not spec.solid:
+            self.backing = [(sh, w) for sh, it in zip(self.cuts, [i for i in spec.interfaces if i.op == "cut"])
+                            if not it.wall and it.spec.get("backing", True) is not False]
+            self.backing += [(_Pocket(sh, c), w) for sh, c in self.comps]
 
     def at(self, s):
         out = BodyField.__new__(BodyField)
@@ -430,7 +511,7 @@ class BodyField:
             t = t + w * (tz - t)
         return t
 
-    def _solid(self, P, inset):
+    def _solid(self, P, inset, backing=True):
         """The material inside the exterior, exterior not yet applied."""
         e = self.ext.sdf(P)
         sol = -(e + self.thickness(P))
@@ -442,6 +523,8 @@ class BodyField:
             t = self.thickness(P)
             for sh, c in self.comps:
                 sol = _round_cut(sol, sh.sdf(P) - c, RIM_BEARING_SHARE * t)
+        if backing and self.backing:
+            sol = _backed(sol, _backing_frames(P, self.backing), lambda Q: self._solid(Q, inset, backing=False)[0])
         return sol, e
 
     def cavity(self, P):
@@ -487,6 +570,8 @@ class _Grid:
         self.adds = [(sh.sdf(self.P), blend, proud) for sh, blend, proud in body.adds]
         self.walls = [(sh.sdf(self.P) - wall, blend) for sh, wall, blend in body.walls]
         self.comp_d = [sh.sdf(self.P) - c for sh, c in body.comps]
+        self.body = body
+        self.frames = _backing_frames(self.P, body.backing) if body.backing else []
         cut = np.full(len(self.P), np.inf)
         for sh in body.cuts:
             cut = np.minimum(cut, sh.sdf(self.P))
@@ -510,6 +595,10 @@ class _Grid:
         if SOFT_CUT:
             for a in self.comp_d:
                 sol = _round_cut(sol, a, RIM_BEARING_SHARE * t)
+        if self.frames:
+            # how far the material at each face reaches depends on the walls' setting
+            b = self.body.at(s)
+            sol = _backed(sol, self.frames, lambda Q: b._solid(Q, 0.0, backing=False)[0])
         d = np.maximum(self.e, sol)
         for a, _, proud in self.adds:
             if proud:

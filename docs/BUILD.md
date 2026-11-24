@@ -135,6 +135,38 @@ kernel face with a radius to read. `off` is how far the smooth face sits
 from the mesh (0.006 mm on the Touch-Mic's flank, which runs 6 degrees
 oblique to its port).
 
+### Thin walls: whose they are
+
+A cut slices the body, and the cavity can come up to the cut's face from
+the other side. Where it does, the build keeps the process's minimum wall
+beside the cut (process.minFeature, else the process card's, with a 25%
+margin: a wall drawn at the limit is a coin flip). This **backing** grows
+only where the cut's face runs through material, so a face that lies in
+the cavity, the inner end of an opening, grows nothing and the opening
+stays open. It ends where the material at the face ends, as a flat
+continuation of that edge rather than a taper. `"backing": false` on a
+cut turns it off.
+
+What the print still cannot form, the `wall` and `process` rows say
+whose it is. Each piece names the surfaces that bound it (`boundedBy`):
+the exterior, an interface, a component's pocket, the cavity. `owner:
+"build"` (the cavity makes it thin) is a build fault. `owner: "drawn"`
+lies between drawn surfaces only: the build never moves a drawn surface,
+so the spec changes. Cut by the solid of the part that fills that space
+(a lid's or a flap's own shape, with its clearance), move the cut so a
+minimum wall is left or none, or, for a feature the design needs thin (a
+snap lip, a living hinge), declare it:
+
+```json
+"thin": [{"id": "snap-lip", "near": {"type": "box", "min": [...], "max": [...]},
+          "min": 0.35, "why": "holds the flap's bead; TPU, flexes by design"}]
+```
+
+A declared piece passes only if it lies between drawn surfaces, is at
+least its `min`, and `min` is at least what the process forms as a detail
+(Materialize's minimum detail: 0.3 mm for SLS). The row lists it under
+`declared`, so a reviewer sees every exception and its reason.
+
 ### DFM
 
 The `process` row is loadpath's own check of the mesh. The `dfm` row
@@ -279,9 +311,10 @@ Until now only push-pad and feel parts were read like that.
   and without creases of its own, on purpose: sharp edges come from the
   exact booleans with the drawn solids, so there is no dual contouring
   and none of its failure modes.
-- A cut leaves whatever the wall behind it is. Where that is a fin under
-  the minimum wall, the `process` and `wall` checks fail and say where;
-  the build does not thicken or trim it. That is a drawing decision.
+- A cut is backed by the minimum wall where the cavity comes near it, but
+  material between drawn surfaces only (a cut 0.4 mm inside the exterior)
+  is left as drawn: the `process` and `wall` checks fail, say where and
+  which inputs bound it. That is a drawing decision.
 - Two drawn faces that coincide (two cuts ending on one plane) kiss along
   an edge; `sound` fails and names the place. Move one off the other.
 - A hinge printed in place, or a second body, is another spec.

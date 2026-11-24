@@ -236,6 +236,119 @@ def fillet_check(spec, mesh, a, solid=None) -> dict:
                 maxEdgeDeg=max_edge)
 
 
+def _thin_declared(spec):
+    """The spec's declared thin features: [{id, near (Shape), min, why}].
+    A drawn feature thinner than the process's minimum wall (a snap lip, a
+    living hinge) is the designer's to state, never the build's to pass:
+    each names its window, the thinnest it may be, and why."""
+    cache = spec.__dict__.get("_thin")
+    if cache is not None:
+        return cache
+    out = []
+    for j, t in enumerate(spec.doc.get("thin") or []):
+        from .shapes import shape_from_spec
+
+        out.append({"id": str(t.get("id", f"thin-{j + 1}")), "near": shape_from_spec(t["near"], spec.base_dir),
+                    "min": float(t["min"]), "why": str(t.get("why", ""))})
+    spec.__dict__["_thin"] = out
+    return out
+
+
+def _min_detail(spec):
+    from .dfm_reference import limits
+
+    try:
+        ref = limits(spec.process, spec.material)
+    except Exception:  # noqa: BLE001
+        ref = None
+    return None if not ref else ref.get("minDetail")
+
+
+def _judge_pieces(spec, pieces, pitch, want):
+    """Say whose each piece of unformed material is, and hold the declared
+    ones to their own limit. Each piece gets boundedBy (the surfaces within
+    half a wall of it: the exterior, an interface, a component's pocket, the
+    body's cavity) and owner: "build" when the cavity bounds it (the build
+    made it thin, and fixes it: buildcheck reports it as a build fault),
+    "drawn" when only drawn surfaces do (the inputs leave it thin: the
+    build never moves a drawn surface, so the spec must change or declare
+    it). Returns (failing pieces, declared pieces)."""
+    body = spec.__dict__.get("_body")
+    thin = _thin_declared(spec)
+    floor = _min_detail(spec)
+    bad, declared = [], []
+    for u in pieces:
+        P = u.pop("_points", None)
+        reach = u.pop("_reach", None)
+        if P is not None and reach is not None and (reach >= want).any():
+            # judge by what is missing past a wall's reach from what forms: the
+            # piece's rim of a cell or two runs along the formed surface
+            # (the cavity's too) wherever the cluster touches it
+            P = P[reach >= want]
+        if P is None or not len(P):
+            bad.append(u)
+            continue
+        tol = 0.5 * want + 1.5 * pitch
+        src = [("exterior", spec.exterior)]
+        src += [(i.id, i.brep.as_shape()) for i in spec.interfaces]
+        from .build import _Pocket
+
+        src += [(c.id, _Pocket(c.brep.as_shape(), c.clearance)) for c in spec.components]
+        share = {}
+        for name, sh in src:
+            try:
+                share[name] = float((np.abs(sh.sdf(P)) < tol).mean())
+            except Exception:  # noqa: BLE001 - a shape that cannot say its distance names nothing
+                continue
+        if body is not None and not spec.solid:
+            share["cavity"] = float((np.abs(body.cavity(P)) < tol).mean())
+        by = [k for k, v in sorted(share.items(), key=lambda kv: -kv[1]) if v >= 0.15]
+        u["boundedBy"] = by
+        u["owner"] = "build" if "cavity" in by else "drawn"
+        hit = None
+        for t in thin:
+            if float((t["near"].sdf(P) <= 0).mean()) >= 0.9:
+                hit = t
+                break
+        if hit is not None and u["owner"] == "drawn":
+            ok_min = u.get("wallMm") is None or u["wallMm"] >= hit["min"] - 1e-9
+            ok_floor = floor is None or hit["min"] >= floor - 1e-9
+            if ok_min and ok_floor:
+                u["declared"] = hit["id"]
+                declared.append(u)
+                continue
+            u["declaredButFails"] = (f"{hit['id']} allows {hit['min']:g} mm" if not ok_min else
+                                     f"{hit['id']} asks for {hit['min']:g} mm, under the {floor:g} mm the "
+                                     f"process forms as a detail")
+        bad.append(u)
+    return bad, declared
+
+
+def _pieces_detail(bad, want, kind_name):
+    """One sentence per failing piece class: what the build will fix and what the spec must."""
+    if not bad:
+        return None
+    u = bad[0]
+    head = (f"{len(bad)} place(s) thinner than {want:g} mm would not form ({kind_name}), the largest "
+            f"{u['volumeMm3']:.2f} mm^3 at {u['at']}")
+    drawn = [b for b in bad if b.get("owner") == "drawn"]
+    built = [b for b in bad if b.get("owner") == "build"]
+    parts = [head]
+    if drawn:
+        who = sorted({n for b in drawn for n in b.get("boundedBy", []) if n != "cavity"})
+        parts.append(f"{len(drawn)} of them lie between drawn surfaces only ({', '.join(who)}): the build does "
+                     "not move a drawn surface, so the spec must: cut by the solid of the part that fills that "
+                     "space (a lid's or flap's own shape with its clearance), move the cut so a "
+                     f"{want:g} mm wall is left or none, or declare a functional thin feature in `thin` "
+                     "({id, near, min, why})")
+    if built:
+        parts.append(f"{len(built)} of them the body's cavity makes thin: a build fault, report it")
+    fails = [b["declaredButFails"] for b in bad if b.get("declaredButFails")]
+    if fails:
+        parts.append("declared but out of bounds: " + "; ".join(fails))
+    return "; ".join(parts)
+
+
 def wall_check(spec, mesh, a) -> dict:
     """No wall under `min` that the process would lose (processcheck's
     reading: what a ball of that diameter cannot sweep, past an edge's
@@ -247,16 +360,23 @@ def wall_check(spec, mesh, a) -> dict:
     near = _near(a, spec.base_dir)
     p = _choose_pitch(np.asarray(mesh.extents, float), want)
     solid, origin = _grid(mesh, np.eye(3), None, p, pad=3)
-    w = _walls(solid, p, origin, want)
+    w = _walls(solid, p, origin, want, keep_points=True)
     if w["ok"] is None:
         return _row(name, "wall", None, limit=want, detail=w.get("inconclusive"))
     bad = w["unformed"]
     if near is not None:
         bad = [u for u in bad if near.sdf(np.asarray([u["at"]], float))[0] <= 0.0]
-    return _row(name, "wall", not bad, value=_r(w["unformedWallMm"] if bad else w["judgedWallMm"]), limit=want,
-                detail=(f"{len(bad)} place(s) thinner than {want:g} mm would not form, the largest "
-                        f"{bad[0]['volumeMm3']:.2f} mm^3 at {bad[0]['at']}") if bad else None,
-                thinnestRidgeMm=_r(w.get("minWallMm")), unformed=bad[:5])
+    bad, declared = _judge_pieces(spec, bad, p, want)
+    for u in w["unformed"]:
+        u.pop("_points", None)
+        u.pop("_reach", None)
+    value = min([u["wallMm"] for u in bad if u.get("wallMm") is not None] or [w["judgedWallMm"]]) if bad \
+        else max(w.get("minWallMm") or want, want) if not declared else want
+    return _row(name, "wall", not bad, value=_r(value), limit=want,
+                detail=_pieces_detail(bad, want, "the process cannot form them"),
+                thinnestRidgeMm=_r(w.get("minWallMm")), unformed=bad[:5],
+                declared=[{"id": u["declared"], "wallMm": u.get("wallMm"), "volumeMm3": u["volumeMm3"],
+                           "at": u["at"]} for u in declared] or None)
 
 
 def clearance_check(spec, mesh, comp, want, name=None, part_man=None) -> dict:
@@ -578,18 +698,41 @@ def _process_checks(spec, mesh):
             pd = spec.doc.get("process") if isinstance(spec.doc.get("process"), dict) else {}
             rules = {"minWall": float(pd["minFeature"])} if pd.get("minFeature") else None
             rep = check_process(mesh, proc, build=spec.build_direction, material=spec.material, slicer=False,
-                                rules=rules)
+                                rules=rules, keep_points=True)
         except Exception as exc:  # noqa: BLE001
             rows.append(_row("process", "process", None, detail=f"{type(exc).__name__}: {exc}"))
             rep = None
         if rep is not None:
             measured = rep["walls"].get("judgedWallMm")
             own = [w for w in rep["warnings"] if "Materialize" not in w]
-            rows.append(_row("process", "process", bool(rep["ok"]) if rep["probesRan"] else None,
-                             value=_r(measured), limit=rep["rules"]["minWall"],
+            ok = bool(rep["ok"]) if rep["probesRan"] else None
+            declared = []
+            wall_min = rep["rules"]["minWall"]
+            if rep["walls"].get("ok") is False:
+                bad, declared = _judge_pieces(spec, rep["walls"]["unformed"], rep["pitch"], wall_min)
+                rep["walls"]["unformed"] = bad
+                own = [w for w in own if not w.startswith("walls down to")]
+                if bad:
+                    own.insert(0, _pieces_detail(bad, wall_min, f"{proc} minimum"))
+                    measured = min([u["wallMm"] for u in bad if u.get("wallMm") is not None] or [measured])
+                else:
+                    # every piece the print would lose is a declared feature: the rest of the
+                    # process card decides
+                    measured = wall_min
+                    others = [rep.get("warp", {}).get("ok", True) is not False, rep["trappedVolumeMm3"] < 1.0]
+                    ok = all(others)
+            for u in rep["walls"].get("unformed", []):
+                u.pop("_points", None)
+                u.pop("_reach", None)
+            rows.append(_row("process", "process", ok,
+                             value=_r(measured), limit=wall_min,
                              detail=" | ".join(own) or None, process=proc,
                              trappedVolumeMm3=rep.get("trappedVolumeMm3"),
-                             unformedVolumeMm3=rep["walls"].get("unformedVolumeMm3")))
+                             unformedVolumeMm3=round(float(sum(u["volumeMm3"] for u in rep["walls"]["unformed"])), 2)
+                             if rep["walls"].get("unformed") is not None else None,
+                             unformed=rep["walls"].get("unformed", [])[:5] or None,
+                             declared=[{"id": u["declared"], "wallMm": u.get("wallMm"), "volumeMm3": u["volumeMm3"],
+                                        "at": u["at"]} for u in declared] or None))
     ref = review(proc, spec.material, extents=np.asarray(mesh.extents, float), wall_floor=floor,
                  measured_wall=measured)
     if ref is not None:
@@ -758,6 +901,7 @@ def check_build(spec, mesh, out_dir=None, solid=None, body=None, render=True, ta
     rows.append(_row("one-piece", "bodies", n == 1, value=n, limit=1,
                      detail=None if n == 1 else f"the part is {n} separate bodies"))
     spec._solid_mesh = trimesh_from_manifold(solid) if solid is not None else None
+    spec.__dict__["_body"] = body
 
     ext_row, img = _exterior_check(spec, mesh, out_dir, render)
     rows.append(ext_row)

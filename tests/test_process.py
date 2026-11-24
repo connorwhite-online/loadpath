@@ -78,6 +78,33 @@ def test_thin_walls():
     assert rb["walls"]["ok"] is False and rb["walls"]["judgedWallMm"] < 0.8, rb["walls"]
 
 
+def test_a_wall_running_through_the_search_box_is_not_thin():
+    """The thin-wall reading works in a box round each cluster of thin
+    cells. A 2 mm ring running out through that box's face read as a wall
+    ending there, and a column of cells along the face came out unformed
+    (the Touch-Mic body's rim, 2026-11-24: 3 of its 4 failing places).
+    Only the 0.5 mm fin is missing."""
+    from loadpath.processcheck import _choose_pitch, _grid, _walls
+
+    base = _box((0, 0, 0), (40, 40, 3))
+    fin = _box((10, 5, 3), (10.5, 25, 9))
+    ring = trimesh.creation.annulus(r_min=14, r_max=16, height=6)
+    ring.apply_translation((20, 20, 6))
+    part = trimesh.boolean.union([base, fin, ring])
+    p = _choose_pitch(np.asarray(part.extents, float), 0.8)
+    solid, origin = _grid(part, np.eye(3), None, p, pad=3)
+    w = _walls(solid, p, origin, 0.8, keep_points=True)
+    assert w["ok"] is False and w["unformed"], w
+    vol = 0.0
+    for u in w["unformed"]:
+        P, reach = u["_points"], u["_reach"]
+        far = P[reach >= 0.8]
+        on_fin = (far[:, 0] > 9.3) & (far[:, 0] < 11.2) & (far[:, 1] > 4.3) & (far[:, 1] < 25.7)
+        assert on_fin.all(), np.round(far[~on_fin][:5], 2)
+        vol += u["volumeMm3"]
+    assert vol < 70.0, vol        # the fin is 60 mm^3; the ring added 30 more before
+
+
 def test_a_slanted_edge_is_rounded_not_missing():
     """A wedge's edge tapers through every thickness to nothing; the print
     rounds it a little, as it does every edge, and that is not a thin wall.

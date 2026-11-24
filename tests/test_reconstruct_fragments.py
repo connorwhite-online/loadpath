@@ -122,13 +122,38 @@ def test_saved_field_round_trips_and_remeshes():
 
 
 def test_feather_edges_at_a_bore_are_cut_to_what_prints():
-    """A bore leaving a block's top at a slant (11 degrees) leaves the
-    material beside it tapering to a knife edge: MJF forms what a 0.8 mm
-    ball sweeps, and the edge reached 2.7 mm past that (processcheck reads
-    it as walls that will not form). reconstruct cuts it along the ball's
-    sweep, so the part ends in a round, as it will print, losing a few
-    mm^3."""
+    """Designed material the print cannot form is cut along the 0.8 mm
+    ball's sweep, so the part ends in a round, as it will print: a 0.4 mm
+    fin between two keep-outs goes. A bore leaving a block's top at a slant
+    (11 degrees) once read as a feather reaching 2.7 mm past the sweep, but
+    that was the thin-wall reading's own search box cutting the block
+    (processcheck._unformed, fixed 2026-11-24): read over the whole grid the
+    edge only rounds, and nothing there is cut."""
+    import trimesh
+
+    import loadpath.reconstruct as rc
     from loadpath.processcheck import check_process
+    from loadpath.shapes import manifold_from_trimesh
+
+    fin_spec = {"name": "fin", "designSpace": {"type": "box", "min": [-20, -15, 0], "max": [20, 15, 12]},
+                "keepOut": [{"id": "slot", "shape": {"type": "box", "min": [-21, 0.4, 4], "max": [21, 16, 13]}},
+                            {"id": "gap", "shape": {"type": "box", "min": [-21, -5, 4], "max": [21, 0, 13]}}],
+                "supports": [{"shape": {"type": "box", "min": [-21, -16, -1], "max": [21, 16, 0.01]}}],
+                "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [-21, -16, 11],
+                                                                 "max": [21, 16, 13]}, "force": [0, 0, -100]}]}],
+                "material": "pa12", "process": {"type": "mjf"}, "goal": {"volumeFraction": 0.5},
+                "resolution": {"pitch": 1.0}}
+    fs = study_from_dict(fin_spec)
+
+    def box(lo, hi):
+        b = trimesh.creation.box(extents=np.subtract(hi, lo))
+        b.apply_translation(np.add(lo, hi) / 2)
+        return b
+    part = manifold_from_trimesh(trimesh.boolean.union([box((-20, -15, 0), (20, -5, 12)),
+                                                        box((-20, -5, 0), (20, 15, 4)),
+                                                        box((-20, 0, 4), (20, 0.4, 12))]))
+    cut, dropped = rc._drop_unformed(part, fs, list(fs.keep_out), 0.8)
+    assert dropped and 80.0 < part.volume() - cut.volume() < 128.0, (dropped, part.volume() - cut.volume())
 
     spec = {"name": "groove", "designSpace": {"type": "box", "min": [-20, -15, 0], "max": [20, 15, 12]},
             "keepOut": [{"id": "bore", "shape": {"type": "cylinder", "p0": [-25, 0, 10], "p1": [25, 0, 14],
@@ -138,12 +163,10 @@ def test_feather_edges_at_a_bore_are_cut_to_what_prints():
                                                              "max": [21, 16, 13]}, "force": [0, 0, -100]}]}],
             "material": "pa12", "process": {"type": "mjf", "buildDirection": "+z"},
             "goal": {"volumeFraction": 0.9}, "resolution": {"pitch": 1.0}, "minMember": 2.0}
-    import loadpath.reconstruct as rc
     s = study_from_dict(spec)
     d = build_domain(s)
-    # the cut itself, with the room for a member (below) and the rounded
-    # keep-out rim (reconstruct.SOFT_CUT, which ends the slant in a round
-    # before any feather forms) not yet taken out
+    # with the room for a member (below) and the rounded keep-out rim
+    # (reconstruct.SOFT_CUT) not yet taken out
     room, soft = rc._member_room, rc.SOFT_CUT
     rc._member_room = lambda *a, **k: None
     rc.SOFT_CUT = False
@@ -151,12 +174,10 @@ def test_feather_edges_at_a_bore_are_cut_to_what_prints():
         mesh, info = reconstruct(s, d, np.ones(d.mesh.n_elem))
     finally:
         rc._member_room, rc.SOFT_CUT = room, soft
-    assert info.get("unformedDropped"), info
+    assert not info.get("unformedDropped"), info
     w = check_process(mesh, "mjf", build="+z", material="pa12")["walls"]
     assert w["ok"] is True and not w["unformed"], w
-    assert mesh.volume > 13500, mesh.volume   # 13543 mm^3 before: a round, not a groove widened
-    from loadpath.verify import _creases
-    assert _creases(s, mesh)["creaseLength"] < 10.0
+    assert mesh.volume > 13500, mesh.volume
     # As delivered: beside the bore there is no room for a 2 mm member where
     # the edge was, so the material ends in that member's round before any
     # feather forms, and nothing is left to cut (13459 mm^3, crease 0.2 mm).

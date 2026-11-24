@@ -1714,6 +1714,11 @@ _BUILD_INTERFACE = {
         "wall": {"type": "number", "minimum": 0,
                  "description": "(cut) mm of material kept round the cut inside the part: a tunnel through "
                                 "the cavity"},
+        "backing": {"type": "boolean",
+                    "description": "(cut) default true: where the cut slices the body, the material left "
+                                   "beside it is kept to the process's minimum wall (process.minFeature, else "
+                                   "the process card's), so the cavity never leaves a knife edge on a cut; "
+                                   "faces of the cut that open into the cavity get none"},
         "proud": {"type": "boolean", "description": "(add) the solid may stand outside the exterior (default: "
                                                     "it is trimmed to it, the exterior unchanged)"}},
     "required": ["id", "shape", "op"], "additionalProperties": False,
@@ -2197,6 +2202,17 @@ STUDY_SCHEMA = {
                        "description": "`loadpath build`: the bought parts inside, as solids where they sit. "
                                       "Each gets its pocket, its clearance and its way in, all checked."},
         "targetMass": _BUILD_TARGET,
+        "thin": {"type": "array", "items": {"type": "object", "properties": {
+                     "id": {"type": "string"},
+                     "near": {"$ref": "#/$defs/shape", "description": "the window the feature lies in"},
+                     "min": {**_POS, "description": "mm, the thinnest it may be; never under the process's "
+                                                    "minimum detail (Materialize's, dfm_reference)"},
+                     "why": {"type": "string", "description": "what the feature does, for the reviewer"}},
+                     "required": ["id", "near", "min", "why"], "additionalProperties": False},
+                 "description": "`loadpath build`: drawn features thinner than the process's minimum wall "
+                                "that the design needs (a snap lip, a living hinge). Only material between "
+                                "drawn surfaces can be declared: what the body's cavity leaves thin is the "
+                                "build's to fix, and fails whatever is declared."},
         "assert": {"type": "array", "items": _BUILD_ASSERT,
                    "description": "`loadpath build`: features checked on every build; one that fails fails "
                                   "the build."},
