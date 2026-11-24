@@ -693,6 +693,17 @@ def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, stric
     by it is taken (a seated plate's tet check took von Mises' worst and
     read 4% under its own 'up' case, 2026-11-24)."""
     rows = case.samples(n)
+    # the force as written and the six axis directions are always among the
+    # candidates: a spread of n directions is ~200/sqrt(n) degrees apart, so
+    # a peak near an axis read only off the spread can come out below the
+    # same force held along that axis (CI f19510e: "any" read under "up").
+    from .directions import _to_cap
+    sp = case.spread
+    axis = np.asarray(sp.nominal, float)
+    for d in (axis, *np.eye(3), *-np.eye(3)):
+        d = _to_cap(d / np.linalg.norm(d), axis, sp.cos_half)
+        c, _, mu, lam, lifts = case.at(d)
+        rows.insert(0, (d, c, mu, lam, lifts))
     if strict and any(r[4] for r in rows):
         raise ValueError(LIFTS + " A force of unknown direction lifts it in some direction.")
     q = SeatedSpread.coefficients(rows)
