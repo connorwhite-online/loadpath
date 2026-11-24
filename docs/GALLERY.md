@@ -134,6 +134,16 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ![wall-bracket-fasteners stress](images/stress/wall-bracket-fasteners-views.png)
 
+## Organic surfacing
+
+A mesh in, one closed solid of smooth editable B-spline faces out
+(`loadpath surface`, [SURFACE.md](SURFACE.md)). Each colour is one STEP
+face; same 0.1 mm tolerance before and after the 2026-11-24 layout work
+(rectangles merged, 3-5 star-point pairs slid together and cancelled).
+
+![Arm link STEP faces: 605 -> 406](images/surface/arm-link-step-faces.png)
+![Pebble STEP faces: 230 -> 132](images/surface/pebble-step-faces.png)
+
 ## Heat exchangers
 
 ### box-crossflow

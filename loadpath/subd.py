@@ -826,7 +826,8 @@ def pick_tolerance(accuracy=None, noise=None):
     return tol, why
 
 
-def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress=None, over=None, fair=0.0):
+def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress=None, over=None, fair=0.0,
+                 attempts=2):
     """Star points cancelled in pairs (subdcoarse.simplify: edge rotations
     and diagonal collapses, and 3-5 pairs slid together first) where the surface can do without them: the
     moved neighbourhoods are fitted again (subdedit.refit) and the moves
@@ -852,7 +853,7 @@ def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, p
     frozen = np.zeros(0, np.int64)
     h = float(np.sqrt(mesh.area / len(cage.Q)))
     rep = {"moves": 0, "starPoints": [stars, stars]}
-    for attempt in range(2):
+    for attempt in range(attempts):
         Vn, Qn, touched, taken = simplify(cage.V, cage.Q, frozen=frozen)
         if not taken:
             break
@@ -1053,78 +1054,86 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     # with (miss / 0.75 aim)^6 a round, at most x17, once it is within a
     # quarter of the aim, holes aside), so the fit spends its freedom only where the
     # shape is tight, while the 99th percentile stays within the tolerance
-    wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
-    dev, (d1, d2, Xc) = deviation(H, cage.V, mesh, data=check)
     # the patches are held within a third of the tolerance of the limit
     # surface (lay_out), so the limit aims that much under the bound
     aim = bound - tol / 3.0
-    places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
-    pulls = insets = 0
     from scipy.spatial import cKDTree
 
     from .subdedit import inset, refit
 
     def over(places):
         return max((p["miss"] for p in places if p["kind"] == "surface"), default=0.0)
-    while (kind == 1).any():
-        stage = 0
-        while (kind == 1).any() and stage < 4:
-            j = cKDTree(H.M @ cage.V).query(data[0], workers=-1)[1]
-            wP *= np.where(kind != 2, np.clip(d1 / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
-            dX = np.linalg.norm(data[0] - _closest_limit(H, cage.V, data[0]), axis=1)
-            wX *= np.where(kind[j] != 2, np.clip(dX / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
-            # only the control points round the places that miss are fitted
-            # again (subdedit.refit): the rest of the surface is where the
-            # fairing left it, and a pull costs seconds, not a whole fit
-            c2 = Cage(cage.V.copy(), cage.Q)
-            refit(c2, H, mesh, np.unique(cage.Q[H.root[(kind == 1)[H.fine.Q].any(axis=1)]]), data, fair=fair,
-                  iterations=8, settle=tol / 50, weights=(wP, wX))
-            d2v, (e1, e2, Xc) = deviation(H, c2.V, mesh, data=check)
-            if d2v["p99"] > tol:
+
+    def pull_in(cage, H, max_insets=3):
+        wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
+        dev, (d1, d2, Xc) = deviation(H, cage.V, mesh, data=check)
+        places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
+        pulls = insets = 0
+        while (kind == 1).any():
+            stage = 0
+            while (kind == 1).any() and stage < 4:
+                j = cKDTree(H.M @ cage.V).query(data[0], workers=-1)[1]
+                wP *= np.where(kind != 2, np.clip(d1 / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
+                dX = np.linalg.norm(data[0] - _closest_limit(H, cage.V, data[0]), axis=1)
+                wX *= np.where(kind[j] != 2, np.clip(dX / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
+                # only the control points round the places that miss are fitted
+                # again (subdedit.refit): the rest of the surface is where the
+                # fairing left it, and a pull costs seconds, not a whole fit
+                c2 = Cage(cage.V.copy(), cage.Q)
+                refit(c2, H, mesh, np.unique(cage.Q[H.root[(kind == 1)[H.fine.Q].any(axis=1)]]), data, fair=fair,
+                      iterations=8, settle=tol / 50, weights=(wP, wX))
+                d2v, (e1, e2, Xc) = deviation(H, c2.V, mesh, data=check)
+                if d2v["p99"] > tol:
+                    break
+                was = over(places)
+                cage.V, dev, pulls, stage, d1, d2 = c2.V, d2v, pulls + 1, stage + 1, e1, e2
+                places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
+                if progress:
+                    progress(f"worst-point pull {pulls}: max {dev['max']:.4f} mm, "
+                             f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
+                if over(places) > 0.9 * was:
+                    break                   # the pull has stopped gaining: the faces are too wide there
+            if not (kind == 1).any() or insets >= max_insets:
                 break
-            was = over(places)
-            cage.V, dev, pulls, stage, d1, d2 = c2.V, d2v, pulls + 1, stage + 1, e1, e2
+            # what pulling cannot bring in gets finer faces, there only: a ring
+            # of quads inside the faces that still miss (subdedit.inset), the
+            # control points round it fitted again
+            res = inset(cage.V, cage.Q, np.unique(H.root[(kind == 1)[H.fine.Q].any(axis=1)]))
+            if res is None:
+                break
+            try:
+                c2 = Cage(res[0], res[1])
+                H2 = Hierarchy(c2, level)
+                refit(c2, H2, mesh, res[2], data, fair=fair, settle=tol / 50)
+            except (ValueError, RuntimeError):
+                break
+            d2v, (e1, e2, Xc) = deviation(H2, c2.V, mesh, data=check)
+            if d2v["p99"] > tol or len(_folds(H2, c2.V)):
+                break
+            cage, H, dev, d1, d2, insets = c2, H2, d2v, e1, e2, insets + 1
+            wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
             places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
             if progress:
-                progress(f"worst-point pull {pulls}: max {dev['max']:.4f} mm, "
+                progress(f"faces inset where the pull stalled: {len(cage.Q)} faces, max {dev['max']:.4f} mm, "
                          f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
-            if over(places) > 0.9 * was:
-                break                   # the pull has stopped gaining: the faces are too wide there
-        if not (kind == 1).any() or insets >= 3:
-            break
-        # what pulling cannot bring in gets finer faces, there only: a ring
-        # of quads inside the faces that still miss (subdedit.inset), the
-        # control points round it fitted again
-        res = inset(cage.V, cage.Q, np.unique(H.root[(kind == 1)[H.fine.Q].any(axis=1)]))
-        if res is None:
-            break
-        try:
-            c2 = Cage(res[0], res[1])
-            H2 = Hierarchy(c2, level)
-            refit(c2, H2, mesh, res[2], data, fair=fair, settle=tol / 50)
-        except (ValueError, RuntimeError):
-            break
-        d2v, (e1, e2, Xc) = deviation(H2, c2.V, mesh, data=check)
-        if d2v["p99"] > tol or len(_folds(H2, c2.V)):
-            break
-        cage, H, dev, d1, d2, insets = c2, H2, d2v, e1, e2, insets + 1
-        wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
-        places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
-        if progress:
-            progress(f"faces inset where the pull stalled: {len(cage.Q)} faces, max {dev['max']:.4f} mm, "
-                     f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
+        return cage, H, dev, d1, d2, Xc, places, kind, pulls, insets
+
+    cage, H, dev, d1, d2, Xc, places, kind, pulls, insets = pull_in(cage, H)
     if insets and not faces:
-        # the insets cut star points into the cage (eight a rectangle); pairs
-        # of them, and any the first pass had to leave, cancel as before,
-        # now held to the aim the pulls brought every place within
-        cage, H, dev, again = _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress,
-                                           over=aim, fair=fair)
+        # an inset cuts four 3-5 pairs into the cage (its corners); they and
+        # any the first pass had to leave are slid together and cancelled
+        # as there, now held to the aim the pulls brought every place
+        # within: where a place would miss again the star points round it
+        # stay (they are the inset's finer faces), up to four tries
+        c2, H2, d2v, again = _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress,
+                                          over=aim, fair=fair, attempts=4)
         if again["moves"]:
-            cancelled = {"moves": cancelled.get("moves", 0) + again["moves"],
-                         "starPoints": cancelled.get("starPoints", again["starPoints"])[:1] + again["starPoints"][1:],
-                         "afterInsets": again["starPoints"]}
+            cage, H, dev = c2, H2, d2v
             dev, (d1, d2, Xc) = deviation(H, cage.V, mesh, data=check)
             places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
+            cancelled = {"moves": cancelled.get("moves", 0) + again["moves"],
+                         "starPoints": cancelled.get("starPoints", again["starPoints"])[:1]
+                         + again["starPoints"][1:], "afterInsets": again["starPoints"]}
     P = H.M @ cage.V
     surface = [p for p in places if p["kind"] == "surface"]
     holes = [p for p in places if p["kind"] == "hole"]

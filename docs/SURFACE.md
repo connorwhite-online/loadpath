@@ -216,6 +216,17 @@ cancelling. Arm link: 245 -> 156 star points, 466 STEP faces (605-646
 before), valid, every place within the bound, 311 s; pebble 52 star
 points, 132 STEP faces (174).
 
+After the worst-point insets (2026-11-24): an inset's finer faces are
+bounded by four 3-5 pairs at its corners, so they cannot all go; the
+second pass slides and cancels the rest held to the aim, and where a place
+would miss again the star points round it stay (up to four tries). A ring
+of quads split instead adds no star points but runs 1,400-10,800 faces
+round the arm link's cage. Arm link now 406-447 STEP faces (605-646 at the
+start of the day), 300-320 s, valid, within the bound; pebble 132.
+
+![Arm link STEP faces before and after](images/surface/arm-link-step-faces.png)
+![Pebble STEP faces before and after](images/surface/pebble-step-faces.png)
+
 **Face by face (the fallback).** Rectangles of regular cage faces are grown
 greedily and each becomes one clamped bicubic B-spline; faces at a star
 point stay whole as degree-7 patches, split once toward it where that
