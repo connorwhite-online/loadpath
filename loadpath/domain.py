@@ -481,6 +481,37 @@ def patch_acceleration(study: Study, mesh: HexMesh, f_raw: np.ndarray, density=1
     return inertia_balance(f_raw, m, phi, carried_bodies(study, mesh, phi, tol_floor))[1]
 
 
+# a bore's seat in sectors round its axis: each sector pushes along its middle's
+# outward normal, within cos(15 deg) = 0.97 of the wall's own at its edges
+RADIAL_SECTORS = 12
+
+
+def radial_seats(pts, p0, ax, sectors: int = RADIAL_SECTORS) -> list:
+    """A tube, shaft or pin in a bore (supports[].push = "radial") as
+    seats: [(indices into pts, outward unit normal)], one per sector of
+    the bore wall round the axis through p0. What is in the bore pushes out
+    on the wall where it bears and nowhere pulls; held "fix" the wall is
+    glued to it all round, and a part that wraps the tube less than half
+    way round passes on that glue (held-out batch 3: a tube tee's rail
+    socket came out a saddle under the rail)."""
+    ax = np.asarray(ax, float) / np.linalg.norm(ax)
+    d = np.asarray(pts, float) - np.asarray(p0, float)
+    rad = d - (d @ ax)[:, None] * ax
+    a = np.cross(ax, [1.0, 0.0, 0.0] if abs(ax[0]) < 0.9 else [0.0, 1.0, 0.0])
+    a /= np.linalg.norm(a)
+    b = np.cross(ax, a)
+    th = np.arctan2(rad @ b, rad @ a)
+    k = np.floor((th + np.pi) / (2 * np.pi / sectors)).astype(int) % sectors
+    out = []
+    for j in range(sectors):
+        sub = np.nonzero(k == j)[0]
+        if len(sub) == 0:
+            continue
+        mid = -np.pi + (j + 0.5) * 2 * np.pi / sectors
+        out.append((sub, np.cos(mid) * a + np.sin(mid) * b))
+    return out
+
+
 def _cylinder_of(study: Study, region, shape, label):
     sh = shape if shape is not None else study.region_shape(region)[0]
     if not hasattr(sh, "axis"):
@@ -547,6 +578,12 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         idx = np.nonzero(nodes)[0]
         if s.push is not None:
             share = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)[idx].astype(float)
+            if isinstance(s.push, str):
+                p0, ax = _cylinder_of(study, s.region, s.shape, label)
+                for sub, n in radial_seats(xyz[idx], p0, ax):
+                    seats.append((idx[sub], n, share[sub] / share[sub].sum(), getattr(s, "friction", None),
+                                  None))
+                continue
             seats.append((idx, np.asarray(s.push, float), share / share.sum(), getattr(s, "friction", None),
                           getattr(s, "preload", None)))
             continue

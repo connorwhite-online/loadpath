@@ -740,7 +740,15 @@ def _seats_on(study, pts, surf, tol, faces):
         vn = _region_nodes(study, sh, pts, tol, surf)
         if len(vn) == 0:
             raise ValueError(f"supports[{i}] touches no surface node of the part")
-        out.append((vn, np.asarray(sup.push, float), _area_shares(pts, faces, vn), getattr(sup, "friction", None),
+        shares = _area_shares(pts, faces, vn)
+        if isinstance(sup.push, str):
+            from .domain import radial_seats
+
+            for sub, n in radial_seats(pts[vn], sh.p0, sh.axis):
+                out.append((vn[sub], n, shares[sub] / max(shares[sub].sum(), 1e-300), getattr(sup, "friction", None),
+                            None))
+            continue
+        out.append((vn, np.asarray(sup.push, float), shares, getattr(sup, "friction", None),
                     getattr(sup, "preload", None)))
     return out
 

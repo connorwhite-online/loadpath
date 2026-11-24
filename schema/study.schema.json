@@ -5308,7 +5308,7 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^[+-]?[xyz]$"
+              "pattern": "^([+-]?[xyz]|radial)$"
             },
             {
               "type": "array",

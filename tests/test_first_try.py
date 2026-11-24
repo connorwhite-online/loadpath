@@ -810,3 +810,38 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def _socket(support):
+    """A block with a 20 mm tube through it along x (a tee's rail), the
+    block pushed down 100 N and pulled 30 N along the tube."""
+    return {"designSpace": [_box([-20, -16, -16], [20, 16, 16])],
+            "keepOut": [{"id": "rail", "shape": _cyl([0, 0, 0], "x", 60, 10), "fit": "slip"}],
+            "supports": [dict(support, region="rail")],
+            "loadCases": [{"name": "down", "loads": [{"shape": _box([-20, -16, 15.5], [20, 16, 16]),
+                                                      "force": [0, 0, -100]}]},
+                          {"name": "along", "loads": [{"shape": _box([-20, -16, 15.5], [20, 16, 16]),
+                                                       "force": [30, 0, -100]}]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.5}}
+
+
+def test_a_tube_in_a_bore_bears_radially_and_a_glued_slip_bore_is_named():
+    """push 'radial' on a bore: the wall is twelve seats round the axis,
+    each pushing out along its middle's normal; with friction the part is
+    held along the tube too, without it check refuses the case that pulls
+    it along. Held fixed all round where the fit says the tube slips,
+    check names the glue."""
+    from loadpath.domain import build_domain, radial_seats
+
+    pts = np.array([[0.0, 10 * np.cos(t), 10 * np.sin(t)] for t in np.linspace(0, 2 * np.pi, 72, endpoint=False)])
+    secs = radial_seats(pts, [0, 0, 0], [1, 0, 0])
+    assert len(secs) == 12 and sum(len(s) for s, _ in secs) == 72
+    for sub, n in secs:
+        assert abs(n[0]) < 1e-12 and abs(np.linalg.norm(n) - 1) < 1e-12
+        assert (pts[sub] @ n).min() > 10 * np.cos(np.pi / 12) - 1e-9   # each sector faces its normal
+    dom = build_domain(study_from_dict(_socket({"push": "radial", "friction": 0.3})))
+    assert len(dom.seats) == 12
+    c = check_study(_socket({"push": "radial"}))
+    assert not c["ok"] and "'along'" in c["error"], c
+    c = check_study(_socket({"fix": "all"}))
+    assert c["ok"] and any("as if glued to what is in it" in w for w in c["warnings"]), c

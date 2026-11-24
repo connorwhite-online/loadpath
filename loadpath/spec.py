@@ -175,7 +175,7 @@ class Support:
     max_moment: float | None = None
     # A seat (pushseat.py): the unit direction this support pushes the part in,
     # and nothing else. It holds no pull, and no sliding unless it has friction.
-    push: tuple[float, float, float] | None = None
+    push: tuple[float, float, float] | str | None = None   # or "radial" (a bore)
     # A seat's Coulomb friction coefficient (None: it holds nothing across)
     # and the force it is pressed on with before the loads (N: a clamp's
     # screw; None: none).
@@ -1699,11 +1699,19 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             if "fix" in s or any(c is not None for c in caps):
                 raise ValueError(f"supports[{i}]: a push support holds only along its push; leave out fix, "
                                  "maxForce and maxMoment")
-            try:
-                push = tuple(float(v) for v in _axis_vector(s["push"], ""))
-            except ValueError:
-                raise ValueError(f"supports[{i}].push is the way the seat pushes the part: 'x', '-z' or a "
-                                 "vector [x, y, z]") from None
+            if s["push"] == "radial":
+                # a tube, shaft or pin in a bore: it pushes out on the bore wall wherever it
+                # bears, and nowhere pulls (domain.radial_seats)
+                if region is None and not hasattr(shape, "axis"):
+                    raise ValueError(f"supports[{i}]: push 'radial' needs a cylinder (a bore keep-out or a "
+                                     "cylinder shape)")
+                push = "radial"
+            else:
+                try:
+                    push = tuple(float(v) for v in _axis_vector(s["push"], ""))
+                except ValueError:
+                    raise ValueError(f"supports[{i}].push is the way the seat pushes the part: 'x', '-z', a "
+                                     "vector [x, y, z], or 'radial' in a bore") from None
             fix_t = (False, False, False)
         extra = {}
         for key, unit in (("friction", "a Coulomb coefficient, like 0.3"), ("preload", "N")):
