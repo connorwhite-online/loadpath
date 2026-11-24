@@ -819,6 +819,7 @@ class WallRidges:
             p_[:, 2] = np.minimum(p_[:, 2], np.maximum(0.3 * p_[:, 1], 0.5 * p_[:, 0] * f))
         A, Bs, PA, PB, ID, END, NA, NB, TA, TB = [], [], [], [], [], [], [], [], [], []
         for i, dense, par in zip(ids_all, dense_all, par_all, strict=True):
+            je = (False, False) if ends is None else tuple(ends[i])
             A.append(dense[:-1]); Bs.append(dense[1:]); PA.append(par[:-1]); PB.append(par[1:])
             # the skin's normal on the line itself (smoothed along it), not at each query point: a
             # point in a ridge near another wall would otherwise take that wall's normal, and the
@@ -832,9 +833,12 @@ class WallRidges:
             tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-12)
             TA.append(tg[:-1]); TB.append(tg[1:])
             ID.append(np.full(len(dense) - 1, i))
+            # only a free end is cut square at the line's end. A joined end runs on into the ridge it
+            # joins (as far as an inner segment end, 1 mm): cut square at the node, two ridges meeting
+            # at an angle left a notch on the outside of the bend and a slit in it
             e = np.zeros(len(dense) - 1, np.int8)
-            e[0] |= 1
-            e[-1] |= 2
+            e[0] |= 0 if je[0] else 1
+            e[-1] |= 0 if je[1] else 2
             END.append(e)
         self.A, self.B = np.concatenate(A), np.concatenate(Bs)
         self.PA, self.PB, self.id = np.concatenate(PA), np.concatenate(PB), np.concatenate(ID)
@@ -902,7 +906,15 @@ class WallRidges:
         # past an inner end of a segment (when the line's next segment didn't make the candidate list)
         # the section would run on along the tangent, a ghost ridge: held back beyond 1 mm of overrun
         inner = np.maximum(-traw, traw - 1.0) * seg - 1.0
-        over = np.maximum(over, np.where(inner > 0, inner, -np.inf))
+        # but not on the outside of a bend: a point past this segment's end and before the next
+        # one's start sits in the wedge off their shared vertex, which both sections cover. Cut
+        # there, a tall ridge split along the bisector of every sharp bend (a slit, 0.01 mm)
+        nb = np.clip(np.where(traw < 0, idx - 1, idx + 1), 0, len(self.A) - 1)
+        an, bn = self.A[nb], self.B[nb]
+        abn = bn - an
+        tn = np.einsum("nkd,nkd->nk", P[:, None] - an, abn) / np.maximum(np.einsum("nkd,nkd->nk", abn, abn), 1e-300)
+        wedge = (self.id[nb] == self.id[idx]) & np.where(traw < 0, tn > 1.0, tn < 0.0)
+        over = np.maximum(over, np.where((inner > 0) & ~wedge, inner, -np.inf))
         # the tangent eased from vertex to vertex, not each segment's own: with a segment's own, the
         # section turned in a step at every vertex, and a bulb 8 mm off a curving line came out
         # stepped (a jump of up to 0.9 mm where the nearest segment changed)
