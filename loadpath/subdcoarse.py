@@ -160,20 +160,31 @@ def _collapse(m, qi, mv):
     return all(np.dot(m.normal(m.Q[i]), n) > 0.0 for i, n in n0)
 
 
-def cancel(V, Q, frozen=(), rounds=6):
+def cancel(V, Q, frozen=(), rounds=6, near=None):
     """Edge rotations and diagonal collapses that take star points away,
     greedily, away from `frozen` vertices (holes just punched, say).
-    Returns (V, Q, touched vertices in the new numbering, moves taken)."""
+    `near`: only moves round these vertices are looked for (elsewhere an
+    earlier pass found none), and after the first round only round the
+    vertices the last round moved. Returns (V, Q, touched vertices in the
+    new numbering, moves taken)."""
     m = _Mesh(V, Q)
     frozen = set(int(v) for v in frozen)
     touched = set()
     taken = 0
+
+    def around(vs):
+        ring = set(vs)
+        for _ in range(2):
+            ring |= set().union(*(m.nbrs(v) for v in ring if v not in m.dead_v)) if ring else set()
+        return sorted(set().union(*(m.vq[v] for v in ring)) if ring else set())
+    scan = range(len(m.Q)) if near is None else around(int(v) for v in near)
     for _ in range(rounds):
         busy = set(frozen)
         done = 0
+        moved = set()
         # single moves that gain, best first
         moves = []
-        for qi in range(len(m.Q)):
+        for qi in scan:
             if not m.alive[qi]:
                 continue
             for k in range(4):
@@ -203,11 +214,12 @@ def cancel(V, Q, frozen=(), rounds=6):
             if ok:
                 busy |= ring
                 touched |= verts
+                moved |= verts
                 done += 1
         # two in a row: a rotation that changes nothing on its own, then a
         # move it makes possible next to it
         pairs = 0
-        for qi in range(len(m.Q)):
+        for qi in scan:
             if not m.alive[qi]:
                 continue
             for k in range(4):
@@ -246,12 +258,14 @@ def cancel(V, Q, frozen=(), rounds=6):
                         allv = verts | v2
                         busy |= allv | set().union(*(m.nbrs(v) for v in allv if v not in m.dead_v))
                         touched |= allv
+                        moved |= allv
                         pairs += 1
                     else:
                         m.Q, m.vq = save
         taken += done + 2 * pairs
         if not done and not pairs:
             break
+        scan = around(v for v in moved if v not in m.dead_v)
     Vn, Qn, remap = m.arrays()
     t = np.array(sorted(v for v in touched if v not in m.dead_v), np.int64)
     return Vn, Qn, remap[t][remap[t] >= 0] if len(t) else t, taken
@@ -398,7 +412,7 @@ def simplify(V, Q, frozen=(), depth=24, rounds=6):
             break
         hit.append(Vg[tg])
         fr = cKDTree(Vg).query(fz)[1] if len(fz) else ()
-        V, Q, tc, n = cancel(Vg, Qg, frozen=fr, rounds=rounds)
+        V, Q, tc, n = cancel(Vg, Qg, frozen=fr, rounds=rounds, near=tg)
         hit.append(V[tc])
         taken += moved + n
     P = np.concatenate(hit) if hit else np.zeros((0, 3))

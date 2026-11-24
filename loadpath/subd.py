@@ -62,7 +62,14 @@ class Cage:
         nv = max(len(self.V), int(Q.max()) + 1 if Q.size else 0)
         # an edge as one integer (lo n + hi): the same order as unique rows, a fraction of the time
         key = np.minimum(a, b) * nv + np.maximum(a, b)
-        u, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
+        # sorted once (np.unique hashes int keys: seconds on a subdivided cage)
+        o = np.argsort(key)
+        ks = key[o]
+        head = np.r_[True, ks[1:] != ks[:-1]]
+        u = ks[head]
+        inv = np.empty(len(key), np.int64)
+        inv[o] = np.cumsum(head) - 1
+        cnt = np.diff(np.r_[np.flatnonzero(head), len(ks)])
         E = np.stack([u // nv, u % nv], 1)
         if (cnt != 2).any():
             raise ValueError(f"cage is not closed and manifold: {int((cnt != 2).sum())} edges with "
@@ -72,8 +79,8 @@ class Cage:
         n = len(self.V)
         self.valence = np.bincount(E.ravel(), minlength=n)
         # each directed half-edge once (orientation consistent)
-        d = a * n + b
-        if len(np.unique(d)) != len(d):
+        d = np.sort(a * n + b)
+        if (d[1:] == d[:-1]).any():
             raise ValueError("cage faces are not consistently oriented")
 
     @property
@@ -101,9 +108,9 @@ def subdivision_matrix(cage):
     EF = sp.csr_matrix((np.ones(4 * m), (QE.ravel(), np.repeat(np.arange(m), 4))), shape=(e, m))
     Ae = 0.25 * EV + 0.25 * (EF @ Af)
     val = cage.valence.astype(float)
-    VV = (EV.T @ EV).tolil()
-    VV.setdiag(0)
-    VV = VV.tocsr()
+    VV = (EV.T @ EV).tocsr()
+    VV = (VV - sp.diags(VV.diagonal())).tocsr()
+    VV.eliminate_zeros()
     VF = sp.csr_matrix((np.ones(4 * m), (Q.ravel(), np.repeat(np.arange(m), 4))), shape=(n, m))
     D = sp.diags(1.0 / val ** 2)
     Av = sp.diags((val - 2.0) / val) + D @ VV + D @ (VF @ Af)
@@ -580,8 +587,7 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
             # M^T diag(1 + w2 count) M, and M[j] (as many rows as samples)
             # is never formed
             cnt = wP + w2 * np.bincount(j, weights=wX, minlength=len(P))
-            acc = np.zeros_like(P)
-            np.add.at(acc, j, wX[:, None] * t2)
+            acc = np.stack([np.bincount(j, weights=wX * t2[:, k], minlength=len(P)) for k in range(3)], 1)
             rhs = MT @ (wP[:, None] * t1 + w2 * acc)
             if pre is None:
                 # factor once a round, at the mean pull; conjugate gradients
@@ -597,7 +603,9 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
         folds = _folds(H, C)
         if not len(folds):
             break
-        # stiffen the cage round each fold and fit again
+        # stiffen the cage round each fold and fit again (whole cage: the
+        # later rounds also carry on the slow closest-point convergence,
+        # which the worst-point pulls need as headroom under tolerance)
         verts = np.unique(cage.Q[folds])
         ring = np.unique(cage.Q[(np.isin(cage.Q, verts)).any(1)])
         stiff[ring] *= 30.0
@@ -654,9 +662,7 @@ def _limit_normals(H, P):
     a = P[Q[:, 2]] - P[Q[:, 0]]
     b = P[Q[:, 3]] - P[Q[:, 1]]
     fn = np.cross(a, b)
-    N = np.zeros_like(P)
-    for k in range(4):
-        np.add.at(N, Q[:, k], fn)
+    N = np.stack([np.bincount(Q.ravel(), weights=np.repeat(fn[:, k], 4), minlength=len(P)) for k in range(3)], 1)
     return N / np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-300)
 
 
@@ -871,7 +877,10 @@ def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, p
         if not new:
             break
         near = cKDTree(cage.V).query_ball_point(np.array([p["at"] for p in new]), 3.0 * h)
-        frozen = np.unique(np.r_[frozen, np.concatenate([np.asarray(x, np.int64) for x in near])])
+        grown = np.unique(np.r_[frozen, np.concatenate([np.asarray(x, np.int64) for x in near])])
+        if len(grown) == len(frozen):
+            break               # the same places miss with them held: another try is the same try
+        frozen = grown
     return cage, H, dev, rep
 
 
@@ -1086,8 +1095,11 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
                 if d2v["p99"] > tol:
                     break
                 was = over(places)
+                pl2, k2 = misses(H, c2.V, mesh, e1, e2, Xc, aim, min_hole)
+                if over(pl2) > was and len(pl2) >= len(places):
+                    break               # the pull made the worst place worse: keep what there was
                 cage.V, dev, pulls, stage, d1, d2 = c2.V, d2v, pulls + 1, stage + 1, e1, e2
-                places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
+                places, kind = pl2, k2
                 if progress:
                     progress(f"worst-point pull {pulls}: max {dev['max']:.4f} mm, "
                              f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
@@ -1107,12 +1119,13 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
                 refit(c2, H2, mesh, res[2], data, fair=fair, settle=tol / 50)
             except (ValueError, RuntimeError):
                 break
-            d2v, (e1, e2, Xc) = deviation(H2, c2.V, mesh, data=check)
+            d2v, (e1, e2, X2) = deviation(H2, c2.V, mesh, data=check)
             if d2v["p99"] > tol or len(_folds(H2, c2.V)):
                 break
-            cage, H, dev, d1, d2, insets = c2, H2, d2v, e1, e2, insets + 1
+            pl2, k2 = misses(H2, c2.V, mesh, e1, e2, X2, aim, min_hole)
+            cage, H, dev, d1, d2, Xc, insets = c2, H2, d2v, e1, e2, X2, insets + 1
             wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
-            places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
+            places, kind = pl2, k2
             if progress:
                 progress(f"faces inset where the pull stalled: {len(cage.Q)} faces, max {dev['max']:.4f} mm, "
                          f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")

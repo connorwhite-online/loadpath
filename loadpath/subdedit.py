@@ -381,13 +381,16 @@ def coarse_faces(H, C, d1, d2, X, skip, bound):
 
 
 def refit(cage, H, mesh, touched, data, rings=RINGS, iterations=None, smooth=None, edge=None, settle=None,
-          fair=0.0, weights=None):
+          fair=0.0, weights=None, stiff=None, rounds=4):
     """Fit again only the control points within `rings` faces of the
     vertices `touched` (subd.fit_cage's two-way closest-point least
     squares, on the limit points those control points move and the mesh
     samples nearest them, with fit_cage's bending weight `fair` and
     per-point `weights`); every other control point stays where it is.
-    Changes cage.V in place; returns the control points that were free."""
+    Where the fitted surface folds, the membrane round the fold is
+    stiffened (x30) and only the control points round it are fitted again
+    (`rounds` times at most; the rest has settled already). Changes cage.V
+    in place; returns the control points that were free."""
     from scipy.sparse.linalg import factorized
     from scipy.spatial import cKDTree
 
@@ -421,25 +424,35 @@ def refit(cage, H, mesh, touched, data, rings=RINGS, iterations=None, smooth=Non
     Lap = sp.identity(n) - sp.diags(1.0 / cage.valence) @ W
     w2 = 0.5 * M.shape[0] / len(X)
     Qf = H.fine.Q
-    # normals of the rows from the fine quads that hold them
+    # normals of the rows from the fine quads that hold them: only the limit
+    # points those quads touch are evaluated (a refit is local; the whole
+    # limit surface each round was most of its time)
     qs = np.flatnonzero(near[Qf].any(axis=1))
+    idx, loc = np.unique(Qf[qs], return_inverse=True)
+    loc = loc.reshape(-1, 4)
+    Msub = M[idx]
+    at_rows = np.searchsorted(idx, rows)
     lam = smooth * M.shape[0] / n
     LL = Lap @ Lap
     Bend = (fair * M.shape[0] / n) * (LL.T @ LL)
-    stiff = np.ones(n)                      # raised where the surface folds, as fit_cage does
-    for rnd in range(4):
+    MtM = (MfT @ Mf).tocsc()
+    stiff = np.ones(n) if stiff is None else stiff      # raised where the surface folds, as fit_cage does
+
+    def gather(j, w, T, size):
+        return np.stack([np.bincount(j, weights=w * T[:, k], minlength=size) for k in range(3)], 1)
+    for rnd in range(1):
         Reg = (Lap.T @ sp.diags(lam * stiff) @ Lap + Bend).tocsr()[f]
         Rff, Rfx = Reg[:, f].tocsc(), Reg[:, x].tocsr()
+        pre = None
         for it in range(iterations):
-            P = M @ C
-            a = P[Qf[qs, 2]] - P[Qf[qs, 0]]
-            b = P[Qf[qs, 3]] - P[Qf[qs, 1]]
+            Ps = Msub @ C
+            a = Ps[loc[:, 2]] - Ps[loc[:, 0]]
+            b = Ps[loc[:, 3]] - Ps[loc[:, 1]]
             fn = np.cross(a, b)
-            N = np.zeros_like(P)
-            for k in range(4):
-                np.add.at(N, Qf[qs, k], fn)
-            Pr = P[rows]
-            NP = N[rows] / np.maximum(np.linalg.norm(N[rows], axis=1, keepdims=True), 1e-300)
+            N = np.stack([np.bincount(loc.ravel(), weights=np.repeat(fn[:, k], 4), minlength=len(idx))
+                          for k in range(3)], 1)
+            Pr = Ps[at_rows]
+            NP = N[at_rows] / np.maximum(np.linalg.norm(N[at_rows], axis=1, keepdims=True), 1e-300)
             q, nq = subd._closest(mesh, Pr, edge)
             ok1 = np.einsum("ij,ij->i", nq, NP) > 0.3
             t1 = Pr - np.where(ok1, np.einsum("ij,ij->i", Pr - q, nq), 0.0)[:, None] * nq
@@ -448,25 +461,32 @@ def refit(cage, H, mesh, touched, data, rings=RINGS, iterations=None, smooth=Non
             ok2 = np.einsum("ij,ij->i", NXs, Nj) > 0.3
             t2 = Pr[j] + (np.einsum("ij,ij->i", Xs - Pr[j], Nj) * ok2)[:, None] * Nj
             cnt = wP + w2 * np.bincount(j, weights=wX, minlength=len(Pr))
-            acc = np.zeros_like(Pr)
-            np.add.at(acc, j, wX[:, None] * t2)
+            acc = gather(j, wX, t2, len(Pr))
             # the held control points' share of every row moves to the right-hand side
             held = Pr - Mf @ C[f]
             rhs = MfT @ (wP[:, None] * t1 + w2 * acc - cnt[:, None] * held) - Rfx @ C[x]
-            K = (MfT @ sp.diags(cnt) @ Mf + Rff).tocsc()
-            solve = factorized(K)
-            Cf = np.stack([solve(rhs[:, k]) for k in range(3)], 1)
+            if pre is None:
+                # factor once a round at the mean pull, conjugate gradients from
+                # there (fit_cage's scheme; the counts move a little each round)
+                pre = factorized((MtM * float(cnt.mean()) + Rff).tocsc())
+
+            def K(v, cnt=cnt):
+                return MfT @ (cnt[:, None] * (Mf @ v)) + Rff @ v
+            Cf = subd._pcg(K, pre, rhs, C[f])
             step = float(np.abs(Cf - C[f]).max())
             C[f] = Cf
             if settle is not None and it >= 2 and step < settle:
                 break
-        folds = subd._folds(H, C)
-        if not len(folds):
-            break
+    cage.V = C
+    folds = subd._folds(H, C)
+    if len(folds) and rounds > 1:
         verts = np.unique(cage.Q[folds])
         ring = np.unique(cage.Q[(np.isin(cage.Q, verts)).any(1)])
+        stiff = stiff.copy()
         stiff[ring] *= 30.0
-    cage.V = C
+        f2 = refit(cage, H, mesh, verts, data, rings=rings, iterations=iterations, smooth=smooth, edge=edge,
+                   settle=settle, fair=fair, weights=weights, stiff=stiff, rounds=rounds - 1)
+        f = np.union1d(f, f2)
     return f
 
 
