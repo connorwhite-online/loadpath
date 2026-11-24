@@ -69,6 +69,17 @@ def test_the_supports_are_two_groups_and_the_handled_state_holds_one():
     assert abs(hp.bound / want - 1.0) < 0.05, (hp.bound, want)
 
 
+def test_a_seat_the_part_presses_on_is_not_an_interface_it_locates():
+    # the plate pressed up against the ceiling over its whole back as well:
+    # in the handled state the ceiling is not there, so the screws are
+    # still two groups to join
+    raw = copy.deepcopy(TWIN)
+    raw["supports"] = raw["supports"] + [
+        {"shape": {"type": "box", "min": [-51, -16, -0.5], "max": [51, 16, 0.3]}, "push": "+z"}]
+    d = _domain(raw)
+    assert d.seats and len(support_groups(d)) == 2
+
+
 def test_one_support_group_has_nothing_to_locate():
     raw = copy.deepcopy(TWIN)
     raw["supports"] = [{"shape": {"type": "box", "min": [-51, -16, -1], "max": [51, 16, 0.5]}, "fix": "xyz"}]
@@ -88,7 +99,8 @@ def test_halves_on_their_own_screws_come_out_as_one_part_when_held():
     assert held.compliance <= 1.05 * loose.compliance, (held.compliance, loose.compliance)
 
 
-TESTS = [test_the_supports_are_two_groups_and_the_handled_state_holds_one, test_one_support_group_has_nothing_to_locate,
+TESTS = [test_the_supports_are_two_groups_and_the_handled_state_holds_one,
+         test_a_seat_the_part_presses_on_is_not_an_interface_it_locates, test_one_support_group_has_nothing_to_locate,
          test_halves_on_their_own_screws_come_out_as_one_part_when_held]
 
 if __name__ == "__main__":
