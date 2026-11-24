@@ -740,7 +740,8 @@ def _seats_on(study, pts, surf, tol, faces):
         vn = _region_nodes(study, sh, pts, tol, surf)
         if len(vn) == 0:
             raise ValueError(f"supports[{i}] touches no surface node of the part")
-        out.append((vn, np.asarray(sup.push, float), _area_shares(pts, faces, vn)))
+        out.append((vn, np.asarray(sup.push, float), _area_shares(pts, faces, vn), getattr(sup, "friction", None),
+                    getattr(sup, "preload", None)))
     return out
 
 
@@ -1555,8 +1556,6 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
 
     out = {}
     seats = _seats_on(study, pts, surf, tol, bfaces)
-    if seats and backend != "native":
-        raise ValueError("a support that only pushes (supports[].push) is solved by the native backend only")
     if backend in ("native", "both"):
         springs = _pin_springs(pin_blocks, mat.E * size, len(nodes))
         if seats:
@@ -1579,11 +1578,18 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         # (its stress read from its displacements the way the native one's
         # is, averaged over the same radius: CalculiX's own nodal stress,
         # extrapolated from its integration points, is a point value)
-        us_c, _, dirs_c = _worst_directions(
-            loads, spreads,
-            lambda ls: [r[0] for r in _solve_ccx(mat, nodes, conn, supports, ls, len(pts), el, normal, m_c,
-                                                 shear_ratio)],
-            stress_of, far)
+        if seats:
+            # the same contact (pushseat.py) on CalculiX's solves: the patches'
+            # springs as springs on their means, every push a step of its own
+            us_c, dirs_c = _seated(seats, loads, spreads, nodes, size, mat.E,
+                                   lambda lowrank: _CcxSolver(mat, nodes, conn, supports, len(pts), el, lowrank),
+                                   stress_of, far)
+        else:
+            us_c, _, dirs_c = _worst_directions(
+                loads, spreads,
+                lambda ls: [r[0] for r in _solve_ccx(mat, nodes, conn, supports, ls, len(pts), el, normal, m_c,
+                                                     shear_ratio)],
+                stress_of, far)
         out["ccx"] = summarize(_read_stress(nodes, conn, us_c, mat.E, el, len(pts), radius, normal, m_c,
                                             shear_ratio), dirs_c)
         timings["ccx"] = time.time() - t2
@@ -1603,6 +1609,24 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                      **({"coarsenedFrom": asked} if size > asked else {}),
                      "mesher": mesher or ("tetwild" if _has_tetwild() and not adaptive else "gmsh"),
                      "seconds": time.time() - t0}
+
+
+class _CcxSolver:
+    """_solver's interface on CalculiX: solve(loads) -> displacements (n, 3)
+    per load, one deck a call, the seats' springs in it (write_abaqus's
+    `lowrank`)."""
+
+    def __init__(self, mat, nodes, conn, supports, n_vertices, el, lowrank):
+        self.args = (mat, nodes, conn, supports)
+        self.n_vertices, self.el, self.lowrank = n_vertices, el, lowrank
+
+    def solve(self, loads):
+        mat, nodes, conn, supports = self.args
+        return [r[0] for r in _solve_ccx(mat, nodes, conn, supports, list(loads), self.n_vertices, self.el,
+                                         lowrank=self.lowrank)]
+
+    def close(self):
+        pass
 
 
 def _ccx_material(mat, el) -> str:
@@ -1632,12 +1656,19 @@ def _ccx_material(mat, el) -> str:
             "*SOLID SECTION,ELSET=PART,MATERIAL=M,ORIENTATION=LAYERS\n")
 
 
-def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, heading=None):
+def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, heading=None, lowrank=None):
     """An Abaqus / CalculiX input deck: C3D10 elements, a node set per
     support (a pin in cylindrical axes about it), the material (layered as
     engineering constants in the layers' frame), and one static step per
     load case of nodal forces. `solver` names CalculiX's (its *STATIC
-    option); without it the deck is plain Abaqus."""
+    option); without it the deck is plain Abaqus.
+
+    `lowrank`: (rows (m x 3n), k (m,)), springs sum_j k_j (r_j . u)^2 / 2
+    on weighted means of the nodes' displacements (a seat's patches,
+    pushseat.hold): each a node of its own beyond the mesh (numbered from
+    n + 1) tied to its mean by an *EQUATION, on a SPRING1 to ground. The
+    same stiffness exactly; the steps' displacements of those nodes are
+    the patches' means."""
     if heading:
         fh.write(f"*HEADING\n{heading}\n")
     fh.write("*NODE,NSET=NALL\n")
@@ -1656,6 +1687,23 @@ def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, he
             fh.write(f"*TRANSFORM,NSET=S{k},TYPE=C\n" + ",".join(f"{v:.9g}" for v in (*a, *b)) + "\n")
             bc += [f"S{k},1,1", f"S{k},3,3"]
         bc += [f"S{k},{a + 1},{a + 1}" for a in range(3) if fix[a]]
+    if lowrank is not None:
+        rows_, kk = lowrank
+        n = len(nodes)
+        rows_ = np.asarray(rows_, float).reshape(len(kk), -1)
+        own = np.asarray([nodes[np.abs(r_).reshape(-1, 3).sum(axis=1) > 0].mean(axis=0) for r_ in rows_])
+        fh.write("*NODE,NSET=PATCHES\n")
+        np.savetxt(fh, np.column_stack([n + 1 + np.arange(len(kk)), own]), fmt="%d,%.9g,%.9g,%.9g")
+        for j, k_ in enumerate(kk):
+            fh.write(f"*ELEMENT,TYPE=SPRING1,ELSET=PS{j}\n{len(conn) + 1 + j},{n + 1 + j}\n"
+                     f"*SPRING,ELSET=PS{j}\n1\n{float(k_):.12e}\n")  # (an integer reads as no data)
+        for j in range(len(kk)):
+            dof = np.nonzero(rows_[j])[0]
+            terms = [(n + 1 + j, 1, -1.0)] + [(int(d // 3) + 1, int(d % 3) + 1, float(rows_[j][d])) for d in dof]
+            fh.write(f"*EQUATION\n{len(terms)}\n")
+            for t0 in range(0, len(terms), 4):
+                fh.write(",".join(f"{a},{b},{c:.15g}" for a, b, c in terms[t0:t0 + 4]) + "\n")
+        bc += [f"{n + 1 + j},2,3" for j in range(len(kk))]
     fh.write(_ccx_material(mat, mat.nu if el is None else el) + "*BOUNDARY\n" + "\n".join(bc) + "\n")
     for _name, f, _l in loads:
         fh.write("*STEP\n" + (f"*STATIC,SOLVER={solver}\n" if solver else "*STATIC\n") + "*CLOAD,OP=NEW\n")
@@ -1665,7 +1713,7 @@ def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, he
 
 
 def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=None, ratio=1.0,
-               shear_ratio=float(np.sqrt(3.0))):
+               shear_ratio=float(np.sqrt(3.0)), lowrank=None):
     """The quadratic system solved by CalculiX (ccx on PATH): one Abaqus-
     style deck, one static step per load case. Returns [(u, von Mises at
     the vertices)] per case, as the native solve does, and with `normal`
@@ -1682,7 +1730,7 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=No
     with tempfile.TemporaryDirectory() as tmp:
         deck = os.path.join(tmp, "job")
         with open(deck + ".inp", "w") as fh:
-            write_abaqus(fh, mat, nodes, conn, supports, loads, el, solver=solver)
+            write_abaqus(fh, mat, nodes, conn, supports, loads, el, solver=solver, lowrank=lowrank)
         # One thread unless LOADPATH_CCX_THREADS asks for more: the packaged
         # CalculiX (2.21, SPOOLES) on several threads returned a different
         # answer run to run on the same deck (a propped cantilever's
@@ -1699,7 +1747,9 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=No
         run = subprocess.run([exe, "job"], cwd=tmp, capture_output=True, text=True, timeout=7200, env=env)
         if run.returncode != 0 or not os.path.exists(deck + ".frd"):
             raise RuntimeError(f"CalculiX failed: {(run.stdout + run.stderr)[-2000:]}")
-        steps = _read_frd(deck + ".frd", len(nodes))
+        extra = 0 if lowrank is None else len(lowrank[1])
+        steps = [(u[:len(nodes)], vm[:len(nodes)], sig[:len(nodes)])
+                 for u, vm, sig in _read_frd(deck + ".frd", len(nodes) + extra)]
     if len(steps) != len(loads):
         raise RuntimeError(f"CalculiX returned {len(steps)} steps for {len(loads)} load cases")
     from .failure import bond_stress, equivalent_stress

@@ -294,9 +294,21 @@ _SUPPORT = {
         "push": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3],
                  "description": "A seat: the face rests on a wall, a table or a mating part, which pushes the "
                                 "part this way ('+z' or a vector) and holds nothing else: no pull where the "
-                                "load lifts the face off, no sliding. Hold the fasteners with their own "
+                                "load lifts the face off, no sliding unless it has friction. Hold the fasteners "
+                                "with their own "
                                 "supports. A force of unknown direction is solved with the contact in "
                                 "each direction. Not with fix, maxForce or maxMoment"},
+        "friction": {"type": "number", "minimum": 0,
+                     "description": "A seat's Coulomb friction coefficient (push only): the seat holds the part "
+                                    "across it up to this times its pressure (PLA or PETG on wood or painted "
+                                    "steel about 0.3, on rubber 0.6 or more). Left out, it holds nothing across "
+                                    "(the fasteners carry what slides). A part held only by what it rests on "
+                                    "(a stand on a desk, a clamp) needs it"},
+        "preload": {"type": "number", "minimum": 0,
+                    "description": "N a seat is pressed on with before the loads (push only): a clamp's screw, a "
+                                   "press fit. The loads change it as the part's stiffness has it; with friction "
+                                   "it is what a clamp holds by. A fastener's head seat takes its screw's preload "
+                                   "when the seats have friction"},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,

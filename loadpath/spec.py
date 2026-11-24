@@ -174,8 +174,13 @@ class Support:
     max_force: float | None = None
     max_moment: float | None = None
     # A seat (pushseat.py): the unit direction this support pushes the part in,
-    # and nothing else. It holds no pull and no sliding.
+    # and nothing else. It holds no pull, and no sliding unless it has friction.
     push: tuple[float, float, float] | None = None
+    # A seat's Coulomb friction coefficient (None: it holds nothing across)
+    # and the force it is pressed on with before the loads (N: a clamp's
+    # screw; None: none).
+    friction: float | None = None
+    preload: float | None = None
 
 
 @dataclass
@@ -1700,7 +1705,17 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                 raise ValueError(f"supports[{i}].push is the way the seat pushes the part: 'x', '-z' or a "
                                  "vector [x, y, z]") from None
             fix_t = (False, False, False)
-        supports.append(Support(region, shape, fix_t, pin, *caps, push))
+        extra = {}
+        for key, unit in (("friction", "a Coulomb coefficient, like 0.3"), ("preload", "N")):
+            v = s.get(key)
+            if v is None:
+                continue
+            if push is None:
+                raise ValueError(f"supports[{i}].{key} is a seat's (a push support's): give push too")
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 or not np.isfinite(v):
+                raise ValueError(f"supports[{i}].{key} must be a number >= 0 ({unit})")
+            extra[key] = float(v) if v > 0 else None
+        supports.append(Support(region, shape, fix_t, pin, *caps, push, **extra))
 
     cases_in = d.get("loadCases")
     if cases_in is None and "loads" in d:
@@ -1754,7 +1769,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                 raise ValueError(f"{label}: direction 'any' or a cone needs a force (its size and, for a cone, "
                                  "its axis)")
             loads.append(Load(region, shape, f, m, dist, direction=spread, cone=cone))
-        if not loads:
+        if not loads and not c.get("_clamp"):
+            # (fasteners.py's preload case is the screws' clamp alone when their seats carry it)
             raise ValueError(f"loadCases[{ci}] has no loads")
         if sum(ld.direction is not None for ld in loads) > 1:
             raise ValueError(f"loadCases[{ci}]: at most one load per case may have an unknown direction "

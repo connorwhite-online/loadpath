@@ -2273,11 +2273,15 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         elif ci in seated:
             # on seats: the contact solved per direction, the worst found on
             # the stresses of the few vectors every direction's answer is
-            # made of (pushseat.worst_stress; no thermal block here, domain.py)
+            # made of (pushseat.worst_stress); with heat, the fixed part's
+            # expansion stress counted with it, and stress over retention
             from .pushseat import worst_stress
 
             sc = seated[ci]
-            direction, mu_d, _ = worst_stress(sc, lambda v: read(stiff, v, moduli), body, strict=True)
+            off = read(stiff, np.zeros(hm.n_dof), moduli, eps) if eps is not None and idx[0] is not None else None
+            kn = None if g_node is None else 1.0 / np.maximum(g_node, 1e-3)[:, None]
+            direction, mu_d, _ = worst_stress(sc, lambda v: read(stiff, v, moduli), body, scale=kn, strict=True,
+                                              offset=off)
             f, u = sc.f(direction), sc.u(direction, mu_d)
         else:
             sp = spreads[ci]

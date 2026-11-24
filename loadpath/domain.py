@@ -547,7 +547,8 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         idx = np.nonzero(nodes)[0]
         if s.push is not None:
             share = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)[idx].astype(float)
-            seats.append((idx, np.asarray(s.push, float), share / share.sum()))
+            seats.append((idx, np.asarray(s.push, float), share / share.sum(), getattr(s, "friction", None),
+                          getattr(s, "preload", None)))
             continue
         for a in range(3):
             if s.fix[a]:
@@ -680,7 +681,8 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             spread = Spread(f.copy(), spread[0], spread[1], spread[2])
             f = spread.load(spread.nominal)
         spreads.append(spread)
-        if check_loads and not np.any(f) and study.gravity is None and not study.inertia_relief:
+        clamp = case.name == "preload" and any(len(s_) > 4 and (s_[4] or 0) > 0 for s_ in seats)
+        if check_loads and not np.any(f) and study.gravity is None and not study.inertia_relief and not clamp:
             if not applied and spread is None:
                 raise ValueError(f"load case {case.name!r} adds up to nothing at pitch {mesh.pitch:.3g} mm: its "
                                  "forces cancel on the same grid nodes (a fastener's seat and face rings closer "
@@ -704,12 +706,6 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     if study.inertia_relief:
         raw = [f.copy() for f in loads]
         loads = _inertia_relief(study, mesh, loads, fixed, tol_floor)
-    if seats and study.thermal is not None and any(sp_ is not None for sp_ in spreads):
-        # (the seat is solved per direction, pushseat.SeatedSpread; the
-        # optimizer's heat sensitivities are not seat-aware yet)
-        raise ValueError("a push support with a force of unknown direction (direction: any, or a cone) and a "
-                         "thermal block is not solved yet: give the force the directions that matter as separate "
-                         "load cases")
     if seats and check_loads and not pinned and not study.inertia_relief:
         _seated_statics(study, xyz, fixed, seats, loads, spreads)
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
@@ -755,13 +751,60 @@ def _seated_statics(study, xyz, fixed, seats, loads, spreads=None) -> None:
     proj = np.eye(6) - q @ q.T
     if np.abs(proj).max() < 1e-9:
         return                                        # the fixed supports hold every rigid motion
-    seat_cols = []
-    for idx, n, _ in seats:
-        idx = np.asarray(idx)
-        if len(idx) > 400:
-            idx = idx[np.linspace(0, len(idx) - 1, 400).astype(int)]
-        seat_cols.append(wrench(idx, np.repeat(np.asarray(n, float)[None], len(idx), axis=0)))
+    seat_cols, fric_cols, fric_mu = [], [], []
+    # friction across a seat (pushseat.py) as eight forces round each node, bounded together by
+    # mu times its push: the octagon round the friction disc, so a case that holds is never refused
+    ring = 2 * np.pi * np.arange(8) / 8
+    widen = 1.0 / np.cos(np.pi / 8)
+    for s in seats:
+        idx, n = np.asarray(s[0]), np.asarray(s[1], float)
+        mu = float(s[3] or 0.0) if len(s) > 3 else 0.0
+        most = 100 if mu > 0 else 400
+        if len(idx) > most:
+            idx = idx[np.linspace(0, len(idx) - 1, most).astype(int)]
+        if mu > 0:
+            from .pushseat import _across
+
+            a, b_ = _across(n)
+            for k, t in enumerate(ring):
+                fric_cols.append(wrench(idx, np.repeat((np.cos(t) * a + np.sin(t) * b_)[None], len(idx), axis=0)))
+            fric_mu.append((len(np.concatenate(seat_cols, axis=0)) if seat_cols else 0, len(idx), mu * widen))
+        seat_cols.append(wrench(idx, np.repeat(n[None], len(idx), axis=0)))
     sw = (proj @ (np.concatenate(seat_cols, axis=0) * sc).T)
+    sf = (proj @ (np.concatenate(fric_cols, axis=0) * sc).T) if fric_cols else None
+
+    def balance(b):
+        """(seat pushes, what is left unbalanced) for the wrench b."""
+        if sf is None:
+            lam, _ = nnls(sw, b, maxiter=50 * sw.shape[1])
+            return b - sw @ lam
+        import scipy.sparse as sp_
+        from scipy.optimize import linprog
+
+        nl, nf = sw.shape[1], sf.shape[1]
+        # columns: pushes, friction (8 per node, seat by seat, direction-major), slack +, slack -
+        a_eq = np.concatenate([sw, sf, np.eye(6), -np.eye(6)], axis=1)
+        rows, cols, vals = [], [], []
+        f0, r = 0, 0
+        for start, count, m in fric_mu:
+            for j in range(count):
+                for k in range(8):
+                    rows.append(r)
+                    cols.append(nl + f0 + k * count + j)
+                    vals.append(1.0)
+                rows.append(r)
+                cols.append(start + j)
+                vals.append(-m)
+                r += 1
+            f0 += 8 * count
+        a_ub = sp_.csr_matrix((vals, (rows, cols)), shape=(r, nl + nf + 12))
+        cost = np.concatenate([np.zeros(nl + nf), np.ones(12)])
+        res = linprog(cost, A_ub=a_ub, b_ub=np.zeros(r), A_eq=a_eq, b_eq=b, bounds=(0, None), method="highs")
+        if res.status != 0:
+            lam, _ = nnls(sw, b, maxiter=50 * sw.shape[1])
+            return b - sw @ lam
+        x = res.x
+        return b - sw @ x[:nl] - sf @ x[nl:nl + nf]
     for ci, (case, f) in enumerate(zip(study.load_cases, loads)):
         if spreads and ci < len(spreads) and spreads[ci] is not None:
             continue                                  # a force of unknown direction: pushseat.SeatedSpread
@@ -774,10 +817,10 @@ def _seated_statics(study, xyz, fixed, seats, loads, spreads=None) -> None:
         total = float(np.abs(fn).sum())
         if np.linalg.norm(b) < 1e-6 * total:
             continue
-        lam, res = nnls(sw, b, maxiter=50 * sw.shape[1])
-        if res <= 1e-3 * max(np.linalg.norm(wl), 1e-12):
+        rest = balance(b)
+        if np.linalg.norm(rest) <= 1e-3 * max(np.linalg.norm(wl), 1e-12):
             continue
-        left = -(b - sw @ lam)                       # what nothing balances: where the part goes
+        left = -rest                                 # what nothing balances: where the part goes
         fpart, mpart = left[:3], left[3:]
         if np.linalg.norm(fpart) >= np.linalg.norm(mpart):
             d = fpart / np.linalg.norm(fpart)
@@ -791,7 +834,9 @@ def _seated_statics(study, xyz, fixed, seats, loads, spreads=None) -> None:
                    f"turning about [{', '.join(f'{v:.2f}' for v in d)}]")
         raise ValueError(
             f"load case {case.name!r} lifts the part off its seat and nothing else holds it {way}: "
-            "a seat (supports[].push) only pushes. Hold it where it is really held that way: write the screws "
+            "a seat (supports[].push) only pushes" + (", and holds across only by its friction" if sf is not None
+                                                      else " (give it friction to hold across)") +
+            ". Hold it where it is really held that way: write the screws "
             "as `fasteners` with their bores as supports (a screw's head then holds the part along it), "
             "fix a bore or face along that axis, or add a seat on the face the load presses it against")
 

@@ -1514,7 +1514,7 @@ class StudyHeat:
         return f
 
     def sensitivities(self, fe, xe, rhs, us, fth, weights, gravity=None, state=None, layout=None,
-                      spreads=None, smooth=None):
+                      spreads=None, smooth=None, seated=None):
         """(objective, per-case objective, gradient w.r.t. xe, per-case worst
         direction or None) of the weighted cases at the last temperature(xe),
         in fe's units (forces in N, u scaled by E0). `rhs` (directions.expand,
@@ -1532,7 +1532,16 @@ class StudyHeat:
         carry no expansion (their adjoints are their displacements). The
         worst d is the same 3x3 problem as for compliance, and the gradient
         is the soft maximum over directions that directions.collapse uses,
-        with lam = lam0 + U d beside u = u0 + U d."""
+        with lam = lam0 + U d beside u = u0 + U d.
+
+        On seats (`seated`: {case: pushseat.SeatedSpread}) the contact is
+        solved per direction, so J(d) is not quadratic: it is read at the
+        case's spread of directions and the compliance's worst (u(d) from
+        the seated answer, J = u.(f - 2 fth) + S), the worst taken, and the
+        gradient is the soft maximum's over those, each direction's adjoint
+        its answer plus the fixed part's expansion term (lam0 - u0, read
+        without the contact, as a plain seated case's adjoint is). The
+        worst direction and its pushes go to state["seated_last"]."""
         from .directions import SMOOTH, _cap_samples, worst_direction
         from .fem import elastic_c
         from .simp import ALIVE, E_MIN, PENALTY
@@ -1577,6 +1586,35 @@ class StudyHeat:
                 jc = float(us[i] @ rmod[i]) + S
                 pairs = [(1.0, lams[i], us[i])]
                 lam_m, u_m, d = lams[i], us[i], None
+            elif seated and ci in seated:
+                case = seated[ci]
+                i0 = idx[0]
+                rows = case.samples(60, (state.get("seated_last") or {}).get(ci, (None,))[0])
+                q = case.coefficients(rows)
+                # fth . each basis vector: J = c - 2 fth.u + S on the samples
+                nb = q.shape[1]
+                if self.expands:
+                    th = np.array([fth @ case.combine(np.eye(nb)[k]) for k in range(nb)])
+                else:
+                    th = np.zeros(nb)
+                vals = np.array([r[1] for r in rows]) - 2.0 * q @ th + S
+                k_w = int(np.argmax(vals))
+                d, jc = np.asarray(rows[k_w][0], float), float(vals[k_w])
+                state.setdefault("seated_last", {})[ci] = (d, rows[k_w][2])
+                w = np.exp(smooth * (vals - jc) / max(abs(jc), 1e-300))
+                w /= w.sum()
+                mu_, vec = np.linalg.eigh((q * w[:, None]).T @ q)
+                keep = [k for k in np.argsort(-mu_)[:8] if mu_[k] > 1e-9 * mu_.max()]
+                # the adjoint: the answer, plus the expansion's own term on the fixed part
+                extra = (lams[i0] - us[i0]) if (self.expands and i0 is not None) else None
+                pairs = []
+                for k in keep:
+                    u_k = case.combine(vec[:, k])
+                    l_k = u_k if extra is None else u_k + vec[0, k] * extra
+                    pairs.append((float(mu_[k]), l_k, u_k))
+                mean = w @ q
+                u_m = case.combine(mean)
+                lam_m = u_m if extra is None else u_m + mean[0] * extra
             else:
                 i0, ib = idx[0], idx[1:]
                 ub = [us[i] for i in ib]

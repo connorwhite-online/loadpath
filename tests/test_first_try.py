@@ -656,30 +656,6 @@ def test_the_optimizer_designs_a_seated_part_for_a_force_of_unknown_direction():
     assert 2 * worst(robust.xphys) < worst(nominal.xphys)
 
 
-TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
-
-
-def main():
-    failures = 0
-    for t in TESTS:
-        t0 = time.time()
-        try:
-            t()
-            print(f"PASS {t.__name__} ({time.time() - t0:.1f}s)")
-        except Exception:  # noqa: BLE001
-            failures += 1
-            print(f"FAIL {t.__name__}")
-            traceback.print_exc()
-    if failures:
-        print(f"\n{failures}/{len(TESTS)} FAILED")
-        sys.exit(1)
-    print(f"\nall {len(TESTS)} passed")
-
-
-if __name__ == "__main__":
-    main()
-
-
 def test_the_constrained_limit_steps_by_its_measured_response():
     """While every constrained run passes, the limit is relaxed by the
     square root of the first reading, then by the step the measured slope
@@ -810,3 +786,27 @@ def test_a_holes_roof_across_the_layers_is_a_bridge_not_unreachable_drawn_geomet
     active2 |= peg
     w = _unprintable_preserve((2, 1), dims, active2.reshape(-1), peg.reshape(-1), 1.0, (0, 0, 0), process="fdm")
     assert w and "cannot be reached" in w[0]
+
+
+TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
+
+
+def main():
+    failures = 0
+    for t in TESTS:
+        t0 = time.time()
+        try:
+            t()
+            print(f"PASS {t.__name__} ({time.time() - t0:.1f}s)")
+        except Exception:  # noqa: BLE001
+            failures += 1
+            print(f"FAIL {t.__name__}")
+            traceback.print_exc()
+    if failures:
+        print(f"\n{failures}/{len(TESTS)} FAILED")
+        sys.exit(1)
+    print(f"\nall {len(TESTS)} passed")
+
+
+if __name__ == "__main__":
+    main()

@@ -1065,6 +1065,18 @@ def _held_pieces(fe, domain, xp) -> int:
     return len(np.unique(lbl[ijk][fe.anchor]))
 
 
+def _seated_reference(fe, state):
+    """Under heat, the worst direction thermal.sensitivities found for each
+    uncertain case on seats, and its pushes: the next solve's reference push
+    (as _Analysis.seated_worst keeps it without heat)."""
+    last = state.get("seated_last") or {}
+    st = getattr(fe, "_seat", None)
+    if st is None:
+        return
+    for ci, (d, mu) in last.items():
+        st["dir"][ci], st["ref"][ci] = d, mu
+
+
 def _heat_state(heat, x, fg, reuse=False):
     """Solve the temperature at densities x and return (self-weight plus
     expansion load, expansion load or None), in the optimizer's units: forces
@@ -1534,7 +1546,8 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         case_c = []
         if heat is not None:
             comp, case_c, dc_xp, _ = heat.sensitivities(fe, xe, rhs, us, fth, weights, domain.gravity, heat_state,
-                                                        layout, spreads)
+                                                        layout, spreads, seated=fe.seated_cases())
+            _seated_reference(fe, heat_state)
             if accs is not None:
                 dc_xp += _relief_heat_grad(domain, heat, heat_state, xe, us, accs, layout, weights)
         wcs = collapse(rhs, layout, us, spreads, seated=fe.seated_worst()) if heat is None else ()
@@ -2162,8 +2175,13 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
             fg, fth = _heat_state(heat, xp, fg)
             loads, layout = expand(_relieved(domain, xp)[0], spreads, fg)
             us = fe.solve(stiff * heat.g, xp, us, rtol=1e-6, loads=loads)
+        if getattr(domain, "seats", None):
+            # (as below, at the hot moduli)
+            fe._seat["ws"] = None
+            us = fe.solve(stiff * heat.g, xp, us, rtol=1e-6, loads=loads, layout=layout)
         comp, case_c, _, heat_d = heat.sensitivities(fe, xp, loads, us, fth, weights, domain.gravity, heat_state,
-                                                     layout, spreads)
+                                                     layout, spreads, seated=fe.seated_cases())
+        _seated_reference(fe, heat_state)
         stiff = stiff * heat.g
     if heat is None and getattr(domain, "seats", None):
         # the seats' state is the last solve's, and a pruning pass may have
