@@ -489,7 +489,7 @@ def test_a_part_that_only_its_seat_stops_is_solved_and_one_that_lifts_off_is_ref
         assert "lifts the part off its seat" in str(exc)
 
 
-def test_a_push_support_is_refused_with_fix_or_a_force_of_unknown_direction():
+def test_a_push_support_is_refused_with_fix():
     base = {"designSpace": [_box([0, 0, 0], [60, 10, 4])],
             "supports": [{"shape": _box([19, 0, -0.1], [21, 10, 4.1])},
                          {"shape": _box([0, 0, -0.2], [60, 10, 0.05]), "push": "+z"}],
@@ -534,6 +534,126 @@ def test_the_optimizer_solves_a_push_support_as_contact():
         assert lam.min() >= 0 and lam.sum() > 0
         assert gap.min() > -0.03 * np.abs(us[0]).max(), (k, gap.min())
         assert lam[z > 15].sum() < 0.02 * lam.sum()       # the load tips the top off the wall: the heel bears
+
+
+def _pried_plate(cases, pitch=1.0):
+    """A plate on a seat under its whole face, hinged on a line across it at
+    x = 20 (held there in z and y, and in x along the bottom), loaded at
+    its far end: pried up, the heel bears on the seat; pressed down, the
+    seat carries it. `cases`: [(name, load fields)]."""
+    import trimesh
+
+    st = study_from_dict({
+        "designSpace": [_box([0, 0, 0], [60, 10, 4])],
+        "supports": [{"shape": _box([19.9, 0, -0.1], [20.1, 10, 4.1]), "fix": "z"},
+                     {"shape": _box([19.9, 0, -0.1], [20.1, 10, 4.1]), "fix": "y"},
+                     {"shape": _box([19.9, 0, -0.5], [20.1, 10, 0.1]), "fix": "x"},
+                     {"shape": _box([0, 0, -0.5], [60, 10, 0.1]), "push": "+z"}],
+        "loadCases": [{"name": n, "loads": [{"shape": _box([58, 0, 3.9], [60, 10, 4.1]), **ld}]} for n, ld in cases],
+        "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": pitch}})
+    m = trimesh.creation.box(extents=[60, 10, 4])
+    m.apply_translation([30, 5, 2])
+    return st, m
+
+
+def test_a_force_of_unknown_direction_on_a_seat_is_solved_in_each_direction():
+    """A seat lets go where the force lifts it, so a force of unknown
+    direction is not three axis solves added up: the contact is solved per
+    direction (pushseat.SeatedSpread), in the gaps' space from the axis
+    solves and the patches' unit pushes. Every direction's answer is the
+    one a seated solve of that force alone gives, and the worst direction's
+    compliance is the most over the sphere."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from loadpath import pushseat
+    from loadpath.directions import expand
+    from loadpath.verify import _analysis_grid, _solve_grid
+
+    st, m = _pried_plate([("any", {"force": [0, 0, 50], "direction": "any"})])
+    g = _analysis_grid(st, m, float(m.volume), 20000)
+    hm, bc = g.hm, g.bc
+    ps = pushseat.patches(bc.seats, hm.node_xyz, hm.n_dof)
+    ks, held = pushseat.hold(ps, hm.node_xyz, g.pitch)
+    gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=held)})
+
+    def inner(r):
+        return _solve_grid(st, gs, st.elastic(st.material), st.material.E, r)
+
+    rhs, layout = expand(bc.loads, bc.spreads)
+    _, _, _, cases = pushseat.solve_cases(inner, rhs, ps, st.material.E * ks, layout=layout, spreads=bc.spreads)
+    case = cases[0]
+    rows = case.samples(200)
+    worst = rows[-1]
+    assert worst[1] >= max(r[1] for r in rows[:-1]) * (1 - 1e-12)
+    for d in (worst[0], np.array([0, 0, 1.0]), np.array([0, 0, -1.0]), np.array([0, 0.6, 0.8])):
+        c, _, mu, lam, _ = case.at(d)
+        _, us, lam1 = pushseat.solve(inner, [case.f(d)], ps, st.material.E * ks)
+        assert abs(case.f(d) @ us[0] / c - 1) < 1e-9, d
+        assert np.abs(case.u(d, mu) - us[0]).max() < 1e-9 * np.abs(us[0]).max(), d
+        assert np.abs(lam - lam1[0]).max() < 1e-6 * max(lam.sum(), 1e-9)
+    # pried up the heel bears; pressed down the plate lies on the seat, far stiffer
+    up, down = case.at(np.array([0, 0, 1.0])), case.at(np.array([0, 0, -1.0]))
+    assert up[0] > 100 * down[0] and up[3].sum() > 0 and down[3].sum() > 0
+
+
+def test_the_checks_judge_a_seated_part_in_the_worst_direction_and_the_tet_check_solves_the_seat():
+    """The grid's check and the tetrahedral one solve a force of unknown
+    direction on a seated part per direction and judge it in the one that
+    stresses the part most: no less than the worst axis. The tet check
+    solves the seat itself now (it declined push studies): pried up it
+    reads the grid's lift, pressed down the seat holds the plate."""
+    from loadpath.crosscheck import crosscheck, unsupported
+    from loadpath.verify import verify_part
+
+    st, m = _pried_plate([("up", {"force": [0, 0, 50]}), ("down", {"force": [0, 0, -50]}),
+                          ("any", {"force": [0, 0, 50], "direction": "any"})])
+    assert unsupported(st) is None
+    grid = {c["name"]: c for c in verify_part(st, m)["cases"]}
+    assert grid["any"]["peakStress"] >= grid["up"]["peakStress"] * 0.999
+    assert len(grid["any"]["worstDirection"]) == 3
+    tet = {c["name"]: c for c in crosscheck(st, m, size=1.0)["cases"]}
+    assert abs(tet["up"]["deflection"] / grid["up"]["deflection"] - 1) < 0.1, (tet["up"], grid["up"])
+    assert tet["down"]["deflection"] < 0.01 * tet["up"]["deflection"]
+    assert tet["any"]["peakStress"] >= tet["up"]["peakStress"] * 0.999
+    assert tet["any"]["deflection"] > 0.5 * tet["up"]["deflection"]
+
+
+def test_the_optimizer_designs_a_seated_part_for_a_force_of_unknown_direction():
+    """The optimizer judges a force of unknown direction on a seated part in
+    its worst direction with the contact solved in each: the design made for
+    it is several times stiffer in its worst direction than the one made for
+    the force as written, read the same way; and the run's own number is the
+    delivered design's."""
+    from loadpath.directions import collapse, expand
+    from loadpath.domain import build_domain
+    from loadpath.simp import E_MIN, PENALTY, SimpOptions, _Analysis, optimize
+
+    def study(direction):
+        ld = {"shape": _box([26, -8, 19], [30, 8, 20.5]), "force": [0, 0, -60]}
+        if direction:
+            ld["direction"] = direction
+        return study_from_dict({
+            "designSpace": [_box([0, -10, 0], [30, 10, 20])],
+            "supports": [{"shape": _box([-0.5, -8, 13], [0.6, -4, 17])},
+                         {"shape": _box([-0.5, 4, 13], [0.6, 8, 17])},
+                         {"shape": _box([-0.5, -10, 0], [0.2, 10, 20]), "push": "+x"}],
+            "loads": [ld], "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2},
+            "resolution": {"pitch": 2.0}})
+
+    opts = SimpOptions(volume_fraction=0.25, filter_radius=3.0, max_iterations=30, escape=None)
+    d = build_domain(study("any"))
+    robust = optimize(d, 0.35, opts)
+    nominal = optimize(build_domain(study(None)), 0.35, opts)
+    rhs, layout = expand(d.loads, d.spreads)
+
+    def worst(xp):
+        fe = _Analysis(d, 0.35, 1e-8)
+        us = fe.solve(E_MIN + xp ** PENALTY * (1 - E_MIN), xp, [None] * len(rhs), loads=rhs, layout=layout)
+        return collapse(rhs, layout, us, d.spreads, seated=fe.seated_worst())[0].compliance
+
+    assert abs(worst(robust.xphys) / robust.compliance - 1) < 1e-3, (worst(robust.xphys), robust.compliance)
+    assert 2 * worst(robust.xphys) < worst(nominal.xphys)
 
 
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]

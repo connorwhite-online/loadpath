@@ -704,10 +704,12 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     if study.inertia_relief:
         raw = [f.copy() for f in loads]
         loads = _inertia_relief(study, mesh, loads, fixed, tol_floor)
-    if seats and any(sp_ is not None for sp_ in spreads):
-        raise ValueError("a push support with a force of unknown direction (direction: any, or a cone) is not "
-                         "solved yet: a seat lets go where it is lifted, so the directions do not add up from "
-                         "unit loads. Give the force the directions that matter as separate load cases")
+    if seats and study.thermal is not None and any(sp_ is not None for sp_ in spreads):
+        # (the seat is solved per direction, pushseat.SeatedSpread; the
+        # optimizer's heat sensitivities are not seat-aware yet)
+        raise ValueError("a push support with a force of unknown direction (direction: any, or a cone) and a "
+                         "thermal block is not solved yet: give the force the directions that matter as separate "
+                         "load cases")
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
                               case_wet, imbalance, spreads, raw, pinned=pinned, seats=seats)
 

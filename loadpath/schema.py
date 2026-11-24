@@ -295,7 +295,8 @@ _SUPPORT = {
                  "description": "A seat: the face rests on a wall, a table or a mating part, which pushes the "
                                 "part this way ('+z' or a vector) and holds nothing else: no pull where the "
                                 "load lifts the face off, no sliding. Hold the fasteners with their own "
-                                "supports. Not with fix, maxForce or maxMoment"},
+                                "supports. A force of unknown direction is solved with the contact in "
+                                "each direction. Not with fix, maxForce or maxMoment"},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,

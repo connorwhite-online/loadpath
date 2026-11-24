@@ -2087,9 +2087,11 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     axis_bond = np.zeros(3)
     spreads = bc.spreads or [None] * len(study.load_cases)
 
-    seat_forces = []
+    # with seats and a force of unknown direction: per rhs list solved, the
+    # cases solved per direction (pushseat.SeatedSpread), by case
+    seated = {}
 
-    def solve(moduli, rhs):
+    def solve(moduli, rhs, layout=None, into=None):
         if bc.seats:
             # supports that only push (pushseat.py): their forces are solved with the cases,
             # on springs that hold the seat for the solves and are taken out again
@@ -2102,9 +2104,12 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             ks, held = pushseat.hold(ps, hm.node_xyz, g.pitch)
             sprung = held if bc.springs is None else (bc.springs + held).tocsr()
             gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=sprung)})
-            stiff, us, lam = pushseat.solve(lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r), rhs,
-                                            ps, mat.E * ks, xyz=hm.node_xyz)
-            seat_forces[:] = lam
+            stiff, us, _, cases = pushseat.solve_cases(
+                lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r), rhs, ps, mat.E * ks,
+                xyz=hm.node_xyz, layout=layout, spreads=spreads if layout is not None else None)
+            if into is not None:
+                into.clear()
+                into.update(cases)
             return stiff, us
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
 
@@ -2216,7 +2221,7 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         _bk_pool = pool(2)
         early_bk = _bk_pool.submit(_buckling, study, mesh.copy(), vol, pitch, contact_band, [None] * len(study.load_cases))
         _bk_pool.shutdown(wait=False)
-    stiff, displacements = solve(moduli, rhs)
+    stiff, displacements = solve(moduli, rhs, layout, seated)
     cold = None
     if study.thermal is not None and heat.cold is not None:
         # The cycle's coldest moment, solved the same way: a part held at a
@@ -2232,8 +2237,9 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             fth_c = heat.load(np.ones(hm.n_elem), mat.E)
             fg_c = fth_c if fg_c is None else fg_c + fth_c
         rhs_c = expand(bc.loads, spreads, fg_c)[0]
-        stiff_c, disp_c = solve(mod_c, rhs_c)
-        cold = (stiff_c, disp_c, mod_c, eps_c, g_c)
+        seated_c = {}
+        stiff_c, disp_c = solve(mod_c, rhs_c, layout, seated_c)
+        cold = (stiff_c, disp_c, mod_c, eps_c, g_c, seated_c)
     from scipy.spatial import cKDTree
     cases = []
     worst_sf = np.inf
@@ -2264,6 +2270,15 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         direction = None
         if len(idx) == 1:
             f, u = rhs[idx[0]], displacements[idx[0]]
+        elif ci in seated:
+            # on seats: the contact solved per direction, the worst found on
+            # the stresses of the few vectors every direction's answer is
+            # made of (pushseat.worst_stress; no thermal block here, domain.py)
+            from .pushseat import worst_stress
+
+            sc = seated[ci]
+            direction, mu_d, _ = worst_stress(sc, lambda v: read(stiff, v, moduli), body, strict=True)
+            f, u = sc.f(direction), sc.u(direction, mu_d)
         else:
             sp = spreads[ci]
             # the fixed part carries the expansion, the uncertain force none;
@@ -2401,8 +2416,10 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             sf = min(sf, sf_inter)
         cyc_row = {}
         if cold is not None:
-            stiff_c, disp_c, mod_c, eps_c, g_c = cold
-            if len(idx) == 1:
+            stiff_c, disp_c, mod_c, eps_c, g_c, seated_c = cold
+            if ci in seated_c:
+                u_c = seated_c[ci].u(direction, seated_c[ci].at(direction)[2])
+            elif len(idx) == 1:
                 u_c = disp_c[idx[0]]
             else:
                 u_c = sum(direction[j] * disp_c[i] for j, i in enumerate(idx[1:]))

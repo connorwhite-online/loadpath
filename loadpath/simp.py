@@ -134,7 +134,8 @@ class _Analysis:
 
             ps = pushseat.patches(domain.seats, domain.mesh.node_xyz, domain.mesh.n_dof)
             ks, held = pushseat.hold(ps, domain.mesh.node_xyz, domain.mesh.pitch)
-            self._seat = {"n": 0, "ps": ps, "ks": ks, "ws": None, "lam": {}, "mu": {}}
+            self._seat = {"n": 0, "ps": ps, "ks": ks, "ws": None, "lam": {}, "mu": {}, "ref": {}, "dir": {},
+                          "cases": {}}
             self._springs = held if domain.springs is None else (domain.springs + held).tocsr()
         self.nu = nu
         self.rtol = rtol
@@ -296,12 +297,21 @@ class _Analysis:
                      "solver": {}, "mesh": sub, "age": 0}
         return keep, fd, self._sub["stiff"], (self._sub["solver"], sub)
 
-    def solve(self, e, xp, us, rtol=None, loads=None):
+    def solve(self, e, xp, us, rtol=None, loads=None, layout=None):
         """Solve every load case for moduli e. Returns per-case displacement on
         the full node set. `loads` overrides the domain's (self-weight makes
-        them depend on the design)."""
+        them depend on the design). `layout` (directions.expand): which of
+        the loads are a case's uncertain force along each axis; with seats
+        those cases are solved per direction (seated_cases), and a layout
+        given once holds for later calls with as many loads."""
         if getattr(self.domain, "seats", None):
-            return self._solve_seated(e, xp, us, rtol, loads)
+            if layout is not None:
+                self._layout = layout
+            lay = getattr(self, "_layout", None)
+            n_rhs = len(loads if loads is not None else self.domain.loads)
+            if lay is not None and sum(1 if len(i) == 1 else 3 + (i[0] is not None) for i in lay) != n_rhs:
+                lay = None
+            return self._solve_seated(e, xp, us, rtol, loads, lay)
         return self._solve_safe(e, xp, us, rtol, loads)
 
     def _solve_safe(self, e, xp, us, rtol, loads):
@@ -316,7 +326,7 @@ class _Analysis:
     # solves between two readings of the seats' own compliance
     SEAT_EVERY = 8
 
-    def _solve_seated(self, e, xp, us, rtol, loads):
+    def _solve_seated(self, e, xp, us, rtol, loads, layout=None):
         """The cases with the domain's seats pushing (pushseat.py). The
         seats' pushes are loads here (on the springs that hold the seats for
         the solves), so every answer is in equilibrium with them. Their
@@ -324,7 +334,13 @@ class _Analysis:
         design moves a little between two) and the pushes are corrected
         against it in between: one more solve of a case only when they
         moved. A design the seat cannot hold yet is the optimizer's to mend,
-        so nothing raises here."""
+        so nothing raises here.
+
+        A case whose force has no known direction (in `layout`) is solved
+        without pushes along each axis, and with the push its worst direction
+        took last time as one more load (the reference): the case is then a
+        pushseat.SeatedSpread on the seats' compliance in hand, exact at the
+        reference push (seated_cases)."""
         from . import pushseat
 
         d = self.domain
@@ -332,30 +348,71 @@ class _Analysis:
         st = self._seat
         ps, ks = st["ps"], st["ks"]
         pm = np.array(ps)
-        mu0 = [st["mu"].get(i, np.zeros(len(ps))) for i in range(len(loads))]
+        spreads = getattr(d, "spreads", None) or []
+        lay = layout or [(i,) for i in range(len(loads))]
+        single = {idx[0] for idx in lay if len(idx) == 1}
+        mu0 = [st["mu"].get(i, np.zeros(len(ps))) if i in single else np.zeros(len(ps)) for i in range(len(loads))]
         fresh = st["ws"] is None or st["n"] % self.SEAT_EVERY == 0
         st["n"] += 1
         pushed = [f + mu @ pm for f, mu in zip(loads, mu0)]
+        # the reference pushes of the uncertain cases
+        refs = [(ci, st["ref"][ci]) for ci, idx in enumerate(lay) if len(idx) > 1 and ci in st["ref"]]
+        extra = [mu @ pm for _, mu in refs]
+        n = len(loads)
         if fresh:
-            out = self._solve_safe(e, xp, list(us) + (st["ws"] or [None] * len(ps)), rtol, pushed + ps)
-            us, st["ws"] = list(out[:len(loads)]), list(out[len(loads):])
+            out = self._solve_safe(e, xp, list(us) + [None] * len(extra) + (st["ws"] or [None] * len(ps)), rtol,
+                                   pushed + extra + ps)
+            us, ur, st["ws"] = list(out[:n]), list(out[n:n + len(extra)]), list(out[n + len(extra):])
         else:
-            us = list(self._solve_safe(e, xp, list(us), rtol, pushed))
+            out = self._solve_safe(e, xp, list(us) + [None] * len(extra), rtol, pushed + extra)
+            us, ur = list(out[:n]), list(out[n:])
         # each case's pushes against the compliance in hand: u = (u - W mu0) + W mu
         wm = np.array(st["ws"])
-        base = [u - mu @ wm for u, mu in zip(us, mu0)]
-        done = pushseat.resolve(base, st["ws"], ps, ks, strict=False)
+        seat = pushseat.Seat(ps, st["ws"], ks)
         again = []
-        for i, (u, lam, mu) in enumerate(done):
+        for i in sorted(single):
+            base = us[i] - mu0[i] @ wm
+            _, mu, lam, _ = seat.push(seat.gaps(base))
+            u = seat.apply(base, mu)
             st["lam"][i], st["mu"][i] = lam, mu
             if fresh:
                 us[i] = u          # exact: the compliance is this design's
             elif np.abs(mu - mu0[i]).sum() > 0.02 * max(np.abs(mu).sum(), 1e-12):
                 again.append(i)
         if again:
-            us = list(self._solve_safe(e, xp, [done[i][0] if i in again else us[i] for i in range(len(loads))],
-                                       rtol, [f + st["mu"][i] @ pm for i, f in enumerate(loads)]))
+            redo = self._solve_safe(e, xp, [us[i] for i in again], rtol, [loads[i] + st["mu"][i] @ pm for i in again])
+            for i, u in zip(again, redo):
+                us[i] = u
+        cases = {}
+        ref_of = {ci: (mu, u) for (ci, mu), u in zip(refs, ur)}
+        for ci, idx in enumerate(lay):
+            if len(idx) == 1:
+                continue
+            i0 = idx[0]
+            cases[ci] = pushseat.SeatedSpread(seat, loads[i0] if i0 is not None else None,
+                                              us[i0] if i0 is not None else None, [loads[i] for i in idx[1:]],
+                                              [us[i] for i in idx[1:]], spreads[ci], ref=ref_of.get(ci))
+        st["cases"] = cases
         return us
+
+    def seated_cases(self):
+        """{case: pushseat.SeatedSpread} of the last solve: the cases whose
+        force has no known direction, on seats."""
+        return getattr(self, "_seat", {}).get("cases", {}) if getattr(self.domain, "seats", None) else {}
+
+    def seated_worst(self, smooth=None):
+        """directions.collapse's `seated`: per uncertain case on seats, its
+        worst direction (from last time's) and the soft maximum's terms; the
+        worst direction's push is the next solve's reference."""
+        from .directions import SMOOTH
+
+        out = {}
+        st = getattr(self, "_seat", None)
+        for ci, case in self.seated_cases().items():
+            wc = case.worst(SMOOTH if smooth is None else smooth, start=st["dir"].get(ci))
+            st["dir"][ci], st["ref"][ci] = case.last
+            out[ci] = wc
+        return out
 
     def _solve(self, e, xp, us, rtol=None, loads=None):
         d = self.domain
@@ -1471,7 +1528,7 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         # still soft; tighten the solve as the projection sharpens.
         rtol = opts.solve_rtol * (10.0 if beta <= 2 else 3.0 if beta <= 8 else 1.0) if opts.adaptive_rtol \
             else opts.solve_rtol
-        us = fe.solve(e, xe, us, rtol=rtol, loads=rhs)
+        us = fe.solve(e, xe, us, rtol=rtol, loads=rhs, layout=layout)
         dc_xp = np.zeros(n)
         comp = 0.0
         case_c = []
@@ -1480,7 +1537,7 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
                                                         layout, spreads)
             if accs is not None:
                 dc_xp += _relief_heat_grad(domain, heat, heat_state, xe, us, accs, layout, weights)
-        wcs = collapse(rhs, layout, us, spreads) if heat is None else ()
+        wcs = collapse(rhs, layout, us, spreads, seated=fe.seated_worst()) if heat is None else ()
         if bind is not None:
             weights, _ = binding_weights(bind, [wc.compliance for wc in wcs], opts.binding_power)
         for ci, wc in enumerate(wcs):
@@ -2074,7 +2131,7 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         fg, fth = _heat_state(heat, xp, fg)
         e = e * heat.g
     loads, layout = expand(_relieved(domain, xp)[0], spreads, fg)
-    us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
+    us = fe.solve(e, xp, us, rtol=1e-6, loads=loads, layout=layout)
     if opts.prune:
         if fth is not None:
             # dead ends are judged by what the loads put through them. The
@@ -2108,7 +2165,12 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         comp, case_c, _, heat_d = heat.sensitivities(fe, xp, loads, us, fth, weights, domain.gravity, heat_state,
                                                      layout, spreads)
         stiff = stiff * heat.g
-    for ci, wc in enumerate(collapse(loads, layout, us, spreads)):
+    if heat is None and getattr(domain, "seats", None):
+        # the seats' state is the last solve's, and a pruning pass may have
+        # been undone since: this design's, with the seats' compliance read anew
+        fe._seat["ws"] = None
+        us = fe.solve(stiff, xp, us, rtol=1e-6, loads=loads, layout=layout)
+    for ci, wc in enumerate(collapse(loads, layout, us, spreads, seated=fe.seated_worst())):
         d = wc.direction if heat is None else heat_d[ci]
         case_d.append(None if d is None else [float(v) for v in d])
         if heat is None:

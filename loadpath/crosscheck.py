@@ -129,8 +129,6 @@ def unsupported(study: Study) -> str | None:
         return "no supports (a self-equilibrated part)"
     if study.gravity is not None:
         return "gravity loads"
-    if any(getattr(sp, "push", None) is not None for sp in study.supports):
-        return "a support that only pushes (its contact is solved on the grid, pushseat.py)"
     if getattr(study, "stock", None):
         return "bought stock members (the tet mesh is the printed part alone)"
     if any(ld.pressure for c in study.load_cases for ld in c.loads):
@@ -730,6 +728,82 @@ def _worst_directions(loads, spreads, solve, stress, counted):
     return out_u, out_l, dirs
 
 
+def _seats_on(study, pts, surf, tol, faces):
+    """The study's seats (supports[].push) on the tet mesh's vertices:
+    [(vertex indices, unit push, area shares)], as domain.py builds them on
+    the grid. (Loads go on the vertices too, _load_vectors.)"""
+    out = []
+    for i, sup in enumerate(study.supports):
+        if getattr(sup, "push", None) is None:
+            continue
+        sh = sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
+        vn = _region_nodes(study, sh, pts, tol, surf)
+        if len(vn) == 0:
+            raise ValueError(f"supports[{i}] touches no surface node of the part")
+        out.append((vn, np.asarray(sup.push, float), _area_shares(pts, faces, vn)))
+    return out
+
+
+def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted):
+    """The cases solved with the seats pushing (pushseat.py), as the grid's
+    check solves them: the seat's force an unknown on patches of the face,
+    the patches held by springs for the solves (in the CG's operator,
+    _solver's `lowrank`) and the springs taken out again exactly, the
+    patches that bear cut finer; a force of unknown direction judged in the
+    direction that stresses the part most with the contact solved in each
+    (pushseat.worst_stress). Returns (displacements (n, 3) per case, the
+    directions or None)."""
+    from . import pushseat
+    from .directions import Spread
+
+    n = len(nodes)
+    ps = pushseat.patches(seats, nodes, 3 * n)
+    ks, _ = pushseat.hold(ps, nodes, size)
+    ks = E * ks
+    solver = solver_for((ps, ks))
+    try:
+        rhs, layout, sps = [], [], []
+        for (name, f, ln), sp in zip(loads, spreads):
+            if sp is None:
+                layout.append((len(rhs),))
+                rhs.append(f)
+                sps.append(None)
+                continue
+            basis, nominal, cos_half = sp
+            base = f - sum(nominal[a] * basis[a] for a in range(3))
+            i0 = None
+            if np.abs(base).max() > 1e-9 * max(float(np.abs(f).max()), 1e-300):
+                i0 = len(rhs)
+                rhs.append(base)
+            layout.append((i0, len(rhs), len(rhs) + 1, len(rhs) + 2))
+            rhs.extend(basis)
+            sps.append(Spread(None, None, np.asarray(nominal, float), cos_half))
+
+        def flat(f):
+            v = np.zeros(3 * n)
+            v[: f.size] = np.asarray(f, float).ravel()
+            return v
+
+        def inner(r):
+            return None, [u.ravel() for u in solver.solve([("", v.reshape(-1, 3), None) for v in r])]
+
+        _, us, _, cases = pushseat.solve_cases(inner, [flat(f) for f in rhs], ps, ks, strict=True, xyz=nodes,
+                                               layout=layout, spreads=sps)
+    finally:
+        solver.close()
+    out_u, dirs = [], []
+    for ci, idx in enumerate(layout):
+        if len(idx) == 1:
+            out_u.append(us[idx[0]].reshape(n, 3))
+            dirs.append(None)
+            continue
+        sc = cases[ci]
+        d, mu, _ = pushseat.worst_stress(sc, lambda v: stress([v.reshape(n, 3)])[0], counted, strict=True)
+        out_u.append(sc.u(d, mu).reshape(n, 3))
+        dirs.append(np.asarray(d, float))
+    return out_u, dirs
+
+
 # 4-point Gauss rule on a tetrahedron (exact for degree 2: a P2 stiffness
 # integrand is degree 2), in barycentric coordinates.
 _QA, _QB = 0.5854101966249685, 0.1381966011250105
@@ -949,6 +1023,15 @@ def _assemble(nodes, conn, E, nu, chunk=20_000, extra=()):
 
 
 def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
+    """_solver's answer for `loads`, the solver closed after."""
+    solver = _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges)
+    try:
+        return solver.solve(loads)
+    finally:
+        solver.close()
+
+
+def _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges, lowrank=None):
     """P2 elasticity by CG with a two-level preconditioner: symmetric
     Gauss-Seidel on the quadratic system, and a coarse correction on the
     linear (vertex-only) problem, Galerkin-projected. (Aggregation AMG on
@@ -965,7 +1048,16 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     126 s against 337; the turret (1.44M dofs): 72 s against 116; the motor
     mount 15 s against 23; the same safety factors to 9 digits.
     `fixed_dof` marks held dofs; `springs` (or None; _pin_springs) is
-    added to the stiffness (pins)."""
+    added to the stiffness (pins). `lowrank`: (rows (m x 3n), k (m,)), the
+    springs sum_j k_j r_j r_j' that hold a seat's patches (pushseat.hold):
+    in the operator exactly, and in the smoother as each patch's spring
+    spread over its nodes by their shares (the same stiffness against a
+    translation; a patch's spring couples nodes of one colour, which the
+    coloured sweep cannot take).
+
+    Returns an object with solve(loads) -> displacements (n, 3) per load,
+    in batches of BATCH (the CG keeps five copies of every column), and
+    close()."""
     import scipy.sparse as sp
 
     from . import tetsolve
@@ -979,6 +1071,17 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     inv[q] = np.arange(n)
     qd = (3 * q[:, None] + np.arange(3)).ravel()          # new dof -> old dof
     extra = [(inv[np.asarray(idx, np.int64)], b) for idx, b in (springs or ())]
+    lump = []
+    if lowrank is not None:
+        rows_, kk = lowrank
+        for r_, k_ in zip(rows_, kk):
+            r_ = np.asarray(r_, float).reshape(-1, 3)
+            nz = np.nonzero(np.abs(r_).sum(axis=1))[0]
+            v = r_[nz]
+            sh = np.linalg.norm(v, axis=1)
+            nn = v / np.maximum(sh, 1e-300)[:, None]
+            lump.append((inv[nz], k_ * sh[:, None, None] * nn[:, :, None] * nn[:, None, :]))
+        extra = extra + lump
     k = _assemble(nodes[q], inv[conn], E, nu, extra=extra)
     # held dofs eliminated in place, not by slicing out the free block (a
     # second copy of the matrix): their rows and columns zeroed and a unit
@@ -1028,7 +1131,26 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
             return out
     del a1
     op = tetsolve.Blocked(k, bounds)
+    mv = op.mv
+    if lowrank is not None:
+        # the operator is the stiffness with the patches' springs exactly:
+        # the matrix's lumped ones out, the rank-one ones in (rows on held
+        # dofs left out, as the elimination leaves them)
+        free_q = (~fixed_dof[qd]).astype(float)
+        rr, cc_, vv = [], [], []
+        for idx, blk in lump:
+            dof = (3 * idx[:, None] + np.arange(3)).ravel()
+            rr.append(np.repeat(dof, 3))
+            cc_.append((3 * idx[:, None, None] + np.zeros((1, 3, 1), np.int64) + np.arange(3)[None, None, :]).ravel())
+            vv.append(blk.ravel())
+        lumped = sp.csr_matrix((np.concatenate(vv), (np.concatenate(rr), np.concatenate(cc_))), shape=(3 * n, 3 * n))
+        lumped = (sp.diags(free_q) @ lumped @ sp.diags(free_q)).tocsr()
+        rows = sp.csr_matrix(np.asarray(lowrank[0], float))[:, qd] @ sp.diags(free_q)
+        rows = rows.tocsr()
+        lr_k = np.asarray(lowrank[1], float)
 
+        def mv(x):
+            return op.mv(x) - lumped @ x + rows.T @ (lr_k[:, None] * (rows @ x))
     def precond(r):
         # one symmetric sweep each side: 106 iterations at 0.17 s beat two
         # sweeps' 82 at 0.28 s (wrist yoke)
@@ -1038,23 +1160,35 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
         op.sgs(x, r)
         return x
 
-    fs = []
-    for _n, f, _ in loads:
-        fn = np.zeros((n, 3))
-        fn[: len(f)] = f
-        fs.append(np.where(free_mask, fn.ravel(), 0.0)[qd])
-    # 1e-7 is six digits of stress; 1e-9 cost a third more iterations
-    x, _its = tetsolve.cg(np.ascontiguousarray(np.stack(fs, axis=1)), precond, op.mv, rtol=1e-7, maxiter=2000)
-    fac = getattr(coarse, "factor", None)
-    if fac is not None:
-        fac.close()           # its gigabyte back before the stress read
-    out = []
-    for j in range(x.shape[1]):
-        u = np.empty(3 * n)
-        u[qd] = x[:, j]
-        u[fixed_dof] = 0.0
-        out.append(u.reshape(n, 3))
-    return out
+    def solve(loads):
+        out = []
+        for b0 in range(0, len(loads), _BATCH):
+            fs = []
+            for _n, f, _ in loads[b0:b0 + _BATCH]:
+                fn = np.zeros((n, 3))
+                fn[: len(f)] = f
+                fs.append(np.where(free_mask, fn.ravel(), 0.0)[qd])
+            # 1e-7 is six digits of stress; 1e-9 cost a third more iterations
+            x, _its = tetsolve.cg(np.ascontiguousarray(np.stack(fs, axis=1)), precond, mv, rtol=1e-7, maxiter=2000)
+            for j in range(x.shape[1]):
+                u = np.empty(3 * n)
+                u[qd] = x[:, j]
+                u[fixed_dof] = 0.0
+                out.append(u.reshape(n, 3))
+        return out
+
+    def close():
+        fac = getattr(coarse, "factor", None)
+        if fac is not None:
+            fac.close()           # its gigabyte back before the stress read
+
+    from types import SimpleNamespace
+
+    return SimpleNamespace(solve=solve, close=close)
+
+
+# load columns the CG takes at once (each column is five vectors of the mesh's dofs)
+_BATCH = 16
 
 
 def _coarse_factor(a1, n_tets):
@@ -1420,11 +1554,20 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         return {"safetyFactor": min(sfs), "safetyFactorNoAllowance": min(sfs_raw), "cases": cases}
 
     out = {}
+    seats = _seats_on(study, pts, surf, tol, bfaces)
+    if seats and backend != "native":
+        raise ValueError("a support that only pushes (supports[].push) is solved by the native backend only")
     if backend in ("native", "both"):
         springs = _pin_springs(pin_blocks, mat.E * size, len(nodes))
-        us, _, dirs = _worst_directions(
-            loads, spreads, lambda ls: _solve(nodes, conn, mat.E, el, fixed_dof, springs, ls, len(pts), edges),
-            stress_of, far)
+        if seats:
+            us, dirs = _seated(seats, loads, spreads, nodes, size, mat.E,
+                               lambda lowrank: _solver(nodes, conn, mat.E, el, fixed_dof, springs, len(pts), edges,
+                                                       lowrank),
+                               stress_of, far)
+        else:
+            us, _, dirs = _worst_directions(
+                loads, spreads, lambda ls: _solve(nodes, conn, mat.E, el, fixed_dof, springs, ls, len(pts), edges),
+                stress_of, far)
         out["native"] = summarize(_read_stress(nodes, conn, us, mat.E, el, len(pts), radius, normal, m_c,
                                                shear_ratio), dirs)
         timings["native"] = time.time() - t1

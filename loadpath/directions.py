@@ -164,11 +164,16 @@ class Worst:
 SMOOTH = 40.0
 
 
-def collapse(rhs, layout, us, spreads, smooth: float = SMOOTH):
+def collapse(rhs, layout, us, spreads, smooth: float = SMOOTH, seated=None):
     """Per case, a Worst: the exact worst direction and its compliance, and
-    the smoothed sensitivity terms."""
+    the smoothed sensitivity terms. `seated`: {case: Worst} for the cases
+    judged already with seats pushing (pushseat.SeatedSpread.worst): a seat
+    lets go where the force lifts it, so those do not add up from the axes."""
     out = []
     for ci, idx in enumerate(layout):
+        if seated and ci in seated:
+            out.append(seated[ci])
+            continue
         if len(idx) == 1:
             u, f = us[idx[0]], rhs[idx[0]]
             out.append(Worst(u, float(f @ u), None, f, [(1.0, u)], u))
