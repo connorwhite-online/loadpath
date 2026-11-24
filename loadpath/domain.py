@@ -110,6 +110,9 @@ class Domain:
     # not fill (a keep-out touches them, or they are outside the design space)
     walls: np.ndarray | None = None
     wall_void: np.ndarray | None = None
+    # the pins' own springs, the part of `springs` that holds the part (the
+    # rest is a thin wall's or a bought member's stiffness), or None
+    pin_springs: object = None
 
     @property
     def n_elem(self):
@@ -314,6 +317,8 @@ class BoundaryConditions:
     # node's share of the face). Their nodes are free in `fixed`; a solve
     # that honours them adds their forces (seats.solve)
     seats: list = field(default_factory=list)
+    # the pins' own springs (the part of `springs` that holds it), or None
+    pin_springs: object = None
 
 
 def node_mass(mesh: HexMesh, density) -> np.ndarray:
@@ -623,6 +628,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         keep = ~(fixed[rows] | fixed[cols])
         springs = sp.csr_matrix((vals[keep], (rows[keep], cols[keep])), shape=(mesh.n_dof, mesh.n_dof))
     pinned = springs is not None
+    pin_springs = springs
     if getattr(study, "stock", None):
         # bought members: their own stiffness on their cells, less the printed material's the grid puts
         # there, added to every solve the way the pins' springs are (stock.stock_operator)
@@ -746,7 +752,8 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     if seats and check_loads and not pinned and not study.inertia_relief:
         _seated_statics(study, xyz, fixed, seats, loads, spreads)
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
-                              case_wet, imbalance, spreads, raw, pinned=pinned, seats=seats)
+                              case_wet, imbalance, spreads, raw, pinned=pinned, seats=seats,
+                              pin_springs=pin_springs)
 
 
 def _seated_statics(study, xyz, fixed, seats, loads, spreads=None) -> None:
@@ -1782,7 +1789,8 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
                   bodies=carried_bodies(study, mesh, _rbm(mesh.node_xyz)) if bc.raw_loads else [],
                   thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
                                      near=_near_cells(mesh, support_nodes | load_nodes)),
-                  warp=_warp_term(study, mesh), joints=joints, level_hint=hint)
+                  warp=_warp_term(study, mesh), joints=joints, level_hint=hint,
+                  pin_springs=getattr(bc, "pin_springs", None))
     aero = getattr(study, "aero", None)
     if aero is not None and aero.in_optimizer:
         from .aero import BlockageCost

@@ -241,7 +241,9 @@ def _making(study: Study) -> dict:
     """The optimizer options that say how the part is made."""
     return dict(build_direction=study.print_direction, extrusion=study.extrusion, access=study.access,
                 pattern=study.pattern, max_member=study.max_member,
-                dilate=_DILATE if study.min_hole else 0.0, escape=study.drains)
+                dilate=_DILATE if study.min_hole else 0.0, escape=study.drains,
+                # (only when on: a recalled design's key is the same as before for every other study)
+                **({"one_piece": study.length_scale} if study.one_piece else {}))
 
 
 def _stiffness_limited(study: Study) -> bool:
@@ -819,10 +821,10 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
         o.passes = False
         report.setdefault("warnings", []).append(
             f"the part came out in {report['bodies']} pieces: either each piece has its own supports and "
-            "load path and nothing ties them together (two mirror halves, each on its own bolts), or some "
-            "preserved geometry is on no load path. For one part, preserve a link between the pieces (a "
-            "ring, a web, a plate) or add a load case that runs between them; for a floating preserve, "
-            "load it or drop it.")
+            "load path and nothing ties them together (two mirror halves, each on its own bolts: the "
+            "search then holds the part in one piece and makes it again, or `\"onePiece\": true` does "
+            "from the first run), or some preserved geometry is on no load path (load it or drop it), or "
+            "the design space itself is in pieces (`check` says so).")
     if report.get("closedBores"):
         o.passes = False
         report.setdefault("warnings", []).append(closed_bore_warning(report["closedBores"]))
@@ -3066,16 +3068,19 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             o.passes = False
             report.setdefault("warnings", []).append(
                 f"the part came out in {report['bodies']} pieces: either each piece has its own supports and "
-                "load path and nothing ties them together (two mirror halves, each on its own bolts), or some "
-                "preserved geometry is on no load path. For one part, preserve a link between the pieces (a "
-                "ring, a web, a plate) or add a load case that runs between them; for a floating preserve, "
-                "load it or drop it.")
+                "load path and nothing ties them together (two mirror halves, each on its own bolts: the "
+                "search then holds the part in one piece and makes it again, or `\"onePiece\": true` does "
+                "from the first run), or some preserved geometry is on no load path (load it or drop it), or "
+                "the design space itself is in pieces (`check` says so).")
         if report.get("closedBores"):
             o.passes = False
             report.setdefault("warnings", []).append(closed_bore_warning(report["closedBores"]))
         if (report.get("sound") or {}).get("ok") is False:
             o.passes = False
         return o
+
+    # the fractions at which the search switched the one-piece hold on
+    piece_switch: list[float] = []
 
     def run_one(vf: float) -> Outcome:
         nonlocal started
@@ -3088,8 +3093,11 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 return attempt(vf, x0, _WARM_BETA if x0 is not None else 1.0)
             return attempt(vf, None, 1.0)
 
-        rp = memory.replay(vf) if memory is not None else None
-        w = memory.warm_start(vf) if memory is not None and rp is None and not started else None
+        # (once the search has held the part in one piece, the designs recalled
+        # under its old key are the ones that came out in pieces)
+        recall = memory is not None and not piece_switch
+        rp = memory.replay(vf) if recall else None
+        w = memory.warm_start(vf) if recall and rp is None and not started else None
         if rp is not None:
             o = attempt(vf, None, None, replay=rp)
             o.report["start"] = f"recalled {vf:.3f}"
@@ -3116,9 +3124,13 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             # at 9-14%). Not always from the first design either: the turret
             # carried 0.120 -> 0.029 in one jump read SF 1.56, and 2.54 at
             # 0.025 stepped down through 0.068 and 0.042.
-            above = [q for q in outcomes if q.x is not None and q.volume_fraction > vf]
+            # (a design in pieces is no start once the part is held in one)
+            seeds = [q for q in outcomes if q.x is not None
+                     and not (piece_switch and q.report.get("bodies", 1) > 1)] or \
+                [q for q in outcomes if q.x is not None]
+            above = [q for q in seeds if q.volume_fraction > vf]
             src = (min(above, key=lambda q: q.volume_fraction) if above else
-                   max((q for q in outcomes if q.x is not None), key=lambda q: q.volume_fraction))
+                   max(seeds, key=lambda q: q.volume_fraction))
             ran_cold = False
             try:
                 o = attempt(vf, src.x, _WARM_BETA)
@@ -3162,6 +3174,30 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                     o, c = c, o
                 o.report["alternative"] = {k: c.report.get(k) for k in
                                            ("start", "mass", "safetyFactor", "margin")} | {"passes": c.passes}
+        if o.report.get("bodies", 1) > 1 and not study.one_piece and o.xphys is not None \
+                and not (should_stop is not None and should_stop()):
+            from .onepiece import split_supports
+
+            n_split = split_supports(domain, o.xphys)
+            if n_split > 1:
+                # Each piece stands on its own supports and carries its own
+                # load to them: no load case asks one to hold the other, and
+                # more material never joins them. The state that does (the
+                # part handled and installed, held at one support while it
+                # locates the others) is held from here on (onepiece.py),
+                # and this fraction is made again from scratch.
+                study.one_piece_held = True
+                piece_switch.append(vf)
+                emit({"stage": "warning", "message":
+                      f"the part at {vf:.3f} came out in {n_split} pieces, each on its own supports: holding it "
+                      "in one piece from here on (held at one support, it must locate the others at least as "
+                      "stiffly as a bar of the minimum member) and making this fraction again"})
+                split = o
+                o = cold()
+                o.report["start"] = "cold (held in one piece)"
+                o.report["alternative"] = {k: split.report.get(k) for k in
+                                           ("start", "mass", "safetyFactor", "margin", "bodies")} | \
+                    {"passes": split.passes}
         started = True
         emit({"stage": "outcome", **o.summary()})
         _save_partial(o, domain.pitch)
@@ -3460,7 +3496,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             return SimpOptions(volume_fraction=q.volume_fraction, filter_radius=radius, max_iterations=n, x0=q.x,
                                beta_start=SimpOptions.beta_max, move=_POLISH_MOVE, tol=_POLISH_TOL,
                                stall_window=_POLISH_ITERATIONS, extrusion=study.extrusion, pattern=study.pattern,
-                               build_direction=study.print_direction)
+                               build_direction=study.print_direction,
+                               one_piece=study.length_scale if study.one_piece else None)
 
         def readings(res):
             rec = res.delivered or (res.history[-1] if res.history else {})

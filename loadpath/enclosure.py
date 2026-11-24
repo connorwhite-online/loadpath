@@ -665,10 +665,16 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         skin_mass = None
         if shell_slices:
             try:
-                p = _write_mesh(trimesh_from_manifold(skin_shape.to_manifold()), os.path.join(cad, "skin-mass.stl"))
+                # PLY, not STL: the speaker's and the tool grip's skins
+                # touch themselves where openings meet, closed as written
+                # with those corners kept apart; STL loses that and welding
+                # on reading opened them (a mesh shape must be closed)
+                p = _write_mesh(trimesh_from_manifold(skin_shape.to_manifold()), os.path.join(cad, "skin-mass.ply"))
+                shape_from_spec({"type": "mesh", "path": os.path.abspath(p)})
                 skin_mass = {"type": "mesh", "path": os.path.abspath(p)}
             except Exception:  # noqa: BLE001 - the box stands in
-                warnings.append("loads.drop: the skin could not be meshed; the shell's mass loads its slices' boxes")
+                warnings.append("loads.drop: the skin could not be meshed closed; the shell's mass loads its "
+                                "slices' boxes")
 
         def _on_skin(box):
             return box if skin_mass is None else {"type": "intersect", "shapes": [box, skin_mass]}

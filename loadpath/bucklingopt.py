@@ -207,6 +207,10 @@ def block_modes(a, solve, x0, nm: int, tol: float = BLOCK_TOL, maxiter: int = BL
     return th, x, maxiter, False
 
 
+# ELTD's threshold on a mode's KS weight (Prabha and Kumar's choice): a mode
+# under it changes the aggregate by less than 1e-9 relative
+ELTD_EPS = 1e-9
+
 # A piece is held when its least-stopped rigid motion keeps this share of
 # its most-stopped one's energy in the supports (BucklingModel._held). Fixed
 # nodes on one line, or one pin, read zero to rounding (1e-16); a support
@@ -226,14 +230,18 @@ ALIVE = 1e-2
 
 class BucklingModel:
     """Buckling load factors and their gradients for density designs on
-    `domain`'s grid. `n_modes` modes per load case are computed and
-    aggregated (KS, `rho`)."""
+    `domain`'s grid. The modes per load case are aggregated (KS, `rho`);
+    how many are computed follows the spectrum (ELTD, evaluate), from
+    `n_modes` on the first reading up to `max_modes`."""
 
     def __init__(self, domain, nu: float, n_modes: int = 4, rho: float = 40.0, cutoff: float = 0.3,
-                 alive: float = ALIVE):
+                 alive: float = ALIVE, max_modes: int = 12):
         self.domain = domain
         self.nu = nu
         self.n_modes = n_modes
+        self.max_modes = max(max_modes, n_modes)
+        # per load case, the modes the last reading counted (ELTD)
+        self._nagg = {}
         self.rho = rho
         self.cutoff = cutoff
         self.alive = alive
@@ -440,8 +448,31 @@ class BucklingModel:
 
                 kg = _geometric(stiff, u, eg, self.nu)
                 lap("stress")
-                nm = min(self.n_modes, ndof - 2)
-                mu, vec = self._modes(c, -kg, k, minv, nm, fd, mesh.n_dof, mu_loose)
+                # How many modes: the eps-ln threshold difference (ELTD,
+                # Prabha and Kumar 2026, arXiv 2609.19603). A mode counts in
+                # the KS max while its weight exp(rho (mu_i / mu_1 - 1)) is
+                # over ELTD_EPS; one more than the last reading counted is
+                # computed, and two more until the last one computed falls
+                # under it, so a mode coalescing with the last counted one is
+                # never cut off (its sensitivity would then be wrong), and a
+                # well-separated first mode is not solved with three
+                # passengers. On a compressed tower and a bridge (constrained
+                # method, 8 modes recorded every reading) the KS value of 4
+                # fixed modes matched 8 to 2e-12; 66-71 of 69-78 readings
+                # needed 1-2 modes.
+                cap = max(1, min(self.max_modes, ndof - 2))
+                nm = min(cap, self._nagg.get(c, self.n_modes - 1) + 1)
+                while True:
+                    mu, vec = self._modes(c, -kg, k, minv, nm, fd, mesh.n_dof, mu_loose)
+                    mu_r = np.asarray(mu[:nm], float)
+                    if nm >= cap or not (mu_r[0] > 0) or not np.all(np.isfinite(mu_r)):
+                        break
+                    if np.exp(self.rho * (mu_r[-1] / mu_r[0] - 1.0)) < ELTD_EPS:
+                        break
+                    nm = min(cap, nm + 2)
+                if np.all(np.isfinite(mu)) and mu[0] > 0:
+                    mu_r = np.asarray(mu[:nm], float)
+                    self._nagg[c] = max(1, int(np.sum(np.exp(self.rho * (mu_r / mu_r[0] - 1.0)) >= ELTD_EPS)))
                 # phi^T K phi is positive for every mode of a K that holds
                 # its cells. Where it is not, K was singular (a mechanism
                 # _live did not see) and what came back is not a reading:

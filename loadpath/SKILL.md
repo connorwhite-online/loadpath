@@ -473,10 +473,12 @@ buckling, printability) you can report to the user.
    - `check` warns "the space the part may take is in N separate pieces" →
      the design space is cut right through (an envelope that stops short
      of going over a pipe, a keep-out across it): no run can join them;
-   - `bodies` > 1 → something is not connected to a support, or each
-     piece has its own supports and loads and nothing in the loads needs
-     them joined (a plate on four bolts carrying four more comes out as
-     two straps): preserve a link between them;
+   - `bodies` > 1 → something is not connected to a support (load it or
+     drop it). Pieces that each stand on their own supports (a plate on
+     four bolts carrying four more, as two straps) are held in one piece
+     by the search on its own once a run splits: held at one support, the
+     part must locate the others at least as stiffly as a bar of the
+     minimum member. `"onePiece": true` holds it from the first run;
    - a "mesh lost N% of the optimized solid cells" warning (`meshFidelity`)
      → the mesh came out thinner than the optimized design, so the part
      reads softer than it should and the search picks a heavier outcome.

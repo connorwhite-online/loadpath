@@ -40,20 +40,33 @@ def _tet_mesh(mesh, size, order=1, size_at=None, mesher=None):
     """Tetrahedra filling a closed triangle mesh: (points, tets), 4 or 10
     nodes.
 
-    fTetWild (pytetwild) by default when installed. Delivered parts come out
-    of the booleans with needle triangles and near-touching facets (4k of
-    60k triangles on the motor-mount eval). Constrained meshers must keep
-    those triangles, so they leave flat slivers along the surface: gmsh's
-    Delaunay ground for 20 minutes on that part and failed, HXT met it in
-    2 s with 11k interior slivers that CG could not converge on. fTetWild
-    meshes within a small envelope of the surface instead (0.1% of the
-    part's diagonal, under 0.1 mm here) and came out with no element below
-    a fifth of the regular tet's quality, in about a minute.
+    Isosurface stuffing (stuffing.py) by default: a body-centred cubic
+    lattice of edge `size` warped onto the surface, every surface vertex on
+    the given triangles, in about a second where fTetWild took 30-130 s on
+    one core, and the same mesh for the same surface every time (fTetWild's
+    differed run to run and moved the peak 3-8%). LOADPATH_TET_MESHER (or
+    `mesher`) "tetwild" or "gmsh" picks the others.
 
-    gmsh otherwise: on failure the surface is cleaned with manifold's
-    simplify at growing tolerances (0.05 mm moved nothing visible on the robot-arm
-    wrist yoke) and tried again."""
-    mesher = mesher or ("tetwild" if _has_tetwild() and size_at is None and order == 1 else "gmsh")
+    fTetWild (pytetwild) meshes within a small envelope of the surface
+    (0.1% of the part's diagonal). Delivered parts come out of the booleans
+    with needle triangles and near-touching facets (4k of 60k triangles on
+    the motor-mount eval). Constrained meshers must keep those triangles,
+    so they leave flat slivers along the surface: gmsh's Delaunay ground
+    for 20 minutes on that part and failed, HXT met it in 2 s with 11k
+    interior slivers that CG could not converge on. Stuffing never keeps a
+    triangle: it only asks where lattice edges cross them.
+
+    gmsh otherwise (graded `size_at`, or second order): on failure the
+    surface is cleaned with manifold's simplify at growing tolerances (0.05
+    mm moved nothing visible on the robot-arm wrist yoke) and tried
+    again."""
+    if mesher is None and size_at is None and order == 1:
+        mesher = os.environ.get("LOADPATH_TET_MESHER") or "stuff"
+    mesher = mesher or "gmsh"
+    if mesher == "stuff":
+        from .stuffing import stuff
+
+        return stuff(mesh, size * STUFF_EDGE)
     if mesher == "tetwild":
         return _tetwild(mesh, size)
     from .shapes import manifold_from_trimesh, trimesh_from_manifold
@@ -70,6 +83,12 @@ def _tet_mesh(mesh, size, order=1, size_at=None, mesher=None):
             except Exception as ex:  # noqa: BLE001 - gmsh raises bare Exception
                 last = ex
     raise RuntimeError(f"could not tetrahedralize the part: {last}")
+
+
+# The stuffing lattice's edge, as a multiple of the element size asked for.
+# At 1 it makes ~1.25x fTetWild's tets at the same size, and reads the eval
+# parts as close to their converged (0.6x) meshes as fTetWild does (stuffing.py).
+STUFF_EDGE = float(os.environ.get("LOADPATH_STUFF_SCALE", "1.0"))
 
 
 def element_size(study: Study) -> float:
@@ -137,14 +156,8 @@ def unsupported(study: Study) -> str | None:
 
 
 def mesher_missing() -> str | None:
-    """Why no tetrahedral mesh can be made here, or None when one can."""
-    if not _has_tetwild():
-        try:
-            import gmsh  # noqa: F401  (availability check)
-        except (ImportError, OSError):
-            # OSError: the wheel is there but its shared libraries are not
-            # (libGLU on a headless box), which failed every SF study
-            return "no tetrahedral mesher (pip install loadpath[crosscheck])"
+    """Why no tetrahedral mesh can be made here, or None when one can: the
+    default mesher (stuffing.py) needs numba alone, which loadpath needs."""
     return None
 
 
@@ -1501,7 +1514,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     mesh: then the native result carries `calculix` (CalculiX's) and
     `agreement` (CalculiX / native per case). Supports hold the axes the
     study gives them (`fix`), and pins hold radially and axially.
-    mesher: "tetwild" (default when pytetwild is installed) or "gmsh"."""
+    mesher: "stuff" (default, stuffing.py), "tetwild" or "gmsh"."""
     t0 = time.time()
     mat = study.material
     # the voxel verify's elasticity and bond check (verify.py), so both read
@@ -1681,7 +1694,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                      "elementSize": size, "contactBand": band, "stressRadius": radius, "stressReading": reading,
                      "adaptive": bool(adaptive),
                      **({"coarsenedFrom": asked} if size > asked else {}),
-                     "mesher": mesher or ("tetwild" if _has_tetwild() and not adaptive else "gmsh"),
+                     "mesher": mesher or ("gmsh" if adaptive else os.environ.get("LOADPATH_TET_MESHER") or "stuff"),
                      "seconds": time.time() - t0}
 
 

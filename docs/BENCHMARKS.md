@@ -697,6 +697,103 @@ the run, and each PARDISO call timed by its caller).
   run cannot start beside the search on 15 GB (`_Speculative.wanted`: its grid is fitted to the
   memory there is), and the wait on each tet confirm is serial by design.
 
+## Tet mesher: isosurface stuffing replaces fTetWild (2026-11-24)
+
+The tet confirm meshed every delivered part with fTetWild: 30-130 s a
+confirm, mostly on one core, and a different mesh (and a 3-10% different
+peak) every run. Loadpath's parts are closed surfaces it made itself, so
+the cross-check now fills them with isosurface stuffing (Labelle &
+Shewchuk 2007, `loadpath/stuffing.py`): a body-centred cubic lattice at the
+element size, every lattice edge that crosses the surface cut exactly on
+its triangles, lattice points near a cut warped onto it, and surface
+vertices beside a crease moved onto the crease. Numba, about a second,
+bit-for-bit repeatable, and it needs nothing beyond loadpath's own
+dependencies, so a plain `pip install loadpath` gets the tet confirm.
+
+Delivered eval parts (old STLs, /mnt/project-files/evals/full-crosscheck),
+same element size, 4 cloud cores. "Converged" is stuffing at 0.6x the
+edge (4-5x the tets), within about 1% of the next refinement.
+
+| Part | fTetWild SF | Stuffing SF | Converged | Mesh s (fTetWild / stuffing) | Solve s |
+|---|---|---|---|---|---|
+| printed hook | 1.225 | 1.241 | 1.205 | 43 / 0.9 | 9.7 / 9.7 |
+| bell crank | 3.524 | 3.478 | 3.544 | 30 / 0.5 | 8.6 / 8.1 |
+| MBB beam | 1.689 | 1.669 | 1.731 | 32 / 0.6 | 8.6 / 7.9 |
+| motor mount | 6.968 | 7.031 | 7.431 | 53 / 0.5 | 14 / 14 |
+| arm link | 15.74 | 15.66 | 14.98 | 90 / 1.6 | 35 / 39 |
+| arm link (cast) | 22.28 | 22.64 | | 68 / 1.5 | 41 / 45 |
+| arm link (driven) | 21.65 | 21.15 | | 82 / 1.3 | 113 / 149 |
+| wall bracket | 4.356 | 4.311 | 4.263 | 30 / 0.4 | 4.5 / 5.8 |
+| wall bracket, fasteners | 3.167 | 3.113 | | 29 / 0.4 | 6.4 / 6.8 |
+| robot-arm wrist yoke | 3.721 | 3.369 | 3.702 | 51 / 0.4 | 13 / 9.5 |
+| robot-arm wrist link | 7.938 | 7.684 | | 74 / 1.2 | 113 / 137 |
+| robot-arm turret | 2.309 | 2.334 | | 103 / 2.8 | 76 / 94 |
+| robot-arm upper arm | 8.998 | 8.824 | | 130 / 4.4 | 100 / 214 |
+
+- Against the converged meshes both are off by a few percent (fTetWild
+  0.5-6%, stuffing 1-5%), except the wrist yoke, where stuffing reads its
+  peak 10% high (3.37 at 1x, 3.57 at 0.8x, 3.70 at 0.6x: it converges from
+  the safe side; fTetWild's own meshes of it spread 3.2-3.9).
+- Creases matter: a 10 mm square beam meshed at 2.5 mm off the lattice
+  came out 3.5% light and 13% too soft with its edges chamfered; with the
+  vertices beside them moved onto the edges it is within 1% of beam
+  theory (`tests/test_stuffing.py`).
+- Stuffing makes about 1.25x fTetWild's tets at the same size, so the
+  solve takes 0-30% longer. The upper arm is the exception: its CG takes
+  31-35 iterations on the stuffed mesh against 16-19 (not the crease
+  snapping: 31-34 without it), so its solve doubles and the whole confirm
+  only drops 232 -> 206 s. Open lead.
+- `LOADPATH_TET_MESHER=tetwild` (with pytetwild installed) brings fTetWild
+  back; `LOADPATH_STUFF_SCALE` scales the lattice edge.
+- Repeatability: the turret read 2.309 and 2.137 on two fTetWild meshes
+  of the same STL (8% apart); stuffing reads 2.334 every time.
+
+## The elasticity solve against two new GPU codes (2026-11-24)
+
+Two open topology-optimization codes appeared on arXiv in November 2026:
+TOF3D (arXiv 2611.12027, MIT, Taichi on an RTX 3060, single precision) and
+topax (arXiv 2611.29021, github.com/pedrozudo/topax, Apache-2.0, JAX on a
+GH200, double precision). Both solve the voxel hex8 problem with
+multigrid-preconditioned CG, Galerkin coarse levels and a matrix-free fine
+operator, like `mg.GridElasticity`. Each of their ideas was tried on
+loadpath's own solver (4-core cloud box, Python + numba), on the same
+problems at the same tolerance (relative residual 1e-6):
+
+| Idea | Result | Kept |
+|---|---|---|
+| Damped Jacobi smoother, omega 0.6, two sweeps (both codes) | solid bar 11 -> 21 CG its; a thin-sheet gyroid part never converged (2000 its) | no: Chebyshev-Jacobi stays |
+| Nodal 3x3 block Jacobi (TOF3D) inside the Chebyshev smoother | 41 -> 37 its on the gyroid part, each sweep dearer | no |
+| Coarse levels from an operator with removed cells at E_min (TOF3D: 214 -> 26 its) | already true here: Galerkin products of the masked operator give the same coarse matrices | n/a |
+| Float32 operator in "difference form", sum_j K_ij (u_j - u_i) (TOF3D) | chunky parts: cell strain energy within 5e-6 of float64 (plain float32: 9e-3). A 400 x 4 x 4 cantilever: 5e-3, 0.3% in stress, from float32 displacements on a part that rotates far more than it strains | no for the outer CG (verify reads stresses on slender parts); in the float32 V-cycle it saved 1 of 20 its |
+| Every vector step fused into the kernels (both codes run one GPU kernel per step) | see below | yes |
+
+The fused steps: the masked operator reads `u * mask` in the product's
+gather and the scatter writes `K u * m + (1 - m) u` once (two passes and
+two temporaries gone); the residual, its zero padding, restriction and the
+coarse mask are one pass; prolongation, masking and the add are one pass;
+the smoother's start and the CG's float32/float64 casts run on all cores.
+Every value goes through the same operations, rounded at the same points,
+so each level's operator and the whole V-cycle give the same numbers to the
+bit (`test_fused_vcycle_steps_are_the_passes_bit_for_bit`).
+
+| Problem (CG its) | before | after |
+|---|---|---|
+| solid cantilever 128 x 64 x 64, 524k cells (11) | 1.57 s | 1.46 s |
+| gyroid-sheet cantilever, 147k cells in a 128 x 64 x 64 box (41) | 3.06 s | 2.69 s |
+| gyroid-sheet cantilever, 481k cells in a 192 x 96 x 96 box (52) | 14.3 s | 9.4 s |
+
+The gain grows with the empty part of the box, where the vector passes ran
+over nodes no cell touches. The arm-link field run (cut-cell grid, its
+extra CSR terms still a pass of their own) moved 46.8 -> 45.3 s, safety
+factor the same to 3e-10, which is the solve's run-to-run spread.
+
+For scale: TOF3D reports 0.46 s per design iteration at 0.5M elements on
+the RTX 3060 at a looser tolerance (1e-5); this CPU solve of the 524k solid
+cantilever takes 1.46 s at 1e-6. What is left on the operator is the
+24 x 24 product per cell (70-80% of an apply, already about BLAS's speed on
+these cores); a GPU, through the optional torch backend (`gpu.py`), is the
+way past it.
+
 ## Wall time against nTop and Fusion 360
 
 There is no like-for-like benchmark: neither vendor publishes solver timings
