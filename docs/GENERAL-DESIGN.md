@@ -233,7 +233,7 @@ a printed part is held.
 | pegboard hammer holder (PLA) | no report: killed at 37 min | **passes**, 12.6 g, SF 2.10, 40 min; check warns, truly, that its horizontal pegs print on supports |
 | tube tee 20 mm (PETG) | **first try**, 16.6 g, SF 3.5: a false pass, its rail bore glued all round | check warns the slip bore is held as if glued; twin `-b` holds the rail as a radial seat with friction: **first try**, 59.0 g, SF 2.56, 67 min: a sleeve round the rail, as a tee that cannot bond to its tube has to be |
 | laptop bracket (PLA) | fails: "0% of the goal" | **passes**, 6.4 g, SF 2.08, 42 min |
-| Pi wall mount (PETG) | fails: "0% of the goal" | fails: 23.4 g, comes out in two pieces (gap 6) |
+| Pi wall mount (PETG) | fails: "0% of the goal" | fails: 23.4 g, comes out in two pieces (gap 6). Held in one piece (main 0def539): **first try**, 5.4 g, SF 3.11, 42 min |
 | spool arm (PLA) | passes, 19.9 g, SF 7.2, 43 min | passes, 13.9 g, SF 8.7, 45 min; its check warning is true (printed along +x, the wall plate hangs off the arm's side) |
 
 What the batch showed:
@@ -411,7 +411,7 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 3 | A named build direction forbids every overhang, so parts split or balloon | 4 | 2 of 11, every FDM study that names a direction | **Fixed**: the direction sets the layers; supports are decided by cost unless `overhangs` is declared |
 | 4 | The solid block passes but the search stops at 70% and hands back nothing | 6 | 1 of 11 | **Fixed**: the block is delivered when nothing lighter passes, with a note that the envelope sets the mass |
 | 5 | A design space in separate pieces runs for minutes and passes or fails without saying so | 1 | 1 of 11, common with keep-outs through thin envelopes | **Fixed**: flagged by `check` before the run |
-| 6 | A part in pieces: the search adds material, which never joins pieces that do not need each other | 5 | 2 of 17 (VESA plate; Pi wall mount in the third batch), any plate or frame with paired mounts | **Fixed** on a development part (see "One piece" below): the state that makes a part one piece (handled and installed, held at one support while it locates the others) is held in the optimizer once a run splits on separate supports, or from the start with `onePiece`. Not yet re-run on the held-out set |
+| 6 | A part in pieces: the search adds material, which never joins pieces that do not need each other | 5 | 2 of 17 (VESA plate; Pi wall mount in the third batch), any plate or frame with paired mounts | **Fixed** on a development part (see "One piece" below): the state that makes a part one piece (handled and installed, held at one support while it locates the others) is held in the optimizer once a run splits on separate supports, or from the start with `onePiece`. Pi wall mount since: first try, 5.4 g, one piece |
 | 7 | The safety factor is set at something the study drew, not by the shape: a keep-out's square inside corner, a thin section, a bore held as if glued | 2 | 4 of 11, every part with a clearance cut or a bore | **Partly**: checked by hand, the four limits are real for the studies as written (hinge: 150 N on a 26 mm arm of a 4 mm PETG leaf is 40 MPa nominal against 47; crank: beam theory gives 1.9 mm of the 2.24 read; C-clamp: 10 MPa nominal, 34 at the throat's square corner, and the block reads 1.37, 1.73 and 2.36 with the corner square, at 4 mm and at 8 mm radius). A peak on a keep-out's square edge is now named as the notch to round; followed on the C-clamp (8 mm radius at the throat, nothing else changed), the second try passes: 45.9 g, SF 2.19 for 2, 19 min. A strength shortfall now also says how much more section the weak spot needs (the square root of the shortfall in depth if it bends, the shortfall in area if it is pulled or sheared). Open: how much radius a notch needs; a bore held rigidly all round (docs/PHYSICS.md, open item 1); the 0.86 mm reading length is assumed for PETG and PLA |
 | 8 | Small parts take 5 to 17 minutes | 8 | all | **Partly**: an impossible goal is read on the solid block first (under a minute on small studies); the supports decision searches only where it can win. Open: 16 to 50 minutes for a part that passes, most of it the search for lighter parts and the constrained method's passes |
 | 8a | A part passed by the confirming check on a load other than the one asked: a force from any direction checked as written | 6 | 1 of 11, every study with a direction-uncertain load | **Fixed**: the tetrahedral check judges the worst direction |
@@ -474,8 +474,18 @@ nearer its own screw; tests/test_one_piece.py), not on the held-out set:
   after, one piece, SF 10.5 (the envelope's bosses set the mass), 17 min
   against 20.
 
+Then measured once on the held-out Pi wall mount (main 0def539, nothing
+changed for it): its 0.30 run came out in two pieces, the search switched
+the hold on and remade it, and it delivered **first try: 5.4 g, one piece,
+SF 3.11 for 2** (tet-confirmed), a ring through the four standoffs and both
+screw pads, at its 40 min limit. Before: 23.4 g in two pieces, failing. The
+first try on main 3b0cf56 never switched on: a seat over the mount's whole
+back joined both screws into one support group. A seat the part only
+presses on is not an interface in the handled state (the wall is not there
+yet), so groups are the fixed and pinned supports only.
+
 Open: the constrained method (`goal.method: "constrained"`) does not carry
-it yet; the Pi wall mount has not been re-run.
+it yet; the VESA plate has not been re-run.
 
 ## Why parts looked misshapen
 
