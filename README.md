@@ -59,6 +59,7 @@ Everything runs on your machine.
 - **Lightweight structural parts**: brackets, links, mounts, hooks, cranks.
 - **Products inside a designer's exterior**: place the board, battery and ports, then design the interior for drops, feel and heat ([docs/ENCLOSURE.md](docs/ENCLOSURE.md)).
 - **Start from what you have**: a STEP file, a 3D scan, a KiCad board, a robot's URDF, or a generated mesh.
+- **Printed joints instead of hardware**: coarse threads, hinges and snaps sized from the load, the layers, the print's tolerance and creep, drawn exactly ([docs/JOINTS.md](docs/JOINTS.md)).
 - **Lattices and heat exchangers**: graded gyroids and strut lattices, with flow and heat solved.
 - **More physics**: buckling, fatigue, impact, flexures, print warp, casting, antennas.
 

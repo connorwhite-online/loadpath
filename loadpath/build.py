@@ -111,6 +111,7 @@ class BuildSpec:
     build_direction: object = None
     solid: bool = False                # skin "solid": the designSpace is the part, no cavity
     min_wall: float | None = None      # the process's minimum wall (mm): every cut is backed by at least this
+    joints: list = field(default_factory=list)   # [{id, entry, design, mates}] (joints.py, jointcad.py)
     _ext_man: object = None
     _ext_mesh: object = None
 
@@ -144,7 +145,7 @@ class BuildSpec:
 
 def has_build(doc: dict) -> bool:
     """Whether a study document carries what `build` reads."""
-    return any(doc.get(k) for k in ("interfaces", "components", "targetMass", "assert", "references"))
+    return any(doc.get(k) for k in ("interfaces", "components", "joints", "targetMass", "assert", "references"))
 
 
 _AXES = {"x": (1.0, 0, 0), "y": (0, 1.0, 0), "z": (0, 0, 1.0)}
@@ -176,6 +177,36 @@ def _brep_of(shape_spec, base_dir, label):
             and str(shape_spec["path"]).lower().endswith((".step", ".stp")):
         return load_brep(shape_spec["path"], base_dir)
     return load_brep(shape_spec, base_dir)
+
+
+JOINT_TOLERANCE = 0.01   # mm: a thread's tessellation (fine enough for the gap, coarse enough to stay small)
+
+
+def _joints(doc, material, process, build_dir, interfaces, ident) -> list:
+    """Size each `joints` entry (joints.design_joint), draw it
+    (jointcad.joint_interfaces) and add its interfaces as `<id>-<part>`."""
+    entries = doc.get("joints") or []
+    if not entries:
+        return []
+    from .jointcad import joint_interfaces
+    from .joints import design_joint
+
+    out = []
+    for j, e in enumerate(entries):
+        label = f"joints[{j}]"
+        if not isinstance(e, dict) or e.get("type") not in ("thread", "hinge", "snap"):
+            raise ValueError(f"{label} is {{id, type: 'thread' | 'hinge' | 'snap', member, at, axis, ...}} "
+                             "(loadpath schema study, $.joints)")
+        i = ident(e, label)
+        b = e.get("build", build_dir)
+        des = design_joint(e, material, process, b)
+        parts, mates = joint_interfaces(e, des, b)
+        for suffix, op, solid, wall, blend, proud in parts:
+            iid = ident({"id": f"{i}-{suffix}"}, label)
+            interfaces.append(Interface(iid, op, load_brep(solid, tolerance=JOINT_TOLERANCE), blend=blend, wall=wall,
+                                        proud=proud, spec={"joint": i, "backing": False}))
+        out.append({"id": i, "entry": e, "design": des, "mates": mates, "build": b})
+    return out
 
 
 def process_min_wall(doc: dict, proc, material) -> float | None:
@@ -299,11 +330,13 @@ def build_spec(doc: dict, base_dir: str | None = None) -> BuildSpec:
     if proc == "none":
         proc = None
 
+    joints = _joints(doc, mat, doc.get("process"), build_dir, interfaces, ident)
+
     spec = BuildSpec(name=str(doc.get("name", "part")), exterior=exterior, skin=float(t0), zones=zones,
                      interfaces=interfaces, components=components, material=material, process=proc,
                      target=None, asserts=list(doc.get("assert") or []), references=list(doc.get("references") or []),
                      doc=doc, base_dir=base_dir, build_direction=build_dir, solid=solid,
-                     min_wall=process_min_wall(doc, proc, material))
+                     min_wall=process_min_wall(doc, proc, material), joints=joints)
     if solid and spec.adjustable():
         raise ValueError("a solid part has no wall to move: targetMass.adjust needs a skin")
 
@@ -858,6 +891,8 @@ def run_build(doc: dict, base_dir: str | None = None, out: str | None = None, qu
         os.makedirs(out, exist_ok=True)
         mesh.export(os.path.join(out, "part.stl"))
         report["part"] = "part.stl"
+    if spec.joints:
+        report["joints"] = _export_joints(spec, out)
     if progress:
         progress({"stage": "checks"})
     checks = check_build(spec, mesh, out_dir=out, solid=solid, body=body, render=render, target=mass_info)
@@ -873,6 +908,27 @@ def run_build(doc: dict, base_dir: str | None = None, out: str | None = None, qu
         with open(os.path.join(out, "report.json"), "w") as f:
             json.dump(report, f, indent=1)
     return report
+
+
+def _export_joints(spec: BuildSpec, out: str | None) -> list:
+    """Each joint's design (sizes, checks, assumptions) and its mating
+    parts written to out/joints/<id>-<name>.step and .stl."""
+    rows = []
+    for jt in spec.joints:
+        des = {k: v for k, v in jt["design"].items() if k not in ("strengths",)}
+        files = []
+        if out is not None and jt["mates"]:
+            from build123d import export_step, export_stl
+
+            d = os.path.join(out, "joints")
+            os.makedirs(d, exist_ok=True)
+            for name, solid in jt["mates"].items():
+                base = os.path.join(d, f"{jt['id']}-{name}")
+                export_step(solid, base + ".step")
+                export_stl(solid, base + ".stl", tolerance=0.01, angular_tolerance=0.1)
+                files += [os.path.relpath(base + ".step", out), os.path.relpath(base + ".stl", out)]
+        rows.append({"id": jt["id"], "member": jt["entry"].get("member"), "design": des, "files": files})
+    return rows
 
 
 def check_part(doc: dict, part, base_dir: str | None = None, out: str | None = None, render: bool = True) -> dict:

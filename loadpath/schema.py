@@ -1736,6 +1736,80 @@ _BUILD_INTERFACE = {
                                                     "it is trimmed to it, the exterior unchanged)"}},
     "required": ["id", "shape", "op"], "additionalProperties": False,
 }
+_BUILD_JOINT = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "type": {"enum": ["thread", "hinge", "snap"],
+                 "description": "thread: a coarse printed thread (a thumbscrew in a printed nut); hinge: a pin "
+                                "through alternating knuckles, pinned or printed in place; snap: a cantilever "
+                                "with a barb (joints.py, docs/JOINTS.md)"},
+        "member": {"enum": ["nut", "screw", "outer", "inner", "hook", "catch"],
+                   "description": "which side this part is: a thread's nut (default) or screw; a hinge's outer "
+                                  "knuckles (default: the two ends and every other one) or inner; a snap's hook "
+                                  "(default: the beam) or catch (the window it drops into)"},
+        "at": {**_VEC3, "description": "thread: the nut's face on the axis (the screw comes in from there along "
+                                       "`axis`); hinge: the middle of the pin; snap: the beam's root"},
+        "axis": {**_VEC3, "description": "thread: the screw's direction from its head toward its tip; hinge: the "
+                                         "pin's axis"},
+        "build": {**_VEC3, "description": "this part's build direction (default the process's)"},
+        "material": {"type": "string", "description": "default the part's"},
+        "safety": {**_POS, "description": "target safety factor on strength (default 2; an over-tightening by "
+                                          "hand is judged at 1.5, an abuse load)"},
+        "proud": {"type": "boolean", "description": "the joint's added solids may stand outside the exterior"},
+        "blend": {"type": "number", "minimum": 0, "description": "mm, fillet where an added knuckle or beam meets "
+                                                                 "the body (default 1)"},
+        "length": {**_POS, "description": "thread: mm of thread (default the engagement sized)"},
+        "clamp": {"type": "number", "minimum": 0,
+                  "description": "thread: N the joint must still clamp with at the end of its life (creep: it "
+                                 "starts at clamp / retention)"},
+        "clampMaterial": {"type": "string", "description": "thread: what else the clamp squeezes (a TPU liner): "
+                                                           "the stack relaxes as its most creeping member does"},
+        "load": {"type": "number", "minimum": 0,
+                 "description": "thread: N of external tension on top of the clamp; hinge: N across the pin"},
+        "loadDir": {**_VEC3, "description": "hinge: the load's direction across the pin"},
+        "d": {**_POS, "description": "thread: major diameter; hinge: pin diameter (mm). Left out: sized"},
+        "pitch": {**_POS, "description": "thread: mm. Left out: sized (the finest the process holds)"},
+        "engage": {**_POS, "description": "thread: engaged length, mm. Left out: sized"},
+        "form": {"description": "thread: 'iso' (60 degrees), 'print' (90: every flank self-supporting), "
+                                "'buttress' (10/45), [loaded, back] flank angles in degrees, or 'auto' (by the "
+                                "members' print orientation)"},
+        "knob": {"description": "thread: the knob's diameter (mm) when it is turned by hand, or 'auto' to size it "
+                                "(the smallest whose firm turn gives the fresh clamp)"},
+        "torque": {**_POS, "description": "thread: N mm, when a tool sets it"},
+        "slip": {"type": "number", "minimum": 1,
+                 "description": "thread: the knob slips past this multiple of the snug torque (a torque-limiting "
+                                "knob); without it a strong hand over-tightens several times over"},
+        "boss": {**_POS, "description": "thread: the nut's outer diameter (mm). Left out: the wall the burst "
+                                        "needs is sized and kept round the nut"},
+        "screw": {"enum": ["printed", "bought"], "description": "thread: a printed screw or a bought metal one"},
+        "screwBuild": {**_VEC3, "description": "thread: the screw's own build direction (along the axis: printed "
+                                               "standing; across: lying, on a flat)"},
+        "collar": {**_POS, "description": "thread: mean radius the head bears on (default 0.65 d)"},
+        "hours": {"type": "number", "minimum": 0, "description": "how long the load or clamp is held (creep "
+                                                                 "rupture); thread default a year"},
+        "kind": {"enum": ["pinned", "print-in-place"], "description": "hinge: a separate pin (pressed into the "
+                                                                      "outer knuckles), or one printed in place"},
+        "width": {**_POS, "description": "hinge: length along the pin, mm. Left out: sized"},
+        "knuckles": {"type": "integer", "minimum": 2, "description": "hinge: knuckles in all (default 3)"},
+        "ligament": {**_POS, "description": "hinge: knuckle wall round the bore, mm. Left out: sized"},
+        "gap": {"type": "number", "minimum": 0, "description": "thread, hinge: radial gap as drawn (default the "
+                                                             "process's: its bias and scatter, joints.process_gap)"},
+        "pin": {"type": "string", "description": "hinge: a bought pin's material ('304'); default printed"},
+        "pinBuild": {**_VEC3, "description": "hinge: a printed pin's build direction"},
+        "hold": {**_POS, "description": "snap: N it must hold"},
+        "undercut": {**_POS, "description": "snap: mm the barb catches (default: a catch past the process's "
+                                            "worst case)"},
+        "t": {**_POS, "description": "snap: beam thickness, mm"},
+        "L": {**_POS, "description": "snap: beam length, mm"},
+        "b": {**_POS, "description": "snap: beam width, mm"},
+        "lead": {**_POS, "description": "snap: lead face, degrees (default 30)"},
+        "return": {**_POS, "description": "snap: return face, degrees (default 90: holds until it breaks)"},
+        "lengthDir": {**_VEC3, "description": "snap: along the beam, root to barb"},
+        "deflectDir": {**_VEC3, "description": "snap: the way the barb stands proud"},
+        "repeated": {"type": "boolean", "description": "snap: opened and closed often"}},
+    "required": ["id", "type"], "additionalProperties": False,
+}
 _BUILD_COMPONENT = {
     "type": "object",
     "properties": {
@@ -2214,6 +2288,11 @@ STUDY_SCHEMA = {
         "components": {"type": "array", "items": _BUILD_COMPONENT,
                        "description": "`loadpath build`: the bought parts inside, as solids where they sit. "
                                       "Each gets its pocket, its clearance and its way in, all checked."},
+        "joints": {"type": "array", "items": _BUILD_JOINT,
+                   "description": "`loadpath build` (docs/JOINTS.md): printed threads, hinges and snaps, sized "
+                                  "from their load (joints.py), drawn as exact solids (jointcad.py) and checked "
+                                  "again at the walls measured on the delivered part; mating screws and pins "
+                                  "are written to out/joints/."},
         "targetMass": _BUILD_TARGET,
         "thin": {"type": "array", "items": {"type": "object", "properties": {
                      "id": {"type": "string"},
@@ -2261,7 +2340,7 @@ STUDY_SCHEMA = {
                            "directory the environment variable `env` names; the case is skipped without it."},
     },
     "required": ["designSpace"],
-    "x-requireOne": [["loadCases"], ["loads"], ["feel"], ["cooling"], ["interfaces"], ["components"]],
+    "x-requireOne": [["loadCases"], ["loads"], ["feel"], ["cooling"], ["interfaces"], ["components"], ["joints"]],
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
               "switchClearance": _SWITCH_CLEARANCE,
@@ -4166,7 +4245,7 @@ def lint(doc, kind: str = "study") -> list[dict]:
             out.append(("error", "$.nodes", str(exc)))
     if kind == "study" and isinstance(doc, dict) and not doc.get("supports") and not doc.get("feel") \
             and not doc.get("cooling") and not doc.get("inertiaRelief") \
-            and not ((doc.get("interfaces") or doc.get("components")) and not doc.get("loadCases")
+            and not ((doc.get("interfaces") or doc.get("components") or doc.get("joints")) and not doc.get("loadCases")
                      and not doc.get("loads")):      # a build spec without loads (build.py) is held by nothing
         # beyond JSON Schema: supports are optional only for pressure vessels
         cases = doc.get("loadCases") or ([{"loads": doc["loads"]}] if isinstance(doc.get("loads"), list) else [])

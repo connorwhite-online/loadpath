@@ -16,7 +16,7 @@ loadpath build spec.json --out dir          # MCP loadpath_build; exit 0 only wh
 loadpath check-build spec.json part.stl     # the same checks on a part made any other way
 ```
 
-The spec is a study (`loadpath schema study`) with five more blocks. It
+The spec is a study (`loadpath schema study`) with these blocks. It
 needs no loads or supports. With them it is also an ordinary study.
 
 | Block | What it is |
@@ -24,6 +24,7 @@ needs no loads or supports. With them it is also an ordinary study.
 | `designSpace` | the exterior, kept exactly: a CAD solid, STEP, mesh or SDF |
 | `skin` | the wall kept of it, and `zones` where the wall is another thickness; `"solid"` for a part drawn whole (a bracket, a mount: no cavity, the designSpace is the part) |
 | `interfaces` | features that must be exact, as CAD solids: `add` (a boss, a plunger, a cradle) or `cut` (a port, a bore, an opening) |
+| `joints` | printed threads, hinges and snaps sized from their load ([JOINTS.md](JOINTS.md)): drawn exactly, checked at the wall the part gives them, the mating screw or pin written beside the part |
 | `components` | the bought parts as solids where they sit, with `clearance`, `mass`, `keepIn`, `insertFrom` |
 | `targetMass` | grams, and which walls may move to reach it |
 | `assert` | features measured every build; one that fails fails the build |
@@ -80,6 +81,7 @@ limit, and where it failed.
 | `clear:<component>` | the least gap from the part to the component |
 | `way-in:<component>` | the path it sweeps going in along `insertFrom` is empty |
 | `inside:<component>` | exterior left between it and the outside (`keepIn`) |
+| `joint:<id>`, `joint-fit:<id>` | a joint's checks at the wall measured on the part, and nothing of the part inside its screw or pin ([JOINTS.md](JOINTS.md)) |
 | `process` | walls, trapped powder and escape holes for the process |
 | `dfm` | the print service's published limits for the material (below) |
 | `mass` | the mass against the target and its tolerance |

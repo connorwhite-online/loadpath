@@ -440,7 +440,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [build simulation](BUILDSIM.md), [calibration](CALIBRATION.md),
   [CAD import](IMPORT.md), [scans and splats](SCAN.md), [slicer](slicer.md), [freeform surfacing from curves](FREEFORM.md),
   [multi-material](MULTIMATERIAL.md), [impact](IMPACT.md), [breakaway links](FUSES.md),
-  [mechanisms](MECHANISMS.md), [a part in one run from a spec](BUILD.md), [whole products inside a fixed exterior](ENCLOSURE.md),
+  [mechanisms](MECHANISMS.md), [printed threads, hinges and snaps](JOINTS.md), [a part in one run from a spec](BUILD.md), [whole products inside a fixed exterior](ENCLOSURE.md),
   [push pads](SWITCH.md), [feel targets](FEEL.md), [cooling](COOLING.md), [any exterior in](EXTERIOR.md), [a first exterior round the parts](ENVELOPE.md),
   [split shells](SHELLS.md), [wires and cables](WIRES.md), [generated exteriors](SHROUD.md), [bought stock](STOCK.md),
   [KiCad boards](KICAD.md), [antennas](ANTENNA.md), [casting](CASTING.md), [propellers](PROPELLERS.md), [fans](FANS.md),

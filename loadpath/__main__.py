@@ -1103,6 +1103,14 @@ def main(argv=None):
     bld.add_argument("--pitch", type=float, help="mm the inner surface is sampled at (default: from the walls)")
     bld.add_argument("--no-render", action="store_true", help="skip the close-up and view sheets")
     bld.add_argument("--base-dir")
+    jnt = sub.add_parser("joint", help="size a printed thread, hinge or snap from its load and check every way "
+                                       "it fails, across the layers and at the process's tolerances "
+                                       "(docs/JOINTS.md)")
+    jnt.add_argument("entry", help="a joints entry as JSON or a JSON file: {type: thread | hinge | snap, ...} "
+                                   "(loadpath schema study, $.joints)")
+    jnt.add_argument("--material", default="petg")
+    jnt.add_argument("--process", default="fdm")
+    jnt.add_argument("--step", help="write the joint's solids here as STEP and STL (needs build123d)")
     cbd = sub.add_parser("check-build", help="run a build spec's checks on a mesh that already exists (one made "
                                              "another way, or edited since)")
     cbd.add_argument("spec")
@@ -1407,6 +1415,8 @@ def main(argv=None):
         return _feel(args)
     if args.cmd == "massfill":
         return _massfill(args)
+    if args.cmd == "joint":
+        return _joint(args)
     if args.cmd in ("build", "check-build"):
         return _build(args)
     if args.cmd == "stability":
@@ -2603,6 +2613,42 @@ def _build(args):
                       "out": os.path.abspath(args.out) if args.out else None, "seconds": rep["seconds"]},
                      default=float))
     return 0 if rep["ok"] else 1
+
+
+def _joint(args):
+    from .joints import design_joint
+
+    text = args.entry
+    try:
+        entry = json.loads(open(text).read() if os.path.isfile(text) else text)
+        des = design_joint(entry, args.material, args.process)
+    except (json.JSONDecodeError, OSError, ValueError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc) or type(exc).__name__}))
+        return 2
+    des.pop("strengths", None)
+    if args.step:
+        from build123d import export_step, export_stl
+
+        from .jointcad import hinge_solids, snap_solids, thread_solids
+
+        os.makedirs(args.step, exist_ok=True)
+        sol = {"thread": thread_solids, "hinge": hinge_solids, "snap": snap_solids}[des["type"]](des)
+        des["files"] = []
+        for k, v in sol.items():
+            if v is None:
+                continue
+            base = os.path.join(args.step, f"{entry.get('id', des['type'])}-{k}")
+            export_step(v, base + ".step")
+            export_stl(v, base + ".stl", tolerance=0.01, angular_tolerance=0.1)
+            des["files"] += [base + ".step", base + ".stl"]
+    for r in des["checks"]:
+        if r.get("sf") is not None:
+            print(f"{'ok  ' if r['pass'] else 'FAIL'} {r['id']:<16} SF {r['sf']:<6} {r['what']}", file=sys.stderr)
+        else:
+            print(f"{'ok  ' if r['pass'] else 'FAIL'} {r['id']:<16} {r['stress']} {r['unit']} {r['what']}",
+                  file=sys.stderr)
+    print(json.dumps(des, indent=1, default=float))
+    return 0 if des["pass"] else 1
 
 
 def _massfill(args):

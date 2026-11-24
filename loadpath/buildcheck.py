@@ -615,6 +615,136 @@ def drawn_surface_check(spec, mesh, it, near=None, name=None, tol=None, both=Fal
                 **({"strayShare": _r(stray)} if stray is not None else {}))
 
 
+def _radial_reach(mesh, origin, axis, r0, zs, angles=24, dirs=None):
+    """The least radius, over rays from the axis at heights `zs` (mm along
+    `axis` from `origin`), at which the part's material that starts inside
+    r0 ends: the outside of a wall round a bore of radius r0. `dirs`:
+    unit vectors across the axis to cast along (default all round)."""
+    z = np.asarray(axis, float) / np.linalg.norm(axis)
+    ref = np.array([1.0, 0, 0]) if abs(z[0]) < 0.9 else np.array([0, 1.0, 0])
+    x = np.cross(ref, z)
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    if dirs is None:
+        th = np.linspace(0, 2 * np.pi, angles, endpoint=False)
+        dirs = [np.cos(a) * x + np.sin(a) * y for a in th]
+    o = np.asarray(origin, float)
+    best = np.inf
+    worst_at = None
+    for zz in zs:
+        for d in dirs:
+            p = o + zz * z
+            locs, _ri, _ti = mesh.ray.intersects_location([p], [d])
+            if len(locs) == 0:
+                continue
+            r = np.sort(np.linalg.norm(locs - p, axis=1))
+            r = r[r > r0 + 1e-3]
+            if len(r) == 0:
+                continue
+            # the first crossing past the bore leaves the material round it
+            if r[0] < best:
+                best, worst_at = float(r[0]), (p + r[0] * d).tolist()
+    return best, worst_at
+
+
+def joint_checks(spec, mesh, part_man, jt) -> list:
+    """A joint re-sized at the walls measured on the delivered part: a
+    thread's wall round its nut, a hinge's ligament round its bore (the
+    joint's own checks then run at those, joints.check_joint), and the
+    mating part's fit (nothing of the part inside the drawn screw or pin)."""
+    from .joints import check_joint
+    from .shapes import manifold_from_trimesh
+
+    e, des = jt["entry"], jt["design"]
+    kind, member = des["type"], e.get("member")
+    measured = {}
+    note = ""
+    if kind == "thread" and (member or "nut") == "nut":
+        L = float(e.get("length") or des["engage"])
+        rn = float(des["profile"]["nutMajor"])
+        R, at = _radial_reach(mesh, e.get("at", [0, 0, 0]), e.get("axis", [0, 0, 1]), rn,
+                                 np.linspace(0.15 * L, 0.85 * L, 5))
+        if np.isfinite(R):
+            measured["boss"] = 2.0 * R
+            note = f"wall round the nut measured to r {R:.2f} mm (thinnest at {np.round(at, 2).tolist()})"
+    if kind == "hinge":
+        rb = 0.5 * float(des["bore"] if (member or "outer") == "inner" or des["kind"] == "print-in-place"
+                         else des["press"])
+        W = float(des["width"])
+        n = int(des["knuckles"])
+        ga, ti, to = float(des["axialGap"]), float(des["knuckle"]), float(des["outerKnuckle"])
+        z = -0.5 * W
+        mids = []
+        for k in range(n):
+            t = to if k % 2 == 0 else ti
+            if (k % 2 == 0) == ((member or "outer") == "outer"):
+                mids.append(z + 0.5 * t)
+            z += t + ga
+        if (member or "outer") == "outer" and des["kind"] == "print-in-place":
+            mids = []           # the pin is this member's: its knuckles carry it, nothing to measure round a bore
+        if mids:
+            # beside and below the bore (a teardrop's roof is read on its own: the
+            # wall over it is a print limit, the hinge's load leaves through the sides)
+            ax = np.asarray(e.get("axis", [1, 0, 0]), float)
+            ax /= np.linalg.norm(ax)
+            b = np.asarray(jt.get("build") if jt.get("build") is not None else [0, 0, 1], float)
+            up = b - (b @ ax) * ax
+            tear = des["kind"] == "print-in-place" and (member or "outer") == "inner" and np.linalg.norm(up) > 1e-6
+            ref = np.array([1.0, 0, 0]) if abs(ax[0]) < 0.9 else np.array([0, 1.0, 0])
+            x = np.cross(ref, ax)
+            x /= np.linalg.norm(x)
+            y = np.cross(ax, x)
+            dirs = [np.cos(a) * x + np.sin(a) * y for a in np.linspace(0, 2 * np.pi, 24, endpoint=False)]
+            if tear:
+                up = up / np.linalg.norm(up)
+                side = [d for d in dirs if d @ up < np.cos(np.radians(46))]
+                R, at = _radial_reach(mesh, e.get("at", [0, 0, 0]), ax, rb, mids, dirs=side)
+                Ru, _ = _radial_reach(mesh, e.get("at", [0, 0, 0]), ax, rb * np.sqrt(2.0), mids, dirs=[up])
+                if np.isfinite(Ru):
+                    measured["roof"] = Ru - rb * np.sqrt(2.0)
+            else:
+                R, at = _radial_reach(mesh, e.get("at", [0, 0, 0]), ax, rb, mids, dirs=dirs)
+            if np.isfinite(R):
+                measured["ligament"] = R - rb
+                note = f"knuckle wall measured {R - rb:.2f} mm round the bore (thinnest at {np.round(at, 2).tolist()})"
+                if "roof" in measured:
+                    note += f", {measured['roof']:.2f} mm over its teardrop roof"
+    rows = []
+    roof = measured.pop("roof", None)
+    res = check_joint(e, measured, spec.doc.get("material"), spec.doc.get("process"), jt.get("build"))
+    if roof is not None:
+        for r in res["checks"]:
+            if r["id"] == "bore-roof":
+                r.update(stress=round(roof, 3), sf=round(roof / r["allowable"], 2), pass_=None)
+                r["pass"] = roof >= r["allowable"] - 1e-9
+                r.pop("pass_", None)
+        res["pass"] = all(r["pass"] for r in res["checks"])
+        measured["roof"] = roof
+    bad = [r for r in res["checks"] if not r["pass"]]
+    sfs = [r["sf"] for r in res["checks"] if r.get("unit") == "MPa" and r.get("sf") is not None]
+    detail = note
+    if bad:
+        detail = (note + "; " if note else "") + "fails: " + "; ".join(
+            f"{r['id']} {r['stress']}{' ' + r['unit'] if r['unit'] else ''} vs {r['allowable']}"
+            + (f" (SF {r['sf']})" if r.get("sf") is not None else "") for r in bad)
+    rows.append(_row(f"joint:{jt['id']}", "joint", res["pass"], value=_r(min(sfs) if sfs else None),
+                     limit=res["checks"][0].get("target") if res["checks"] else None, detail=detail or None,
+                     measured={k: _r(v) for k, v in measured.items()}, joint=jt["id"], type=kind,
+                     modes={r["id"]: r["sf"] for r in res["checks"]}))
+    # the mating part drawn where it goes: none of the part inside it
+    for name, solid in (jt.get("mates") or {}).items():
+        if name not in ("screw", "pin") or (kind == "hinge" and (member or "outer") == "outer"):
+            continue                       # a pin is pressed into the outer knuckles by design
+        from .brepio import load_brep
+
+        m = load_brep(solid, tolerance=0.01).manifold()
+        inside = float((m ^ part_man).volume()) if part_man is not None else 0.0
+        lim = 1e-3 * float(m.volume())
+        rows.append(_row(f"joint-fit:{jt['id']}", "joint-fit", inside <= lim, value=_r(inside, 4), limit=_r(lim, 4),
+                         detail=None if inside <= lim else f"{inside:.3f} mm3 of the part inside the drawn {name}"))
+    return rows
+
+
 def _interface_checks(spec, part_man):
     rows = []
     ext = spec.exterior_manifold()
@@ -922,6 +1052,11 @@ def check_build(spec, mesh, out_dir=None, solid=None, body=None, render=True, ta
         if c.keep_in is not None:
             rows.append(keep_in_check(spec, c, c.keep_in))
     rows += _process_checks(spec, mesh)
+    for jt in getattr(spec, "joints", None) or []:
+        try:
+            rows += joint_checks(spec, mesh, part_man, jt)
+        except Exception as exc:  # noqa: BLE001 - reported as a check that could not run
+            rows.append(_row(f"joint:{jt['id']}", "joint", None, detail=f"{type(exc).__name__}: {exc}"))
 
     carried = sum(c.mass for c in spec.components)
     mass = {"part": float(mesh.volume * rho), "assembly": float(mesh.volume * rho + carried)}

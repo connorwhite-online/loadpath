@@ -92,7 +92,7 @@ jobs:
               tests/test_multimat_fixes.py tests/test_coopt.py tests/test_assembly.py tests/test_benchmarks.py
             pytest: >-
               tests/test_tune.py tests/test_brief_kinds_heatx.py tests/test_sizing.py tests/test_tetsizing.py
-              tests/test_dfm_reference.py tests/test_seats.py
+              tests/test_dfm_reference.py tests/test_seats.py tests/test_joints.py
           - group: making          # ~17 min there
             files: >-
               tests/test_flowtopo.py tests/test_conjugate.py tests/test_heatx_fixes.py tests/test_buildsim.py
@@ -111,6 +111,7 @@ jobs:
             files: >-
               tests/test_cadimport.py tests/test_latticestep.py tests/test_sharp.py tests/test_fit.py
               tests/test_subd.py tests/test_subdedit.py tests/test_build.py tests/test_surfacing.py
+              tests/test_jointcad.py
           # NeuralFoil (the aero extra) only here: the propeller's polars
           - group: aero            # ~3 min
             extras: ",aero"
