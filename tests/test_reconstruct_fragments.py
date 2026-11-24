@@ -288,3 +288,45 @@ def test_gap_weld_leaves_bodies_a_cell_apart_alone():
     b = m3d.Manifold.cube((10, 10, 4), True).translate((0, 0, 4.1))
     w = _gap_weld(trimesh_from_manifold(a), trimesh_from_manifold(b), 1.0, 2.0)
     assert w is not None and len((a + b + w).decompose()) == 1
+
+
+def test_a_body_on_the_skin_cells_is_joined_and_welded_across_most_of_a_cell():
+    # The smart button's cell cradle stood 0.72 mm (pitch 1) over the skin
+    # round its back opening: its cells shared faces with the skin cells,
+    # which carry the skin's stiffness whatever their density, so the
+    # design carried the cell through them. The field bodies count the
+    # skin cells, and the weld spans the gap the two stand at, not more.
+    import types
+
+    import manifold3d as m3d
+
+    from loadpath.reconstruct import WELD_GAP, _FieldBodies, _gap_weld, trimesh_from_manifold
+
+    dims = (6, 6, 6)
+    ijk = np.argwhere(np.ones(dims, bool))
+    x = np.zeros(len(ijk))
+    x[(ijk[:, 2] >= 3)] = 1.0                       # a body from z 3 up
+    on_skin = ijk[:, 2] == 2                        # the skin cells under it, thin
+    dom = types.SimpleNamespace(dims=dims, origin=(0.0, 0.0, 0.0), pitch=1.0,
+                                mesh=types.SimpleNamespace(elem_ijk=ijk),
+                                skin=types.SimpleNamespace(elem=np.nonzero(on_skin)[0],
+                                                           phi=np.full(on_skin.sum(), 0.3)))
+    dom.full_grid = lambda v: _full(dims, ijk, v)
+    assert _FieldBodies(dom, x, 0.5).labels.max() == 1
+    dom.skin = None
+    x[on_skin] = 0.0
+    x[ijk[:, 2] <= 1] = 1.0
+    assert _FieldBodies(dom, x, 0.5).labels.max() == 2
+
+    a = m3d.Manifold.cube((10, 10, 2), True)
+    b = m3d.Manifold.cube((10, 10, 2), True).translate((0, 0, 2.72))
+    w = _gap_weld(trimesh_from_manifold(a), trimesh_from_manifold(b), WELD_GAP * 1.0, 1.0)
+    assert w is not None and len((a + b + w).decompose()) == 1
+    extra = (w - a - b).volume()
+    assert 10 * 10 * 0.72 * 0.95 <= extra <= 10 * 10 * 0.72 * 1.3, extra
+
+
+def _full(dims, ijk, v):
+    g = np.zeros(dims)
+    g[ijk[:, 0], ijk[:, 1], ijk[:, 2]] = v
+    return g

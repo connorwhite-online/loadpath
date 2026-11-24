@@ -2136,7 +2136,7 @@ def _bodies(man):
     return sorted(man.decompose(), key=lambda b: -b.volume())
 
 
-WELD_GAP = 0.5   # of a cell: a gap under this the optimizer's grid cannot see
+WELD_GAP = 1.0   # of a cell: surfaces in face-sharing cells can stand up to a cell apart
 
 
 def _gap_weld(a, b, tol: float, step: float):
@@ -2171,6 +2171,11 @@ def _gap_weld(a, b, tol: float, step: float):
     on = d < tol
     if not on.any():
         return None
+    # span the gap the bodies stand at, not every surface within tol: past
+    # it the hulls only fillet the sides round the joint (a cradle 0.72 mm
+    # over a skin, welded at a full cell, grew a 2 mm fillet round its foot).
+    # The margin is the sample spacing, which reads the gap that much wide
+    on &= d < d[on].min() + 0.25 * tol
     q, r = pb[on], pa[i[on]]
     key = np.floor(q / step).astype(int)
     groups = {}
@@ -2196,7 +2201,7 @@ def _weld_field_joints(part, kept, field: "_FieldBodies", pitch: float, clip=Non
     one welded to it across the gap the exact shapes leave, and the welds'
     volume (0 when none was needed).
 
-    The grid cannot see a gap under half a cell: a speaker's drawn driver
+    The grid cannot see a gap under a cell: a speaker's drawn driver
     cradle stood 0.05 mm from the skin, their cells shared faces, and the
     optimizer carried the driver through that joint with no material of its
     own. The exact union then delivered the cradle as a body of its own,
@@ -2241,7 +2246,18 @@ class _FieldBodies:
     face), and dropping it silently loses optimized material."""
 
     def __init__(self, domain: Domain, xphys, level: float):
-        g = domain.full_grid(xphys) >= level
+        x = np.asarray(xphys, float)
+        sk = getattr(domain, "skin", None)
+        if sk is not None and len(sk.elem):
+            # a thin skin's cells carry the skin's own stiffness whatever
+            # their density (switch._SkinCells): the design analysed a body
+            # resting on them as joined to the shell through them (the smart
+            # button's cell cradle, 0.72 mm over the skin round its back
+            # opening, carried the cell's load through the skin cells it
+            # shares faces with), and the exact skin is delivered
+            x = x.copy()
+            x[np.asarray(sk.elem)] = np.maximum(x[np.asarray(sk.elem)], level)
+        g = domain.full_grid(x) >= level
         self.labels, _ = ndimage.label(g, structure=np.ones((3, 3, 3), bool))
         self.origin = np.asarray(domain.origin, float)
         self.pitch = float(domain.pitch)
