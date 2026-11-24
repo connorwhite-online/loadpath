@@ -2191,6 +2191,8 @@ def surface_file(source, out, size=None, scale=None, up=None, tolerance=None, ac
     except Exception:            # an SDF or CAD source: no triangles of its own to read noise from
         pass
     stem = os.path.splitext(out)[0]
+    # a folder named in --out that is not there yet: made, not found missing after the whole fit
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     rep = export_surface(ext.mesh, out, tolerance=tolerance, accuracy=accuracy, faces=faces, source=src,
                          cage_path=stem + ".cage.obj", progress=progress)
     rep.pop("shape", None)
