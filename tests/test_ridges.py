@@ -255,3 +255,17 @@ def test_wall_ridges_root_grows_with_height():
     assert hi.root_radius(end)[0] < 1.3
     far = np.array([[40.0, 40.0, 0.5]])
     assert abs(hi.root_radius(far)[0] - 1.0) < 1e-6
+
+
+def test_a_sharp_bend_is_solid_on_its_outside():
+    # outside a bend, a point is past one segment's end and before the next one's start. The cut
+    # meant for a ghost run-on there split a tall bulb along the bend's bisector: a slit 0.01 mm wide
+    from loadpath.ridges import WallRidges
+    up = lambda Q: np.tile([0, 0, 1.0], (len(Q), 1))
+    L = [np.array([[-30, 0, 0], [0, 0, 0], [-15, 26, 0]], float)]   # turns 120 degrees at the origin
+    r = WallRidges(L, "+z", up, H=(10, 10), t=(2, 2), R=(2.5, 2.5), smooth=0.0, taper=0.0)
+    zc = 10 - 2.5                                                   # the bulb's centre
+    d = np.linspace(0.0, 2.2, 23)                                   # out along the bisector, inside the bulb
+    P = np.column_stack([d * np.cos(np.radians(-30)), d * np.sin(np.radians(-30)), np.full_like(d, zc)])
+    f = r(P)
+    assert np.all(f < 0), f

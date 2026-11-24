@@ -140,6 +140,27 @@ def test_a_ring_on_a_fixed_plane_under_a_surfaced_face_is_one_body_but_not_attac
     assert r[0]["cover"] < 0.9 and r[0]["gap_max"] > 0.5
 
 
+def slab(n, off, t, lo, hi):
+    """|n.X - off| < t/2, cut to the box (lo, hi)."""
+    n = np.asarray(n, float) / np.linalg.norm(n)
+    bx = box(0.5 * (np.asarray(lo) + hi), 0.5 * (np.asarray(hi, float) - lo))
+    return lambda X: np.maximum(np.abs(np.asarray(X, float) @ n - off) - 0.5 * t, bx(X))
+
+
+def test_a_rib_leaned_45_degrees_has_air_under_it_but_is_not_off_its_wall():
+    # a generated rib leans toward the print direction: an overhang opening from its root, which the
+    # cover check took for a gap (18% "off the skin" on every leaned rib of a printed enclosure)
+    rib = slab((1, 0, -1), 0.0, 1.2, (-1, -8, -0.5), (5, 8, 5))
+    f = lambda X: {"solid": fillet_union(skin(X), rib(X), 0.6), "skin": skin(X), "rib": rib(X)}
+    r = I.attachment(f, [I.Feature("rib", min_cover=0.9)], (LO, HI), pitch=P)
+    assert len(r) == 1 and r[0]["passed"], r
+    # leaned flatter than open_angle it is a crevice under a shelf, and fails
+    shelf = slab((1, 0, -6), 0.0, 1.2, (-1, -8, -0.5), (12, 8, 3))
+    f = lambda X: {"solid": fillet_union(skin(X), shelf(X), 0.6), "skin": skin(X), "rib": shelf(X)}
+    r = I.attachment(f, [I.Feature("rib", min_cover=0.9)], (LO, HI), pitch=P)
+    assert not r[0]["passed"], r
+
+
 def test_seated_carries_the_ring_onto_the_face_with_a_fused_filleted_root():
     rg = I.seated(ring(-4.0, -2.0), curved_face, direction=(0, 0, 1), reach=4.0)
 
