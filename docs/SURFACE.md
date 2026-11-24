@@ -234,6 +234,50 @@ misses the limit by more than a third of the tolerance. The file's points
 are written unrounded: rounding a degree-7 patch's poles to 10 nm moved it
 off its own edges and readers could not mesh it.
 
+## Parts it had not seen (2026-11-24)
+
+Run cold on the 35 g wrist link (genus 34) and two held-out benchmark
+parts (`loadpath/evals/heldout`), one at a time beside other work:
+
+| part | cage faces | STEP faces | p99 mm | worst mm | time | |
+|---|---|---|---|---|---|---|
+| wrist link, 35 g | 11941 | 1228 (was 1635) | 0.094 | 0.64 (0.46 before a pull that is now undone), one 2.6 mm hole closed | 46 min | valid |
+| spool arm | 6576 | 628 | 0.088 | 0.26 | 10.5 min | valid, within the bound |
+| box cover | 11875 | 694 | 0.123 | 0.68 | 14.5 min | valid, over tolerance at the face cap |
+
+What broke, and what was fixed at the cause:
+
+- Every edit and every star-point move on the wrist link was refused: the
+  fit had left four folds, and `repair` refused any edit whose surface had
+  any fold. It now refuses only folds the cage did not have
+  (`subdedit._new_folds`). A place that already missed counted as new when
+  its middle shifted by half a millimetre; places are now matched within a
+  face.
+- The density search kept its last try. A lay with finer spots at the
+  12000-face cap closed five holes where the plain cage closed one, and
+  then laid the same cage three times; the best try is kept, and the cap
+  stops the search after its one spot lay.
+- The box cover had no cage at any density: its flat faces are 48 mm
+  triangles, and Instant Meshes lays its field over the input's vertex
+  graph. A mesh with an edge longer than the quads is laid out on an even
+  resampling, whose signed distance is now signed by pseudonormal (1720 s
+  to 122 s).
+- Instant Meshes can leave two quads closed on each other (a shell of no
+  volume); they are dropped instead of failing the cage.
+- A worst-point pull that makes the worst place worse is undone.
+
+Left open: a sharp-edged part (the box cover) does not reach 0.1 mm at
+12000 faces (error falls as h^1.5 at its creases; the edges come out
+rounded and wavy, see the close-up), so prismatic parts want creases;
+the wrist link's 2.6 mm hole through a 1.1 mm web cannot be cut into faces
+wider than the web (its tube folds), which wants local refinement before
+the cut; the worst-point pull on the wrist link moves control points 2-3
+mm near that bridged hole and is undone.
+
+![Wrist link before and after](images/surface/unseen-wrist-link.png)
+![Spool arm](images/surface/unseen-spool-arm.png)
+![Box cover](images/surface/unseen-box-cover.png)
+
 ## Not yet
 
 - Adaptive density for the first cage: measured, and not a lever on

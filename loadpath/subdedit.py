@@ -490,6 +490,40 @@ def refit(cage, H, mesh, touched, data, rings=RINGS, iterations=None, smooth=Non
     return f
 
 
+def _fold_spots(H, C):
+    """Where the limit surface folds (subd._folds): one point per folded
+    cage face, the mean of its limit points."""
+    from . import subd
+
+    f = subd._folds(H, C)
+    if not len(f):
+        return np.zeros((0, 3))
+    P = H.M @ C
+    sel = np.isin(H.root, f)
+    Qf = H.fine.Q[sel]
+    r = H.root[sel]
+    c = P[Qf].mean(axis=1)
+    return np.stack([np.bincount(np.searchsorted(f, r), weights=c[:, k], minlength=len(f)) for k in range(3)], 1) \
+        / np.bincount(np.searchsorted(f, r), minlength=len(f))[:, None]
+
+
+def _new_folds(H2, C2, H, C):
+    """Folds of the edited surface that the cage did not have before
+    (farther than a face from every fold it had): a fit can leave a few
+    folds on a part (fit_cage stiffens round them and stops), and an edit
+    elsewhere is not to blame for them."""
+    from scipy.spatial import cKDTree
+
+    new = _fold_spots(H2, C2)
+    if not len(new):
+        return 0
+    old = _fold_spots(H, C)
+    if not len(old):
+        return len(new)
+    h = float(np.sqrt(np.median(np.linalg.norm(C[H.cage.Q[:, 2]] - C[H.cage.Q[:, 0]], axis=1) ** 2) / 2.0))
+    return int((cKDTree(old).query(new)[0] > 2.0 * h).sum())
+
+
 def repair(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, d1, d2, rounds=6, progress=None):
     """The fitted cage put right where it is wrong, in place: bridged
     holes the process could print are cut in (`punch`), faces that miss by
@@ -588,7 +622,7 @@ def repair(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, d1, d2,
                 raise ValueError("a vertex with two faces")
             H2 = H if (len(Q) == len(cage.Q) and (Q == cage.Q).all()) else subd.Hierarchy(c2, level)
             refit(c2, H2, mesh, tch, data, settle=tol / 50)
-            if len(subd._folds(H2, c2.V)):
+            if _new_folds(H2, c2.V, H, cage.V):
                 raise ValueError("the surface folds")
         except (ValueError, RuntimeError) as err:
             # this edit is not made; the next round tries the next kind

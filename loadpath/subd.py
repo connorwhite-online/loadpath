@@ -238,7 +238,12 @@ def _quads(mesh, faces, crease):
     # triangles, so the quads come through an OBJ
     kw = dict(target_face_count=max(8, int(faces) // 4), pure_quad=True, deterministic=True,
               smooth_iterations=2, crease_angle=-1.0 if crease is None else float(crease))
-    v, f = _instant_quads(mesh, kw)
+    step = float(np.sqrt(mesh.area / max(int(faces), 1)))
+    # Instant Meshes lays its field over the input's own vertex graph: an
+    # edge longer than the quads it is to lay (a flat face exported as a few
+    # long triangles, 48 mm on a 1.6 mm-walled box cover) leaves its field
+    # unresolved there and the extraction full of holes at every density
+    v, f = _instant_quads(mesh if float(mesh.edges_unique_length.max()) <= step else _even(mesh, 0.25 * step), kw)
     if not len(f):
         # Instant Meshes lays its field over the input's own vertex graph:
         # slivers (an optimized part's exact bores and mount faces are long
@@ -277,6 +282,11 @@ def _even(mesh, step):
         S = _signed_distance(mesh, P).reshape([len(a) for a in axes])
         vv, ff, _, _ = measure.marching_cubes(S, 0.0, spacing=(step, step, step))
         out = trimesh.Trimesh(vv + [a[0] for a in axes], ff[:, ::-1], process=True)
+        parts = out.split(only_watertight=False)
+        if len(parts) > 1:
+            # crumbs of a sample or two (a flipped sign) are not the part
+            big = max(float(p.area) for p in parts)
+            out = trimesh.util.concatenate([p for p in parts if float(p.area) > 1e-3 * big])
         if out.euler_number == mesh.euler_number or float(np.prod(size)) / (0.5 * step) ** 3 > 4e7:
             break
         step *= 0.5
@@ -288,7 +298,12 @@ def _signed_distance(mesh, P):
     """Signed distance (negative inside) from points to a closed mesh."""
     try:
         import igl
-        return igl.signed_distance(P, np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64))[0]
+        # signed by the angle-weighted pseudonormal: exact on a closed
+        # manifold and nine times faster than libigl's default winding
+        # number (half an hour of the box cover's resampling); a sliver can
+        # still flip a far sample's sign, which `_even` drops as a crumb
+        return igl.signed_distance(P, np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64),
+                                   sign_type=igl.SIGNED_DISTANCE_TYPE_PSEUDONORMAL)[0]
     except ImportError:
         import trimesh
         return -trimesh.proximity.signed_distance(mesh, P)
@@ -509,9 +524,15 @@ def _dissolve_doublets(v, f):
         r2 = np.roll(q2, -k2)                     # (w, b, y, a)
         if r2[1] != r1[3] or r2[3] != r1[1]:
             break
-        merged = np.array([r1[1], r1[2], r1[3], r2[2]])
         keep = np.ones(len(f), bool)
         keep[fs] = False
+        if r2[2] == r1[2]:
+            # the same four corners both ways: the two quads close on each
+            # other, a shell of no volume (Instant Meshes leaves one where a
+            # thin member pinches off); it is not the part, drop it
+            f = f[keep]
+            continue
+        merged = np.array([r1[1], r1[2], r1[3], r2[2]])
         f = np.vstack([f[keep], merged[None]])
     used = np.unique(f)
     remap = np.full(len(v), -1)
@@ -854,10 +875,17 @@ def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, p
         return [p for p in pl if p.get("printable") or (p["kind"] == "surface" and p["miss"] > lim)]
     lim = 2.0 * bound if over is None else float(over)
     d1, d2, X = deviation(H, cage.V, mesh, data=check)[1]
-    before = {tuple(np.round(p["at"], 0)) for p in bad(H, cage.V, d1, d2, X)}
+    h = float(np.sqrt(mesh.area / len(cage.Q)))
+    # a place that already missed is the same place when it is within a
+    # face of where it was (a closed hole's or a miss's middle moves a
+    # little with every refit; a rounded coordinate called it new)
+    was = [p["at"] for p in bad(H, cage.V, d1, d2, X)]
+    before = cKDTree(np.asarray(was, float)) if was else None
+
+    def is_new(p):
+        return before is None or before.query(np.asarray(p["at"], float))[0] > h
     stars = int((cage.valence != 4).sum())
     frozen = np.zeros(0, np.int64)
-    h = float(np.sqrt(mesh.area / len(cage.Q)))
     rep = {"moves": 0, "starPoints": [stars, stars]}
     for attempt in range(attempts):
         Vn, Qn, touched, taken = simplify(cage.V, cage.Q, frozen=frozen)
@@ -867,7 +895,7 @@ def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, p
         H2 = Hierarchy(c2, level)
         refit(c2, H2, mesh, touched, data, fair=fair, settle=tol / 50)
         d2v, (e1, e2, X2) = deviation(H2, c2.V, mesh, data=check)
-        new = [p for p in bad(H2, c2.V, e1, e2, X2) if tuple(np.round(p["at"], 0)) not in before]
+        new = [p for p in bad(H2, c2.V, e1, e2, X2) if is_new(p)]
         if progress:
             progress(f"star points {stars} -> {int((c2.valence != 4).sum())} ({taken} moves): "
                      f"p99 {d2v['p99']:.4f} mm, {len(new)} new places over {lim:.2f}")
@@ -977,8 +1005,20 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
         if progress:
             progress(f"cage {len(cage.Q)} faces: p99 {dev['p99']:.4f} mm, max {dev['max']:.4f} mm "
                      f"(tolerance {tol:.4f}), {len(open_holes)} printable holes closed")
-        best = (cage, H, dev)
-        if (dev["p99"] <= tol and not open_holes and not coarse) or len(cage.Q) >= max_faces or faces:
+        # the best try is kept, not the last: a lay with finer spots is
+        # Instant Meshes' whole cage afresh, and can close more than it opens
+        # (the wrist link: 1 hole closed at 12000 faces, 5 with spots)
+        score = (dev["p99"] > tol, len(open_holes), max(coarse, default=0.0), dev["p99"])
+        if best is None or score < best[3]:
+            best = (cage, H, dev, score)
+        # at the face cap a closed hole or a coarse miss still gets its one
+        # lay with finer spots: the cap is on the density everywhere, and a
+        # hole through a wall thinner than the faces cannot be cut into
+        # them (its tube folds: the 35 g wrist link's 2.6 mm hole in a 1.1 mm
+        # web at 12000 faces)
+        spot_left = dev["p99"] <= tol and (open_holes or coarse) and not spots
+        capped = max(n, len(cage.Q)) >= max_faces
+        if (dev["p99"] <= tol and not open_holes and not coarse) or (capped and not spot_left) or faces:
             break
         # bicubic error falls as h^4 on smooth parts, as h^2 where a feature is
         # narrower than a face; the last two tries say which rate this part
@@ -1034,7 +1074,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
             # the next cage is laid afresh and its 99th percentile moves a
             # few percent with it: keep it aimed just under the tolerance
             n = int(min(max_faces, max(n, len(cage.Q) * grow)))
-    cage, H, dev = best
+    cage, H, dev = best[:3]
     if not faces and dev["p99"] <= tol:
         cage, H, dev, cancelled = _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev,
                                                progress)
@@ -1096,7 +1136,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
                     break
                 was = over(places)
                 pl2, k2 = misses(H, c2.V, mesh, e1, e2, Xc, aim, min_hole)
-                if over(pl2) > was and len(pl2) >= len(places):
+                if over(pl2) > was:
                     break               # the pull made the worst place worse: keep what there was
                 cage.V, dev, pulls, stage, d1, d2 = c2.V, d2v, pulls + 1, stage + 1, e1, e2
                 places, kind = pl2, k2
@@ -1799,6 +1839,11 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
 
     t0 = time.time()
     cage, H, rep = surface_mesh(mesh, tolerance=tolerance, faces=faces, progress=progress, **kw)
+    if cage_path:
+        # written before the patches: a cage whose patches do not sew is
+        # still there to look at
+        write_cage_obj(cage, cage_path)
+        rep["cage"] = str(cage_path)
     Hp = Hierarchy(Cage(cage.V, cage.Q), LEVEL + 1)
     b = None
     if layout == "lines":
@@ -1872,9 +1917,6 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
                 "valid": bool(valid and wrote.get("readBackValid", valid)),
                 "volume": round(_volume(shape), 3), "meshVolume": round(float(mesh.volume), 3),
                 "seconds": round(time.time() - t0, 1)})
-    if cage_path:
-        write_cage_obj(cage, cage_path)
-        rep["cage"] = str(cage_path)
     rep["shape"] = shape
     return rep
 

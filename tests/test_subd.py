@@ -266,6 +266,34 @@ def test_star_point_pairs_slide_together():
     assert b.n - len(b.E) + len(b.Q) == 2 and b.valence.min() >= 3 and len(touched) > 0
 
 
+def test_two_quads_closed_on_each_other_are_dropped():
+    # Instant Meshes can leave two quads sharing all four corners (a shell
+    # of no volume where a thin member pinches off): not a doublet to merge
+    v = np.random.default_rng(0).random((8, 3))
+    f = np.array([[0, 1, 2, 3], [0, 3, 2, 1]])
+    v2, f2 = subd._dissolve_doublets(v, f)
+    assert len(f2) == 0 and len(v2) == 0
+
+
+def test_long_triangles_laid_out_on_even_resampling():
+    # a flat face exported as a few long triangles: Instant Meshes cannot
+    # resolve its field there, so the layout runs on an even resampling
+    seen = []
+    orig = subd._instant_quads
+
+    def spy(mesh, kw):
+        seen.append(float(mesh.edges_unique_length.max()))
+        return orig(mesh, kw)
+    subd._instant_quads = spy
+    try:
+        m = trimesh.creation.box([40.0, 30.0, 4.0])
+        c = subd.quad_cage(m, 600)
+    finally:
+        subd._instant_quads = orig
+    step = float(np.sqrt(m.area / 600))
+    assert seen[0] <= step and len(c.Q) > 300
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
