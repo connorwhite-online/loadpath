@@ -136,6 +136,28 @@ def test_process_field_and_spec():
     assert r["ok"] and abs(r["volumeMm3"] - 8000) < 400, r["volumeMm3"]
 
 
+def test_drawn_alone_decides_who_owns_an_unformed_piece():
+    # reconstruct._drawn_unformed: a 2.4 mm drawn ring forms on its own, so a
+    # piece at its rim is the designed material's to cut; a 0.4 mm drawn
+    # plate does not, and stays for the check to report as the designer's
+    from loadpath.reconstruct import _drawn_unformed
+
+    def study(shape):
+        return study_from_dict({
+            "designSpace": {"type": "box", "min": [-20, -20, -5], "max": [20, 20, 5]},
+            "preserve": [{"id": "drawn", "shape": shape}],
+            "supports": [{"region": "drawn"}],
+            "loadCases": [{"name": "a", "loads": [{"region": "drawn", "force": [0, 0, -1]}]}],
+            "material": "pa12", "process": {"type": "mjf"}})
+
+    ring = study({"type": "cylinder", "p0": [0, 0, -2], "p1": [0, 0, 2], "r": 3.5, "rInner": 1.1})
+    rim = np.array([[3.3, 0.0, 1.8], [3.3, 0.2, 1.9], [3.2, 0.5, 1.9]])
+    assert _drawn_unformed(ring, [], rim, 0.2, 0.8) is False
+    plate = study({"type": "box", "min": [-5, -5, 0], "max": [5, 5, 0.4]})
+    mid = np.array([[0.0, 0.0, 0.2], [1.0, 0.0, 0.2], [2.0, 1.0, 0.2]])
+    assert _drawn_unformed(plate, [], mid, 0.1, 0.8) is True
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 

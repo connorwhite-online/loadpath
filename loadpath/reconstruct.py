@@ -826,6 +826,43 @@ def _drop_unformed(part, study, cut_ko, min_wall):
     return part, out
 
 
+def _drawn_unformed(study, kos, pts, p, min_wall) -> bool:
+    """Whether the drawn shapes alone, less the cut keep-outs, leave
+    material at the cells `pts` that a ball of `min_wall` diameter cannot
+    sweep: a sliver the designer drew, which is theirs to resolve
+    (processcheck names it). Read on the drawn shapes' own exact distance,
+    on the delivered part's grid round the cells. False when the drawn
+    shapes alone form there: then a piece the part cannot form is the
+    designed material's doing, even where its own cells sit within a wall
+    of the formed part. The MJF wrist link's J6 mount boss (2026-11-24):
+    designed material lapped the boss's rim under the J6 servo's keep-out,
+    a 0.59 mm piece reaching 1.3 mm whose far cells were the boss's skin,
+    so it was left as drawn and failed the process check, while the boss
+    alone is a 2.4 mm ring."""
+    if not len(pts) or not study.preserve:
+        return False
+    r = 0.5 * min_wall
+    pad = 2.0 * min_wall + 3.0 * p
+    lo, hi = pts.min(axis=0) - pad, pts.max(axis=0) + pad
+    ax = [np.arange(a, b + 0.5 * p, p) for a, b in zip(lo, hi)]
+    g = np.stack(np.meshgrid(*ax, indexing="ij"), axis=-1).reshape(-1, 3)
+    sd = np.min([rr.shape.sdf(g) for rr in study.preserve], axis=0)
+    if kos:
+        sd = np.maximum(sd, -np.min([k.sdf(g) for k in kos], axis=0))
+    sd = sd.reshape(tuple(len(a) for a in ax))
+    solid = sd < 0
+    if not solid.any():
+        return False
+    core = edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1] * p > r
+    if not core.any():
+        return True
+    swept = edt(~core) * p <= r + 0.5 * p
+    far = edt(~swept) * p
+    idx = np.clip(np.rint((pts - lo) / p).astype(int), 0, np.array(solid.shape) - 1)
+    at = solid[tuple(idx.T)]
+    return bool(at.any() and far[tuple(idx.T)][at].max() > min_wall + p)
+
+
 def _drop_unformed_once(part, study, cut_ko, min_wall):
     import manifold3d as m3d
     from skimage.measure import marching_cubes
@@ -857,7 +894,8 @@ def _drop_unformed_once(part, study, cut_ko, min_wall):
         # the designed cells must themselves reach past the wall: a drawn
         # sliver's piece also takes in the designed surface beside it, a
         # cell deep, which only rounds
-        if near.any() and mine.any() and u["cellReach"][mine].max() > min_wall + p:
+        if near.any() and mine.any() and (u["cellReach"][mine].max() > min_wall + p
+                                          or not _drawn_unformed(study, kos, pts[~mine], p, min_wall)):
             # its designed cells (the cut below leaves the drawn shapes whole)
             cut[tuple(u["cells"][mine].T)] = True
             out.append({"volumeMm3": round(float(mine.sum() * p ** 3), 2), "reachMm": u["reachMm"],
