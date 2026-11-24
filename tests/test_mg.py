@@ -334,3 +334,54 @@ def test_node_block_extra_is_the_csr_bit_for_bit():
         mgops.add_csr(plain, u, o1)
         mgops.add_csr(blk, u, o2)
         assert np.array_equal(o1, o2)
+
+
+def test_fused_vcycle_steps_are_the_passes_bit_for_bit():
+    """The fused V-cycle steps (masked operator in one product and one
+    scatter, residual-pad-restrict, prolong-add, smoother start, casts) give
+    the separate passes' numbers to the bit, on a level with springs and a
+    held-dof patch."""
+    import pytest
+
+    from loadpath import mgops
+
+    if not mgops.available():
+        pytest.skip("numba kernels off")
+    mesh, fixed, _f, e = _bar(12, 6, 6)
+    rng = np.random.default_rng(4)
+    d = rng.choice(mesh.n_dof, 40, replace=False)
+    springs = sp.csr_matrix((rng.random(40), (d, d)), shape=(mesh.n_dof, mesh.n_dof))
+    g = GridElasticity(mesh, 0.3, fixed, springs=springs, coarse_cells=50, device="cpu")
+    g.set_moduli(e)
+    assert len(g.levels) >= 3
+    for i in range(len(g.levels)):
+        lv = g._op(i)
+        for dt in {lv.mask.dtype, np.dtype(np.float64)} if i == 0 else {lv.mask.dtype}:
+            lvv = g.levels[0] if (i == 0 and dt == np.float64) else lv
+            u = rng.standard_normal(lvv.node_shape).astype(dt)
+            m = lvv.mask.astype(dt)
+            want = lvv.apply_k(u * m)
+            want = want * m + (1 - m) * u
+            assert np.array_equal(lvv.apply(u), want), (i, dt)
+    # transfers between level 0 and 1
+    lv, nxt = g._op(0), g._op(1)
+    b = rng.standard_normal(lv.node_shape).astype(np.float32)
+    ax = rng.standard_normal(lv.node_shape).astype(np.float32)
+    cs = nxt.node_shape
+    rf = np.zeros((3,) + tuple(2 * n - 1 for n in cs[1:]), np.float32)
+    sx, sy, sz = lv.node_shape[1:]
+    rf[:, :sx, :sy, :sz] = (b - ax) * lv.mask
+    assert np.array_equal(mgops.coarse_residual(b, ax, lv.mask, nxt.mask, cs), restrict(rf) * nxt.mask)
+    xc = rng.standard_normal(cs).astype(np.float32)
+    x = rng.standard_normal(lv.node_shape).astype(np.float32)
+    want = x + prolong(xc * nxt.mask)[:, :sx, :sy, :sz] * lv.mask
+    assert mgops.add_correction(xc, nxt.mask, lv.mask, x)
+    assert np.array_equal(x, want)
+    s = np.float32(1.0 / 3.7)
+    xs, r, dd = (np.empty_like(b) for _ in range(3))
+    mgops._cheb_start(b.reshape(-1), lv.dinv.reshape(-1), s, xs.reshape(-1), r.reshape(-1), dd.reshape(-1))
+    want = lv.dinv * b
+    want *= s
+    assert np.array_equal(dd, want) and np.array_equal(r, b) and not xs.any()
+    assert np.array_equal(mgops.cast(b, np.float64), b.astype(np.float64))
+    assert np.array_equal(mgops.cast(b.astype(np.float64), np.float32), b)

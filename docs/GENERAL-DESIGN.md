@@ -219,6 +219,74 @@ study or the grid. What the batch showed:
   candidate has the same skin, and only the one delivered needs the
   finest reading.
 
+### A third batch: mounts, a bearing block, a tube joint
+
+Six more everyday parts written cold on main 2cfb875 (`"batch": 3`): a
+608 pillow block, a pegboard hammer holder, a 20 mm tube tee, an
+under-desk laptop bracket, a Raspberry Pi wall mount and a filament spool
+arm. Five of the six are screwed to a wall or a desk, the commonest way
+a printed part is held.
+
+| Part | Cold | After this round's fixes |
+|---|---|---|
+| pillow block 608 (PETG) | fails: the block meets "0% of the goal, a limit other than strength" | fails honestly: the solid envelope carries 93% of the side load at SF 2.5 (2.33), and the run says so |
+| pegboard hammer holder (PLA) | no report: killed at 37 min | **passes**, 12.6 g, SF 2.10, 40 min; check warns, truly, that its horizontal pegs print on supports |
+| tube tee 20 mm (PETG) | **first try**, 16.6 g, SF 3.5: a false pass, its rail bore glued all round | check warns the slip bore is held as if glued; twin `-b` holds the rail as a radial seat with friction: **first try**, 59.0 g, SF 2.56, 67 min: a sleeve round the rail, as a tee that cannot bond to its tube has to be |
+| laptop bracket (PLA) | fails: "0% of the goal" | **passes**, 6.4 g, SF 2.08, 42 min |
+| Pi wall mount (PETG) | fails: "0% of the goal" | fails: 23.4 g, comes out in two pieces (gap 6) |
+| spool arm (PLA) | passes, 19.9 g, SF 7.2, 43 min | passes, 13.9 g, SF 8.7, 45 min; its check warning is true (printed along +x, the wall plate hangs off the arm's side) |
+
+What the batch showed:
+
+- **A screwed part held off nothing** (fixed; 3 of 6). The studies held
+  the screws' bores and put a seat (`supports[].push`) where the part
+  presses on the wall. A bore holds across its axis only, and a seat only
+  pushes, so a load that pulls the part off the wall had nothing to react
+  it: the solve flew off, the run read SF 0 on the solid block and blamed
+  "a limit other than strength". Physically the screw's head holds the
+  part along the screw. `fasteners._screw_holds` now adds that hold (a
+  seat on the head's seat, pushing along the screw) wherever a screw's
+  bore is a support and nothing fixed holds the part along it, and
+  `domain._seated_statics` solves the rigid-body statics of the supports
+  at check: a load nothing holds is refused in under a second with the
+  direction it lifts the part and what to write instead.
+- **A hole's roof read as unprintable drawn geometry** (fixed). A
+  horizontal hole's top is a bridge across the layers, as every slicer
+  prints it; the reach check now takes bridges and short ledges
+  (`domain._reach_bridged`) before calling preserved material unreachable.
+- **A tube in a slip bore held as if glued** (fixed as a warning plus a
+  new hold). The tee passed first try on a rail bore fixed all round, so
+  it grew a saddle bonded to the tube. `supports[].push = "radial"` is a
+  bore that pushes outward on its wall where it bears (twelve seats round
+  the axis, friction carried over), and check names a slip or clearance
+  bore held fixed across its axis.
+- **The pillow block's limit is real**. Its bearing seat sits 6 mm from
+  the envelope's edge; the solid block reads SF 2.33 for 2.5. Before the
+  screw fix it read 0 for the wrong reason.
+- **A part in two pieces** (open, gap 6). The Pi mount's board loads split
+  evenly onto its four standoffs, and each screw carries the two on its
+  side: no load needs the left half joined to the right, so the search
+  keeps two pieces, and each is judged a part on its own. Physically the
+  board itself would tie them, and a part is also handled and assembled
+  in one piece; neither is a load today.
+- **A seated part's check was slow and heavy** (fixed). The contact solve
+  factored the same matrix three times (cases, seat patches, the patches
+  cut finer); now once: the pegboard holder's check 59 to 36 s, 4.45 to
+  4.03 GB, same numbers. The tube tee's check had 149 right-hand sides
+  (cases, and a unit push per seat patch and friction row) on 262k dofs;
+  its factor wanted 4.1 GB against the third of free memory one factor
+  may take, so all 149 ran as CG: 84 minutes for one check. With 16 or
+  more right-hand sides a factor may take 0.6 of the free memory, after
+  the tet check the search runs ahead of need (a process of its own, 8 GB
+  here) has given way: the same check in 97 s, SF 1.523 against CG's
+  1.527. That prefetch process also outlived a run killed for memory; it
+  now dies with its search. And a failing run no longer verifies its
+  last part a second time for the viewer past its time limit.
+- **Open: the optimizer on a seat with friction is slow.** The tee's
+  iterations went from 8 s to 130 s as the design sharpened (31k cells),
+  and the run ended at 67 min against its 40 min limit, 18 of those after
+  the limit in one optimization's last steps.
+
 ### Thin walls: cells through the wall, or a shell on the spline surface
 
 The question behind that cost: a pinned wall is a surface with a thickness,
@@ -343,7 +411,7 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 3 | A named build direction forbids every overhang, so parts split or balloon | 4 | 2 of 11, every FDM study that names a direction | **Fixed**: the direction sets the layers; supports are decided by cost unless `overhangs` is declared |
 | 4 | The solid block passes but the search stops at 70% and hands back nothing | 6 | 1 of 11 | **Fixed**: the block is delivered when nothing lighter passes, with a note that the envelope sets the mass |
 | 5 | A design space in separate pieces runs for minutes and passes or fails without saying so | 1 | 1 of 11, common with keep-outs through thin envelopes | **Fixed**: flagged by `check` before the run |
-| 6 | A part in pieces: the search adds material, which never joins pieces that do not need each other | 5 | 1 of 11, any plate or frame with paired mounts | **Partly**: the search stops and says which load is missing. Open: the load that makes a part one piece (being carried, assembly) is not modelled |
+| 6 | A part in pieces: the search adds material, which never joins pieces that do not need each other | 5 | 2 of 17 (VESA plate; Pi wall mount in the third batch), any plate or frame with paired mounts | **Partly**: the search stops and says which load is missing. Open: the load that makes a part one piece (being carried, assembly) is not modelled |
 | 7 | The safety factor is set at something the study drew, not by the shape: a keep-out's square inside corner, a thin section, a bore held as if glued | 2 | 4 of 11, every part with a clearance cut or a bore | **Partly**: checked by hand, the four limits are real for the studies as written (hinge: 150 N on a 26 mm arm of a 4 mm PETG leaf is 40 MPa nominal against 47; crank: beam theory gives 1.9 mm of the 2.24 read; C-clamp: 10 MPa nominal, 34 at the throat's square corner, and the block reads 1.37, 1.73 and 2.36 with the corner square, at 4 mm and at 8 mm radius). A peak on a keep-out's square edge is now named as the notch to round; followed on the C-clamp (8 mm radius at the throat, nothing else changed), the second try passes: 45.9 g, SF 2.19 for 2, 19 min. A strength shortfall now also says how much more section the weak spot needs (the square root of the shortfall in depth if it bends, the shortfall in area if it is pulled or sheared). Open: how much radius a notch needs; a bore held rigidly all round (docs/PHYSICS.md, open item 1); the 0.86 mm reading length is assumed for PETG and PLA |
 | 8 | Small parts take 5 to 17 minutes | 8 | all | **Partly**: an impossible goal is read on the solid block first (under a minute on small studies); the supports decision searches only where it can win. Open: 16 to 50 minutes for a part that passes, most of it the search for lighter parts and the constrained method's passes |
 | 8a | A part passed by the confirming check on a load other than the one asked: a force from any direction checked as written | 6 | 1 of 11, every study with a direction-uncertain load | **Fixed**: the tetrahedral check judges the worst direction |
@@ -355,6 +423,9 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 12a | A sound design failed because the floor of a blind tapped hole is read as a blocked hole | 5 | 2 of 17, any thread in a thick part | **Fixed** |
 | 12b | A skin or duct wall under two cells: warned about, then designed on anyway | 4 | 4 of 6 in the second batch, every skinned part given a cell budget | **Fixed**: the wall sets the cell, up to four times the budget |
 | 12c | A bolted face held over its whole area against a load that lifts it | 2 | 2 of 6 in the second batch | **Fixed**: `supports[].push` is a seat that carries pressure only, solved as contact in the optimizer and the check; `check` names it where a face is held as if glued. A shelf bracket on two screws: 5.0 g with the face glued (a hold it does not have), no part on the screw pads alone (the block reads 1.36 for 2), 8.5 g at 2.42 on a seat. With a force of unknown direction the contact is solved in each direction (a seat lets go where the force lifts it, so the axes do not add up), in the space of the patches' gaps from the axis solves and the patches' unit pushes: exact against a seated solve of each direction to 1e-9; the worst for compliance by ascent on its convexity, the worst for stress on a truncated basis of the answers. A bracket on two screws and a seat, 60 N of any direction: 4.4x stiffer in its worst direction than the design for the force as written. The tetrahedral check solves the seat itself too (the patches' springs exact in its CG operator): a plate pried off its seat lifts 15.7 mm on tets, 15.2 on the grid, and CalculiX now takes seats as well (the patches' springs as SPRING1 on *EQUATION means; it reads the native tet check's lift and stress within 0.02%). Friction (`supports[].friction`, Coulomb on each patch: two force rows across it, |tau| <= mu lambda, solved by a semismooth Newton on the Alart-Curnier equations in the gaps' space, the load put on in steps when that fails) and preload (`supports[].preload`, N: the seat set into the part by the interference that gives that force with no load, so a rigid screw's joint stays shut until the load takes the clamp off): a block resting on a table at mu 0.3 holds 29 N across on 100 N and slides at 31 N; a plate clamped between two jaws by 200 N holds about 2 mu times the clamp force; a screw's head seat takes its screw's preload when the study's seats have friction. `check` counts friction too (the octagon round each node's friction disc), so a stand on a desk is no longer refused for being pushed across. A part that only its seat stops (it lies on a table, or rocks on one screw line) is solved too: the seat is held on springs for the solves and they are taken out again exactly; the seat's force is in `report.reactions`; a load that lifts such a part off is refused by name. In the check the patches that bear are cut in four, twice, so a part pressed on its seat near a rim bears on a band there and does not tilt about one coarse patch (far-end lift of a pressed plate 1.15 mm to 0.10 mm). |
+| 12e | A screwed part held across its screws and pushed on a seat: nothing holds it off the wall | 1, 2 | 3 of 6 in the third batch, every part screwed to a wall | **Fixed**: a screw whose bore is a support holds the part by its head along the screw (`fasteners._screw_holds`); `check` solves the supports' rigid-body statics and refuses a load nothing holds in under a second |
+| 12f | A tube in a slip bore held fixed all round: a false pass, the part bonded to its tube | 2 | 1 of 6 in the third batch, every clamp, tee or socket on a tube | **Fixed**: `supports[].push: "radial"` (the bore pushes outward where it bears, friction carried over); `check` names a slip or clearance bore held fixed across its axis. The tee: 16.6 g glued, 59.0 g held as it is |
+| 12g | A seated part's check: 149 right-hand sides on CG, 84 min | 8 | 1 of 6 | **Fixed**: one factor for all of them, given more memory when there are many (97 s) |
 | 12d | Parts come out lumpy, beaded along edges and lopsided | 8 | all 12 rendered parts, worst on small ones | **Fixed** in four places, each found on development parts (see "Why parts looked misshapen" below) |
 | 13 | Physical ground truth | 9 | all | **Open**: calibration prints (calibration/) |
 

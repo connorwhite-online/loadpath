@@ -1289,6 +1289,13 @@ def _shape(spec, base_dir):
             from .cadimport import load_part
             return MeshShape(load_part(path).mesh, spec["path"])
         mesh = trimesh.load(path, force="mesh")
+        if not mesh.is_watertight and not str(path).lower().endswith(".stl"):
+            # a solid that touches itself (a skin whose openings meet at an
+            # edge) is closed as written, with the touching corners kept
+            # apart; welding them on reading opened it
+            raw = trimesh.load(path, force="mesh", process=False)
+            if raw.is_watertight:
+                mesh = raw
         return MeshShape(mesh, spec["path"])
     if kind == "brep":
         # an exact solid drawn in a B-rep kernel (build123d, CadQuery, STEP):
