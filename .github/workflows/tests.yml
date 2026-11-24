@@ -181,12 +181,14 @@ jobs:
 
   # docs/tutorials/: each tutorial's commands, run in quick mode (coarse grid)
   # and held to its expect.json, so the docs can't drift from the code
-  # (45 minutes: agent-mcp took 25.5 to 27 minutes on 2026-11-20 and was
-  # cancelled at the old 30 on main aea752c and on a branch, with no change
-  # to it between; the others take 10 to 19)
+  # (60 minutes: urdf-arm-link took 44 on main 45e2a22 confirming on voxels;
+  # since the tet mesher needs no extra (stuffing.py) these runs confirm on
+  # tets, ~90 s a design on a 4-core runner, and it and agent-mcp went past
+  # the old 45 on main d2aafff. Capping quick mode's tets instead (60k, 2.2 mm
+  # on the forearm) read its 1.9 mm members at SF 1.13 against 2.08: no.)
   tutorials:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
