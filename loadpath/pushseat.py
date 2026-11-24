@@ -665,7 +665,8 @@ def _vm2(s):
     return np.einsum("...j,jl,...l->...", s, _VM, s)
 
 
-def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, strict: bool = False, offset=None):
+def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, strict: bool = False, offset=None,
+                 judge=None):
     """The direction of `case`'s uncertain force that raises the peak von
     Mises over the nodes in `mask` most, with the seat solved in each
     direction: (d, mu, peak).
@@ -682,7 +683,15 @@ def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, stric
     `strict`: a direction that lifts the part off with nothing else to hold
     it raises ValueError (verify). `offset`: stress the constant part carries
     beyond its displacement's (a thermal block's: -C eps_th, read at zero
-    displacement), counted with the constant part's coefficient."""
+    displacement), counted with the constant part's coefficient.
+    `judge(sig) -> peak`: the peak the part
+    is read by, from the stress at every node, when it is not von Mises
+    over `mask` (a pressure-modified stress for a polymer stronger in
+    compression; a peak read between nodes on the counted region's edge):
+    the directions von Mises ranks
+    highest, and the nominal one, are read with it exactly and the worst
+    by it is taken (a seated plate's tet check took von Mises' worst and
+    read 4% under its own 'up' case, 2026-11-24)."""
     rows = case.samples(n)
     if strict and any(r[4] for r in rows):
         raise ValueError(LIFTS + " A force of unknown direction lifts it in some direction.")
@@ -715,12 +724,32 @@ def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, stric
     keep = bound ** 2 >= low * (1.0 - 1e-9)
     sk = sk[keep]
     best, bs = 0.0, int(np.argmax(cs))
+    vall = np.zeros(len(coef))
     for k0 in range(0, len(coef), 32):
         sig = np.einsum("sk,mkj->smj", coef[k0:k0 + 32], sk)
         v = _vm2(sig).max(axis=1)
+        vall[k0:k0 + len(v)] = v
         j = int(np.argmax(v))
         if v[j] > best:
             best, bs = float(v[j]), k0 + j
+    if judge is not None:
+        nominal = np.asarray(case.spread.nominal, float)
+        nominal = nominal / max(np.linalg.norm(nominal), 1e-300)
+        c0, _, mu0, lam0, lf0 = case.at(nominal)          # the nominal direction itself, exactly
+        rows = list(rows) + [(nominal, c0, mu0, lam0, lf0)]
+        cand = sorted(set(np.argsort(-vall)[:12].tolist() + [bs, len(rows) - 1]))
+        qx = SeatedSpread.coefficients([rows[c] for c in cand])
+        top = -np.inf
+        for c, qc in zip(cand, qx):
+            sg = read(case.combine(qc))
+            if offset is not None:
+                sg = sg + qc[0] * offset
+            sg = sg if scale is None else sg * scale
+            e = float(judge(sg))
+            if e > top:
+                top, bs = e, c
+        d, mu = rows[bs][0], rows[bs][2]
+        return np.asarray(d, float), mu, top
     d, mu = rows[bs][0], rows[bs][2]
     return np.asarray(d, float), mu, float(np.sqrt(max(best, 0.0)))
 

@@ -745,7 +745,7 @@ def _seats_on(study, pts, surf, tol, faces):
     return out
 
 
-def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted):
+def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, judge=None):
     """The cases solved with the seats pushing (pushseat.py), as the grid's
     check solves them: the seat's force an unknown on patches of the face,
     the patches held by springs for the solves (in the CG's operator,
@@ -799,7 +799,8 @@ def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted):
             dirs.append(None)
             continue
         sc = cases[ci]
-        d, mu, _ = pushseat.worst_stress(sc, lambda v: stress([v.reshape(n, 3)])[0], counted, strict=True)
+        d, mu, _ = pushseat.worst_stress(sc, lambda v: stress([v.reshape(n, 3)])[0], counted, strict=True,
+                                          judge=judge)
         out_u.append(sc.u(d, mu).reshape(n, 3))
         dirs.append(np.asarray(d, float))
     return out_u, dirs
@@ -1556,13 +1557,14 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
 
     out = {}
     seats = _seats_on(study, pts, surf, tol, bfaces)
+    from .failure import equivalent_stress
     if backend in ("native", "both"):
         springs = _pin_springs(pin_blocks, mat.E * size, len(nodes))
         if seats:
             us, dirs = _seated(seats, loads, spreads, nodes, size, mat.E,
                                lambda lowrank: _solver(nodes, conn, mat.E, el, fixed_dof, springs, len(pts), edges,
                                                        lowrank),
-                               stress_of, far)
+                               stress_of, far, judge=lambda sig: peak_of(equivalent_stress(sig, m_c))[0])
         else:
             us, _, dirs = _worst_directions(
                 loads, spreads, lambda ls: _solve(nodes, conn, mat.E, el, fixed_dof, springs, ls, len(pts), edges),
@@ -1583,7 +1585,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
             # springs as springs on their means, every push a step of its own
             us_c, dirs_c = _seated(seats, loads, spreads, nodes, size, mat.E,
                                    lambda lowrank: _CcxSolver(mat, nodes, conn, supports, len(pts), el, lowrank),
-                                   stress_of, far)
+                                   stress_of, far, judge=lambda sig: peak_of(equivalent_stress(sig, m_c))[0])
         else:
             us_c, _, dirs_c = _worst_directions(
                 loads, spreads,
