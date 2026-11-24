@@ -1726,7 +1726,16 @@ def main(argv=None):
         _progress({"stage": "viewer", "outcomes": args.viewer})
         html = os.path.join(args.out, "viewer.html")
         try:
-            study_viewer(result, html, history=rec, outcomes=args.viewer, verified=verified)
+            # Past the time limit, a part not already verified with its
+            # fields is shown without them: a seated part's fields on a fine
+            # grid are another full check (the held-out tube tee: over half
+            # an hour past a 40 min limit, on a part already reported)
+            late = limit is not None and time.time() >= started + 60.0 * limit
+            if late and any(i not in verified for i in _viewer_indices(result, args.viewer)):
+                summary.setdefault("warnings", []).append(
+                    "viewer shows parts without stress fields: the time limit was reached "
+                    "(`loadpath bundle study.json part.stl` makes them)")
+            study_viewer(result, html, history=rec, outcomes=args.viewer, verified=verified, fields=not late)
             summary["viewer"] = html
         except Exception as exc:  # noqa: BLE001 - the parts and report matter more than the page
             summary.setdefault("warnings", []).append(f"viewer not written: {exc}")
@@ -2769,6 +2778,15 @@ def _buildsim(args):
         return 2
     _write_report(args.out, summary)
     return 0
+
+
+def _viewer_indices(result, which):
+    """The outcomes study_viewer shows for `which` ("best", "all" or indices)."""
+    if which == "best":
+        return [result.best if result.best is not None else len(result.outcomes) - 1] if result.outcomes else []
+    if which == "all":
+        return list(range(len(result.outcomes)))
+    return list(which)
 
 
 def _verified_grid(mesh_path):

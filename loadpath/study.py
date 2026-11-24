@@ -402,6 +402,11 @@ def _durability_drives(study: Study) -> bool:
 
 
 ROUND_TRIES = 3
+# The most material a stress round of radius r adds (mm^3 / r^3): a concave
+# fillet's section is (1 - pi/4) r^2, along the junction edges within its
+# reach (eased out by 3 r either side: 6 r each), up to three members' edges
+# meeting at the hotspot: 3 * 6 * (1 - pi/4) = 3.9.
+_ROUND_MOST = 3 * 6 * (1 - np.pi / 4)
 
 
 def _round_hotspots(study: Study, domain, field, mesh, rinfo, report, verify):
@@ -438,6 +443,13 @@ def _round_hotspots(study: Study, domain, field, mesh, rinfo, report, verify):
             m2, ri2 = reconstruct(study, domain, field, o)
             if m2.volume <= mesh.volume * (1 + 1e-4):
                 break   # a convex or flat spot: no junction to round there
+            r_ = o.round_at[-1][1]
+            if r_ and m2.volume - mesh.volume > _ROUND_MOST * r_ ** 3:
+                # More than a round can add: the closing bridged gaps across
+                # the box, not one junction (the pegboard holder's peg root,
+                # r 9.3 mm: +54% mass, every outcome, each verified and then
+                # refused at a third of the search's time). Not a round.
+                break
             r2 = verify(m2)
         except (RuntimeError, ValueError):
             break
@@ -2134,8 +2146,10 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     def stop():
         over = time.time() > deadline if quick.on() else _box_over(deadline, box, done[0])
         return (over and not loose()) or user_stop()
-    # the run's own clock goes down with them (_deadline)
+    # the run's own clock goes down with them (_deadline); a part cut off
+    # at its stop that is no lighter than the search's is not checked
     user_stop.deadline = stop.deadline = _deadline(should_stop)
+    user_stop.beat = stop.beat = ms
 
     cstudy = dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained"))
     fit = _constrained_fit(cstudy)
@@ -2688,6 +2702,26 @@ def _prefetch_main(work: str) -> None:
     with open(os.path.join(work, "in.pkl"), "rb") as fh:
         study, v, f, band = pickle.load(fh)
     try:
+        # gone with the search's process, however it ends (it runs in a
+        # session of its own, so a kill of the search's group misses it: an
+        # out-of-memory kill of a run left this 8 GB check running alone)
+        import ctypes
+        import signal
+
+        ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+        if os.getppid() == 1:
+            return
+    except (AttributeError, OSError):
+        pass
+    try:
+        # behind the search: a check that a lighter part may make moot takes
+        # only the cores the search leaves idle (at the same priority it took
+        # the robot-arm upper arm's search 60 s; the pegboard holder's checks
+        # ran 3-6x slower beside it)
+        os.nice(19)
+    except (AttributeError, OSError):
+        pass
+    try:
         out = ("ok", crosscheck(study, trimesh.Trimesh(v, f, process=False), contact_band=band))
     except Exception as exc:  # noqa: BLE001 - raised again in the search's process
         out = ("error", exc)
@@ -2718,6 +2752,21 @@ class _TetPrefetch:
         # (study._share_cores) or an eval case on one core (evals --jobs)
         cores = int(os.environ.get("LOADPATH_THREADS") or (os.cpu_count() or 1))
         self.on = os.environ.get("LOADPATH_TET_PREFETCH", "1") != "0" and cores >= 2
+        if self.on:
+            from . import direct
+
+            direct._SPECULATIVE.append(self.give_way)
+
+    def give_way(self) -> bool:
+        """Stop the running check (direct.make_room): a solve this process
+        needs now wants its memory. Its outcome is checked inline if the
+        search confirms it."""
+        stopped = False
+        for j in list(self.jobs):
+            if j[2] is not None and j[2].poll() is None:
+                self._remove(j)
+                stopped = True
+        return stopped
 
     def submit(self, study: Study, o, band: float) -> None:
         if not self.on or getattr(o, "mesh", None) is None or any(j[0] is o for j in self.jobs):
@@ -2748,6 +2797,9 @@ class _TetPrefetch:
         queued = [j for j in self.jobs if j[2] is None]
         if not queued:
             return
+        avail = _available_bytes()
+        if avail is not None and avail < 3e9:
+            return   # not with the memory for a second solve (checked inline if confirmed)
         import subprocess
         import sys
 
@@ -2815,6 +2867,10 @@ class _TetPrefetch:
     def close(self) -> None:
         for j in list(self.jobs):
             self._remove(j)
+        from . import direct
+
+        if self.give_way in direct._SPECULATIVE:
+            direct._SPECULATIVE.remove(self.give_way)
 
 
 def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool = True) -> StudyResult:
@@ -3607,6 +3663,22 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         build_direction=study.print_direction),
             limits, on_iter=on_iter, should_stop=should_stop)
         mesh, rinfo = reconstruct(study, domain, _meshed_field(res), ReconstructOptions())
+        beat = getattr(should_stop, "beat", None)
+        mass = float(mesh.volume) * study.material.density / 1000.0
+        if beat is not None and mass >= beat and should_stop is not None and should_stop():
+            # Cut off by the clock or its box, and no lighter than the
+            # search's passing part it is a bonus to: whatever it reads, it
+            # is not the pick. Its check (verify, then tets) was the
+            # pegboard holder's last 14 minutes, all past its time limit.
+            report = {"mass": mass, "safetyFactor": 0.0, "cases": [], "margin": 0.0,
+                      "warnings": [f"stopped at {mass:.1f} g, no lighter than the search's {beat:.1f} g part: "
+                                   "not checked"]}
+            o = Outcome(res.volume_fraction, mesh, report,
+                        {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
+                         "achievedVolumeFraction": res.volume_fraction, "method": "constrained"}, rinfo)
+            o.xphys, o.xlevel, o.x, o.voxel_sf, o.passes = res.xphys, res.xlevel, res.x, None, False
+            emit({"stage": "outcome", **o.summary()})
+            return o
         # The tet cross-check starts beside the voxel check, not after it:
         # every constrained part with a voxel reading is read on tets
         # (below), the mesher is most of that minute and a half, and it

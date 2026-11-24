@@ -104,16 +104,44 @@ def large_dofs() -> int:
 FACTOR_SHARE = 1.0 / 3.0
 
 
-def factor_budget() -> float | None:
-    """Bytes one factor may hold: FACTOR_SHARE of the memory free now
-    (None where that cannot be read)."""
+# With many right-hand sides on one matrix (a seated part's check: its cases
+# and a unit push per seat patch, 149 on the held-out tube tee) the CG that
+# runs instead costs per right-hand side, and the factor pays for itself many
+# times over: the tube tee's check was 84 min of CG next to a 4.1 GB factor
+# that the third did not allow out of 9.4 GB free. Past MANY_RHS a factor may
+# take this share instead: it is still read from the memory free at the time.
+MANY_RHS = 16
+MANY_RHS_SHARE = 0.6
+
+# Work another process does ahead of need (study._TetPrefetch: a tet check of
+# an outcome the search may confirm later) gives way to a solve the check
+# needs now: each callable stops its process and returns True if it did. A
+# tet check of 8 GB beside the tube tee's 4.1 GB factor was out of memory.
+_SPECULATIVE: list = []
+
+
+def make_room() -> bool:
+    """Stop the speculative work in other processes (_SPECULATIVE); True if
+    any was stopped."""
+    stopped = False
+    for f in list(_SPECULATIVE):
+        try:
+            stopped = bool(f()) or stopped
+        except Exception:  # noqa: BLE001 - a courtesy, never a reason a solve fails
+            pass
+    return stopped
+
+
+def factor_budget(share: float | None = None) -> float | None:
+    """Bytes one factor may hold: `share` (FACTOR_SHARE by default) of the
+    memory free now (None where that cannot be read)."""
     try:
         from .study import _available_bytes
 
         free = _available_bytes()
     except Exception:  # noqa: BLE001 - no reading: no limit
         return None
-    return FACTOR_SHARE * free if free else None
+    return (share or FACTOR_SHARE) * free if free else None
 
 
 def rescue_dofs() -> int:
@@ -145,6 +173,7 @@ class DirectSolver:
         self.last_iters = 0
         self._k = None
         self._fac = None
+        self.share = None            # factor_budget's share (None: FACTOR_SHARE)
 
     def invalidate(self):
         self._k = None
@@ -159,7 +188,7 @@ class DirectSolver:
             if backend() == "pardiso":
                 from .nonlinear import _Pardiso
 
-                budget = factor_budget()
+                budget = factor_budget(self.share)
                 # the next design on the same layout: the numbers only, on the
                 # analysis the last factor made (_Pardiso.refactor: the same bits)
                 if _REUSE_ANALYSIS and isinstance(prev, _Pardiso) and prev.refactor(k, budget):

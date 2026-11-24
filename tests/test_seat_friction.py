@@ -226,6 +226,33 @@ def test_calculix_solves_a_seat_as_the_native_tet_check_does():
     assert down["deflection"] < 0.01 * up["deflection"]
 
 
+def test_the_tet_check_factors_a_seated_part_once_and_reads_what_cg_reads(monkeypatch=None):
+    """A seated part's tet check solves a column per seat patch (and again
+    as the bearing patches are cut finer) on one PARDISO factor of the
+    stiffness with the patches' springs exactly (crosscheck._seated_factor):
+    the same readings as the CG on the same operator."""
+    import os
+
+    from loadpath.crosscheck import crosscheck
+    from loadpath.nonlinear import _have_pardiso
+
+    if not _have_pardiso():
+        print("  (skipped: no PARDISO)")
+        return
+    d, m = _pried([("up", {"force": [0, 0, 50]}), ("down", {"force": [0, 0, -50]})])
+    st = study_from_dict(d)
+    fast = crosscheck(st, m, size=2.0)
+    os.environ["LOADPATH_TET_SEATED"] = "cg"
+    try:
+        slow = crosscheck(st, m, size=2.0)
+    finally:
+        del os.environ["LOADPATH_TET_SEATED"]
+    for a, b in zip(fast["cases"], slow["cases"]):
+        assert abs(a["deflection"] / b["deflection"] - 1) < 1e-5, (a, b)
+        assert abs(a["peakStress"] / b["peakStress"] - 1) < 1e-5, (a, b)
+    assert abs(fast["safetyFactor"] / slow["safetyFactor"] - 1) < 1e-5
+
+
 THERMAL = {"ambient": 25, "convection": 30, "expansion": True,
            "temperatures": [{"shape": _box([50, -1, -1], [61, 11, 5]), "t": 70}]}
 

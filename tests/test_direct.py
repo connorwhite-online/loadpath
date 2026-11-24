@@ -698,3 +698,45 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_a_prefetched_check_gives_way_and_does_not_outlive_its_search(tmp_path, monkeypatch):
+    """A tet check started ahead of need (study._TetPrefetch) is stopped when
+    a solve the check needs now wants the memory (direct.make_room), and it
+    ends with the process that started it."""
+    import os
+    import subprocess
+    import sys
+    import time
+
+    from loadpath import direct
+    from loadpath.study import _TetPrefetch
+
+    monkeypatch.setenv("LOADPATH_THREADS", "2")
+    pf = _TetPrefetch()
+    assert pf.on and pf.give_way in direct._SPECULATIVE
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    pf.jobs.append([object(), str(tmp_path / "w"), p])
+    os.makedirs(tmp_path / "w")
+    assert direct.make_room() and p.poll() is not None and not pf.jobs
+    assert not direct.make_room()
+    pf.close()
+    assert pf.give_way not in direct._SPECULATIVE
+
+    # the child's own guard: a parent that dies takes it along
+    code = ("import os, subprocess, sys, time\n"
+            "c = subprocess.Popen([sys.executable, '-c', 'import ctypes, signal, time; "
+            "ctypes.CDLL(None).prctl(1, signal.SIGKILL); time.sleep(60)'])\n"
+            "print(c.pid, flush=True); time.sleep(1); os._exit(0)\n")
+    if not sys.platform.startswith("linux"):
+        return
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+    child = int(out.stdout.split()[0])
+    for _ in range(50):
+        try:
+            os.kill(child, 0)
+        except OSError:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("the child outlived its parent")
