@@ -76,6 +76,9 @@ class ReconstructOptions:
         # within reach of the point (on top of `close`): sized from the
         # stress the junction carries (study._round_junctions)
         self.round_at = None   # [(point mm, radius mm or None: the member's thickness)] (study._round_hotspots)
+        # round keep-out rims in the field (SOFT_CUT); off for a cast or
+        # milled part, whose walls the draw or the cutter shapes
+        self.soft_cut = True
 
 
 def _smooth_max(a, b, k):
@@ -826,6 +829,43 @@ def _drop_unformed(part, study, cut_ko, min_wall):
     return part, out
 
 
+def _drawn_unformed(study, kos, pts, p, min_wall) -> bool:
+    """Whether the drawn shapes alone, less the cut keep-outs, leave
+    material at the cells `pts` that a ball of `min_wall` diameter cannot
+    sweep: a sliver the designer drew, which is theirs to resolve
+    (processcheck names it). Read on the drawn shapes' own exact distance,
+    on the delivered part's grid round the cells. False when the drawn
+    shapes alone form there: then a piece the part cannot form is the
+    designed material's doing, even where its own cells sit within a wall
+    of the formed part. The MJF wrist link's J6 mount boss (2026-11-24):
+    designed material lapped the boss's rim under the J6 servo's keep-out,
+    a 0.59 mm piece reaching 1.3 mm whose far cells were the boss's skin,
+    so it was left as drawn and failed the process check, while the boss
+    alone is a 2.4 mm ring."""
+    if not len(pts) or not study.preserve:
+        return False
+    r = 0.5 * min_wall
+    pad = 2.0 * min_wall + 3.0 * p
+    lo, hi = pts.min(axis=0) - pad, pts.max(axis=0) + pad
+    ax = [np.arange(a, b + 0.5 * p, p) for a, b in zip(lo, hi)]
+    g = np.stack(np.meshgrid(*ax, indexing="ij"), axis=-1).reshape(-1, 3)
+    sd = np.min([rr.shape.sdf(g) for rr in study.preserve], axis=0)
+    if kos:
+        sd = np.maximum(sd, -np.min([k.sdf(g) for k in kos], axis=0))
+    sd = sd.reshape(tuple(len(a) for a in ax))
+    solid = sd < 0
+    if not solid.any():
+        return False
+    core = edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1] * p > r
+    if not core.any():
+        return True
+    swept = edt(~core) * p <= r + 0.5 * p
+    far = edt(~swept) * p
+    idx = np.clip(np.rint((pts - lo) / p).astype(int), 0, np.array(solid.shape) - 1)
+    at = solid[tuple(idx.T)]
+    return bool(at.any() and far[tuple(idx.T)][at].max() > min_wall + p)
+
+
 def _drop_unformed_once(part, study, cut_ko, min_wall):
     import manifold3d as m3d
     from skimage.measure import marching_cubes
@@ -857,7 +897,8 @@ def _drop_unformed_once(part, study, cut_ko, min_wall):
         # the designed cells must themselves reach past the wall: a drawn
         # sliver's piece also takes in the designed surface beside it, a
         # cell deep, which only rounds
-        if near.any() and mine.any() and u["cellReach"][mine].max() > min_wall + p:
+        if near.any() and mine.any() and (u["cellReach"][mine].max() > min_wall + p
+                                          or not _drawn_unformed(study, kos, pts[~mine], p, min_wall)):
             # its designed cells (the cut below leaves the drawn shapes whole)
             cut[tuple(u["cells"][mine].T)] = True
             out.append({"volumeMm3": round(float(mine.sum() * p ** 3), 2), "reachMm": u["reachMm"],
@@ -948,6 +989,85 @@ def _stress_sized_k(dm, step, k0, sd=None):
     return k
 
 
+# Where a keep-out (a bore, a slot, a part's way in) crosses the generated
+# body, an exact cut leaves a knife edge all round its rim: sharp to the
+# hand, a feather edge wherever the body meets the keep-out at a shallow
+# angle (thinner than the process prints, so it chips or curls), and a rim
+# the slicer and the eye both read as broken. The field is cut first with a
+# G2 round instead (sdf_kit.soft_subtract's rule, in the pipeline), so the
+# exact cut afterwards only trims the fit. The round's size is physics:
+# - a free rim (nothing bears on it): FILLET_SHARE of the thickness of the
+#   member it ends, as at a drawn shape (Peterson: little gained past 0.25 t);
+# - a bearing rim (a load or support acts there: a pin's bore, a screw's
+#   clamp face): an edge break of RIM_BEARING_SHARE x t. A round there is
+#   lost contact: r off each end of a bore of length t shortens its bearing
+#   by 2r, and the bearing stress rises by 1 / (1 - 2r/t): +25% at 0.1 t;
+# - beside a drawn shape the drawn shape's own edge stands (the carry above
+#   runs the body flush to it), so the round fades to the edge break there.
+# Never under 2 fine cells (the field cannot hold a tighter one) and never
+# past the cut: it only removes material, and only within k of the rim.
+SOFT_CUT = os.environ.get("LOADPATH_SOFT_CUT", "1") != "0"
+RIM_BEARING_SHARE = float(os.environ.get("LOADPATH_RIM_BEARING_SHARE", "0.1"))
+
+
+def _bearing_shapes(study):
+    """The shapes loads and supports act on: their rims keep an edge break only."""
+    regions = {r.id: r.shape for r in list(study.keep_out) + list(study.preserve)}
+    out = []
+    things = list(study.supports) + [ld for lc in study.load_cases for ld in lc.loads]
+    for t in things:
+        sh = getattr(t, "shape", None)
+        if sh is None and getattr(t, "region", None) in regions:
+            sh = regions[t.region]
+        if sh is not None:
+            out.append(sh)
+    return out
+
+
+def _soft_cut(fine, dk, keep, step, level, sdfs, bearing, pitch, design=(), env=None):
+    """Cut the keep-outs (signed distance `dk`, negative inside) out of the
+    field with rounded rims (see SOFT_CUT). `keep` (0..1) marks where the
+    body is run flush into a drawn shape's face instead."""
+    near = dk < FILLET_KMAX
+    if not near.any():
+        return fine
+    dm = _field_distance(fine, step, level)
+    depth = np.clip(-dm, 0.0, None)
+    rad = int(np.ceil(4.0 / step))
+    # the thickness of the member ending at the rim, read just outside the cut
+    # (inside it the field is already thinned by smoothing across the face)
+    thick = 2.0 * ndimage.maximum_filter(np.where(dk > 0, depth, 0.0), size=2 * rad + 1, mode="constant")
+    kmin = 2.0 * step
+    share = np.full(fine.shape, FILLET_SHARE)
+    if bearing:
+        db = sdfs.min(bearing).reshape(fine.shape)
+        w = np.clip((db - pitch) / pitch, 0.0, 1.0)          # bearing within a cell, free two cells out
+        share = RIM_BEARING_SHARE + w * (FILLET_SHARE - RIM_BEARING_SHARE)
+    k = np.clip(share * thick / 0.2526, kmin, FILLET_KMAX)
+    # Only where the body's surface leaves the keep-out's at an angle (a
+    # rim): where the body lies along the keep-out's face (a floor under a
+    # board's room, a wall beside it) a smooth max of the two shaves the
+    # body by 0.2 k, a whole wall's worth at a wall-sized round (the wall
+    # box lost 6% of its mass so). There it keeps the least round.
+    ga, gb = np.gradient(dm, step), np.gradient(dk, step)
+    dot = sum(a * b for a, b in zip(ga, gb))
+    na = np.sqrt(sum(a * a for a in ga)) * np.sqrt(sum(b * b for b in gb))
+    cos = np.where(na > 1e-9, dot / np.maximum(na, 1e-9), 0.0)
+    w = ndimage.gaussian_filter(np.clip((cos + 0.95) / 0.45, 0.0, 1.0), 2.0)
+    k = kmin + w * (k - kmin)
+    if keep is not None:
+        k = kmin + (1.0 - keep) * (k - kmin)
+    k = ndimage.gaussian_filter(k, 2.0)
+    # smooth max of the body and the cut: -(G2 union of -dm and dk)
+    du = -_g2_union(-dm, dk, k)
+    width = 2.0 * step
+    cut = np.clip(level - du / (2.0 * width), 0.0, 1.0)
+    if keep is not None:
+        # flush into a drawn face: the carried field stands, the exact cut ends it
+        cut = keep * fine + (1.0 - keep) * cut
+    return np.where(near, np.minimum(fine, cut), fine)
+
+
 def _clear_free_faces(du, dm, preserve, pts, step, inset, level=0.5, design=()):
     """Keep a drawn shape's flat faces that no member stands on clear of the
     fillet: a boss's end face is a seat (a washer, a screw head, a mating
@@ -1032,7 +1152,7 @@ def _drawn_carried(grid, domain: Domain, preserve):
 
 
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
-                flush=(), preserve=(), design=(), draft=None, skin=()):
+                flush=(), preserve=(), design=(), draft=None, skin=(), bearing=()):
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -1264,6 +1384,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         clearance = 0.5 * domain.pitch
         d = sdfs.min(keep_out)
         fade = np.clip(d / clearance, 0.0, 1.0)
+        keep = None
         if preserve and o.fillet and o.blend > 0:
             # ...except beside preserved geometry: a pad that bears on a
             # keep-out (a motor face) ends exactly at it, and the faded
@@ -1292,7 +1413,12 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
                 through = ndimage.gaussian_filter(fine[tuple(idx)], 1.0)
                 w = (keep * (d > -3.0 * domain.pitch)).reshape(fine.shape) * band
                 fine = w * through + (1.0 - w) * fine
-        fine = fine * fade.reshape(fine.shape)
+        if SOFT_CUT and o.fillet and getattr(o, "soft_cut", True):
+            fine = _soft_cut(fine, d.reshape(fine.shape), keep.reshape(fine.shape) if preserve and o.blend > 0
+                             else None, step, o.level, sdfs, bearing, domain.pitch, design,
+                             env.reshape(fine.shape) if design else None)
+        else:
+            fine = fine * fade.reshape(fine.shape)
         if design and min_member and 0.5 * float(min_member) >= step:
             room = _member_room(sdfs, design, preserve, keep_out, 0.5 * float(min_member), step)
             if room is not None:
@@ -2010,7 +2136,7 @@ def _bodies(man):
     return sorted(man.decompose(), key=lambda b: -b.volume())
 
 
-WELD_GAP = 0.5   # of a cell: a gap under this the optimizer's grid cannot see
+WELD_GAP = 1.0   # of a cell: surfaces in face-sharing cells can stand up to a cell apart
 
 
 def _gap_weld(a, b, tol: float, step: float):
@@ -2045,6 +2171,11 @@ def _gap_weld(a, b, tol: float, step: float):
     on = d < tol
     if not on.any():
         return None
+    # span the gap the bodies stand at, not every surface within tol: past
+    # it the hulls only fillet the sides round the joint (a cradle 0.72 mm
+    # over a skin, welded at a full cell, grew a 2 mm fillet round its foot).
+    # The margin is the sample spacing, which reads the gap that much wide
+    on &= d < d[on].min() + 0.25 * tol
     q, r = pb[on], pa[i[on]]
     key = np.floor(q / step).astype(int)
     groups = {}
@@ -2070,7 +2201,7 @@ def _weld_field_joints(part, kept, field: "_FieldBodies", pitch: float, clip=Non
     one welded to it across the gap the exact shapes leave, and the welds'
     volume (0 when none was needed).
 
-    The grid cannot see a gap under half a cell: a speaker's drawn driver
+    The grid cannot see a gap under a cell: a speaker's drawn driver
     cradle stood 0.05 mm from the skin, their cells shared faces, and the
     optimizer carried the driver through that joint with no material of its
     own. The exact union then delivered the cradle as a body of its own,
@@ -2115,7 +2246,18 @@ class _FieldBodies:
     face), and dropping it silently loses optimized material."""
 
     def __init__(self, domain: Domain, xphys, level: float):
-        g = domain.full_grid(xphys) >= level
+        x = np.asarray(xphys, float)
+        sk = getattr(domain, "skin", None)
+        if sk is not None and len(sk.elem):
+            # a thin skin's cells carry the skin's own stiffness whatever
+            # their density (switch._SkinCells): the design analysed a body
+            # resting on them as joined to the shell through them (the smart
+            # button's cell cradle, 0.72 mm over the skin round its back
+            # opening, carried the cell's load through the skin cells it
+            # shares faces with), and the exact skin is delivered
+            x = x.copy()
+            x[np.asarray(sk.elem)] = np.maximum(x[np.asarray(sk.elem)], level)
+        g = domain.full_grid(x) >= level
         self.labels, _ = ndimage.label(g, structure=np.ones((3, 3, 3), bool))
         self.origin = np.asarray(domain.origin, float)
         self.pitch = float(domain.pitch)
@@ -2230,6 +2372,14 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
         import copy
         o = copy.copy(o)
         o.axial = False
+    if getattr(study, "access", None) is not None and getattr(o, "soft_cut", True):
+        # Nor are a keep-out's rims rounded in the field there: the round
+        # turns through the draw direction, a band of wall with no draft
+        # round every rim (the cast arm link: 1109 mm^2 under its 1.5 deg
+        # of draft, limit 300, with soft cuts on; 56 without)
+        import copy
+        o = copy.copy(o)
+        o.soft_cut = False
     # Upsampling refines a coarse grid's staircase; a fine grid has none to
     # speak of, and 3x on 845k cells meant a 23M-cell field and 330 s of
     # meshing for 2M triangles. Cap the refined field near FINE_CELLS (eval
@@ -2299,7 +2449,8 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
     try:
         iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
                           flush=flush, preserve=inner, design=list(study.design_space),
-                          draft=draft, skin=[r.shape for r in study.preserve if r.id == "skin"])
+                          draft=draft, skin=[r.shape for r in study.preserve if r.id == "skin"],
+                          bearing=_bearing_shapes(study))
     except ValueError as exc:
         # Nothing designed, but preserved geometry to deliver: a fixed
         # exterior whose bare skin already meets every target (a touch

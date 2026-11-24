@@ -1,0 +1,535 @@
+{
+ "id": "pi-wall-mount-petg",
+ "batch": 3,
+ "brief": "A wall mount for a Raspberry Pi 4 in PETG (FDM, printed flat, layers along Z). The wall is the plane z = 0; two M4 screws go into it at x = -49 and x = +49 (y = 0) through a 5 mm plate. The board's four M2.5 holes (58 x 49 mm pattern, centred on the origin) sit on 6 mm round standoffs whose tops are at z = 9, with M2.5 screws threaded into 2.2 mm pilot holes in them. The board's underside needs 2 mm clear under it (85 x 56 mm, centred). The mount stays inside x = -55 to 55, y = -35 to 35, z = 0 to 9. Plugging a cable in pushes 40 N on the board toward the wall; pulling one out pulls 30 N away from the wall; yanking one sideways pulls 25 N along X at 6 mm above the standoff tops. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "electronics",
+  "mount",
+  "standoffs",
+  "fdm",
+  "fasteners",
+  "push-support"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -55,
+     -35,
+     0
+    ],
+    "max": [
+     55,
+     35,
+     9
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "so0",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -29,
+      -24.5,
+      6
+     ],
+     "axis": "z",
+     "length": 6,
+     "r": 3
+    }
+   },
+   {
+    "id": "so1",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -29,
+      24.5,
+      6
+     ],
+     "axis": "z",
+     "length": 6,
+     "r": 3
+    }
+   },
+   {
+    "id": "so2",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      29,
+      -24.5,
+      6
+     ],
+     "axis": "z",
+     "length": 6,
+     "r": 3
+    }
+   },
+   {
+    "id": "so3",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      29,
+      24.5,
+      6
+     ],
+     "axis": "z",
+     "length": 6,
+     "r": 3
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "under-board",
+    "shape": {
+     "type": "subtract",
+     "shapes": [
+      {
+       "type": "box",
+       "min": [
+        -42.5,
+        -28,
+        7
+       ],
+       "max": [
+        42.5,
+        28,
+        10
+       ]
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -29,
+        -24.5,
+        8.5
+       ],
+       "axis": "z",
+       "length": 4,
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -29,
+        24.5,
+        8.5
+       ],
+       "axis": "z",
+       "length": 4,
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        29,
+        -24.5,
+        8.5
+       ],
+       "axis": "z",
+       "length": 4,
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        29,
+        24.5,
+        8.5
+       ],
+       "axis": "z",
+       "length": 4,
+       "r": 3.5
+      }
+     ]
+    }
+   },
+   {
+    "id": "pilot0",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -29,
+      -24.5,
+      6
+     ],
+     "axis": "z",
+     "length": 8,
+     "r": 1.1
+    }
+   },
+   {
+    "id": "pilot1",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -29,
+      24.5,
+      6
+     ],
+     "axis": "z",
+     "length": 8,
+     "r": 1.1
+    }
+   },
+   {
+    "id": "pilot2",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      29,
+      -24.5,
+      6
+     ],
+     "axis": "z",
+     "length": 8,
+     "r": 1.1
+    }
+   },
+   {
+    "id": "pilot3",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      29,
+      24.5,
+      6
+     ],
+     "axis": "z",
+     "length": 8,
+     "r": 1.1
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "w1",
+    "size": "M4",
+    "seat": [
+     -49,
+     0,
+     5
+    ],
+    "direction": "-z",
+    "grip": 5,
+    "end": "face"
+   },
+   {
+    "id": "w2",
+    "size": "M4",
+    "seat": [
+     49,
+     0,
+     5
+    ],
+    "direction": "-z",
+    "grip": 5,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "w1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "w2-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -55,
+      -35,
+      -0.5
+     ],
+     "max": [
+      55,
+      35,
+      0.3
+     ]
+    },
+    "push": "+z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "plug-in",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "center": [
+          -29,
+          -24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          -29,
+          24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          29,
+          -24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          29,
+          24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       -40
+      ]
+     }
+    ]
+   },
+   {
+    "name": "pull-out",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "center": [
+          -29,
+          -24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          -29,
+          24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          29,
+          -24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          29,
+          24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       30
+      ]
+     }
+    ]
+   },
+   {
+    "name": "yank-x+",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "center": [
+          -29,
+          -24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          -29,
+          24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          29,
+          -24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          29,
+          24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        }
+       ]
+      },
+      "force": [
+       25,
+       0,
+       0
+      ],
+      "at": [
+       0,
+       0,
+       15
+      ]
+     }
+    ]
+   },
+   {
+    "name": "yank-x-",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "center": [
+          -29,
+          -24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          -29,
+          24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          29,
+          -24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        },
+        {
+         "type": "cylinder",
+         "center": [
+          29,
+          24.5,
+          8.75
+         ],
+         "axis": "z",
+         "length": 0.5,
+         "r": 3
+        }
+       ]
+      },
+      "force": [
+       -25,
+       0,
+       0
+      ],
+      "at": [
+       0,
+       0,
+       15
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "pi-wall-mount-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

@@ -296,12 +296,115 @@ def test_a_part_drawn_whole_is_checked_without_a_skin():
         raise AssertionError("an unknown skin word was taken")
 
 
+def test_a_cut_is_backed_by_the_process_wall_and_an_opening_stays_open():
+    """A cut that slices the body leaves at least the process's minimum
+    wall beside it (with its margin), however near the cavity comes; a cut
+    face that lies in the cavity (an opening's inner end) grows nothing. A
+    piece too thin between drawn surfaces only is the spec's: the checks say
+    which inputs bound it, and a declared `thin` feature passes."""
+    d = tempfile.mkdtemp(prefix="lp-backing-")
+    Path(d, "cad.py").write_text(
+        "from build123d import Box, Pos\n"
+        "def shell():\n    return Pos(0, 0, 6) * Box(30, 30, 12)\n"
+        # takes the floor's lower half from outside: 0.5 mm of floor would be left
+        "def recess():\n    return Pos(0, 0, -0.25) * Box(16, 16, 1.5)\n"
+        # runs through the floor into the cavity: its top face is in the cavity
+        "def opening():\n    return Pos(0, 0, 1.0) * Box(10, 10, 4)\n")
+    doc = {"name": "tray", "designSpace": {"type": "brep", "path": "cad.py:shell"}, "skin": 1.0,
+           "material": "pa12", "process": {"type": "sls", "minFeature": 0.8},
+           "interfaces": [{"id": "recess", "op": "cut", "shape": {"type": "brep", "path": "cad.py:recess"}},
+                          {"id": "opening", "op": "cut", "shape": {"type": "brep", "path": "cad.py:opening"}}]}
+    assert not lint(doc, "study"), lint(doc, "study")
+    from loadpath.build import BACKING_MARGIN, BodyField
+
+    spec = build_spec(doc, d)
+    assert spec.min_wall == 0.8
+    body = BodyField(spec)
+    w = 0.8 * BACKING_MARGIN
+    # over the recess (top face z 0.5), between the floor's old top (z 1) and 0.5 + w
+    P = np.array([[6.5, 0.0, 0.5 + 0.9 * w], [6.5, 0.0, 0.5 + 1.1 * w]])
+    with_b = body._solid(P, 0.0)[0]
+    without = body._solid(P, 0.0, backing=False)[0]
+    assert without[0] > 0 and with_b[0] < 0 and with_b[1] > 0, (with_b, without)
+    # over the opening's top face (z 3, in the cavity): nothing grows
+    Q = np.array([[0.0, 0.0, 3.3], [3.0, 3.0, 3.5]])
+    assert np.allclose(body._solid(Q, 0.0)[0], body._solid(Q, 0.0, backing=False)[0])
+    # backing: false is the old body
+    off = BodyField(build_spec({**doc, "interfaces": [{**doc["interfaces"][0], "backing": False},
+                                                      doc["interfaces"][1]]}, d))
+    assert off._solid(P, 0.0)[0][0] > 0
+
+    # a sliver between drawn surfaces only (a pocket 0.5 mm inside the exterior's face) is the spec's
+    from loadpath.buildcheck import _judge_pieces
+
+    Path(d, "cad2.py").write_text(
+        "from build123d import Box, Pos\n"
+        "def block():\n    return Pos(0, 0, 5) * Box(30, 30, 10)\n"
+        "def pocket():\n    return Pos(0, 0, 6) * Box(20, 29, 10)\n")
+    doc2 = {"name": "block", "designSpace": {"type": "brep", "path": "cad2.py:block"}, "skin": "solid",
+            "material": "pa12", "process": {"type": "sls", "minFeature": 0.8},
+            "interfaces": [{"id": "pocket", "op": "cut", "shape": {"type": "brep", "path": "cad2.py:pocket"}}]}
+    spec2 = build_spec(doc2, d)
+    piece = lambda: {"volumeMm3": 5.0, "reachMm": 3.0, "wallMm": 0.5, "at": [0.0, 14.75, 6.0],
+                     "_points": np.array([[x, 14.75, z] for x in (-3.0, 0.0, 3.0) for z in (4.0, 6.0, 8.0)]),
+                     "_reach": np.full(9, 2.0)}
+    bad, declared = _judge_pieces(spec2, [piece()], 0.32, 0.8)
+    assert len(bad) == 1 and bad[0]["owner"] == "drawn" and set(bad[0]["boundedBy"]) == {"exterior", "pocket"}, bad
+    spec2.doc = {**doc2, "thin": [{"id": "lip", "near": {"type": "box", "min": [-15, 14, 0], "max": [15, 15, 10]},
+                                   "min": 0.4, "why": "a snap lip"}]}
+    assert not lint(spec2.doc, "study"), lint(spec2.doc, "study")
+    spec2.__dict__.pop("_thin", None)
+    bad, declared = _judge_pieces(spec2, [piece()], 0.32, 0.8)
+    assert not bad and declared[0]["declared"] == "lip", (bad, declared)
+    # never under what the process forms as a detail (Materialize: 0.3 mm for SLS)
+    spec2.doc["thin"][0]["min"] = 0.2
+    spec2.__dict__.pop("_thin", None)
+    bad, _ = _judge_pieces(spec2, [{**piece(), "wallMm": 0.25}], 0.32, 0.8)
+    assert bad and "under the 0.3 mm" in bad[0]["declaredButFails"], bad
+
+
+def test_a_pocket_face_inside_another_cut_is_not_backed():
+    """Backing grows only beside a face that slices material. A mating
+    part's pocket whose face lies inside the opening it closes (the
+    Touch-Mic flap in its underside opening, 2026-11-24) slices nothing
+    there: the opening removes that body anyway, so nothing grows on it."""
+    from loadpath.build import _backed, _backing_frames
+
+    class Box:
+        def __init__(self, lo, hi):
+            self.lo, self.hi = np.asarray(lo, float), np.asarray(hi, float)
+
+        def sdf(self, P):
+            c, h = (self.lo + self.hi) / 2, (self.hi - self.lo) / 2
+            q = np.abs(np.asarray(P, float) - c) - h
+            return np.linalg.norm(np.maximum(q, 0), axis=-1) + np.minimum(q.max(axis=-1), 0)
+
+    opening = Box((-10, -10, -5), (10, 10, 5.45))      # the opening, up into the cavity
+    pocket = Box((-8, -8, 0), (8, 8, 5.39))            # the closing part, inside it
+    solid = lambda Q: -np.ones(len(Q))                 # the body before its cuts: all material
+    P = np.array([[0.0, 0.0, 5.9], [0.0, 0.0, 6.2]])   # above both: in the cavity
+    sol = np.full(len(P), 1.0)
+    for shapes in ([(pocket, 1.0)], [(opening, 1.0), (pocket, 1.0)]):
+        out = _backed(sol, _backing_frames(P, shapes), solid)
+        if len(shapes) == 1:
+            assert (out < 0).all(), out                # alone, its top face slices the body: backed
+        else:
+            # the pocket's face is inside the opening: it backs nothing; the
+            # opening's top is backed only because the stand-in solid is all material
+            fr = _backing_frames(P, [(pocket, 1.0)])
+            assert len(fr) == 1
+            only = _backed(sol, _backing_frames(P, [(pocket, 1.0), (opening, 0.0)]), solid)
+            assert (only > 0).all(), only
+
+
 TESTS = [
     test_spec_lints_and_parses,
     test_pod_builds_and_passes_every_check,
     test_a_square_port_fails_its_fillet_assertion,
     test_checks_run_on_a_part_made_elsewhere,
     test_a_part_drawn_whole_is_checked_without_a_skin,
+    test_a_cut_is_backed_by_the_process_wall_and_an_opening_stays_open,
+    test_a_pocket_face_inside_another_cut_is_not_backed,
     test_a_patched_seam_fails_the_region_check,
     test_a_round_against_a_mesh_exterior,
     test_a_mass_out_of_reach_says_so,

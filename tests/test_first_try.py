@@ -489,7 +489,7 @@ def test_a_part_that_only_its_seat_stops_is_solved_and_one_that_lifts_off_is_ref
         assert "lifts the part off its seat" in str(exc)
 
 
-def test_a_push_support_is_refused_with_fix_or_a_force_of_unknown_direction():
+def test_a_push_support_is_refused_with_fix():
     base = {"designSpace": [_box([0, 0, 0], [60, 10, 4])],
             "supports": [{"shape": _box([19, 0, -0.1], [21, 10, 4.1])},
                          {"shape": _box([0, 0, -0.2], [60, 10, 0.05]), "push": "+z"}],
@@ -536,28 +536,124 @@ def test_the_optimizer_solves_a_push_support_as_contact():
         assert lam[z > 15].sum() < 0.02 * lam.sum()       # the load tips the top off the wall: the heel bears
 
 
-TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
+def _pried_plate(cases, pitch=1.0):
+    """A plate on a seat under its whole face, hinged on a line across it at
+    x = 20 (held there in z and y, and in x along the bottom), loaded at
+    its far end: pried up, the heel bears on the seat; pressed down, the
+    seat carries it. `cases`: [(name, load fields)]."""
+    import trimesh
+
+    st = study_from_dict({
+        "designSpace": [_box([0, 0, 0], [60, 10, 4])],
+        "supports": [{"shape": _box([19.9, 0, -0.1], [20.1, 10, 4.1]), "fix": "z"},
+                     {"shape": _box([19.9, 0, -0.1], [20.1, 10, 4.1]), "fix": "y"},
+                     {"shape": _box([19.9, 0, -0.5], [20.1, 10, 0.1]), "fix": "x"},
+                     {"shape": _box([0, 0, -0.5], [60, 10, 0.1]), "push": "+z"}],
+        "loadCases": [{"name": n, "loads": [{"shape": _box([58, 0, 3.9], [60, 10, 4.1]), **ld}]} for n, ld in cases],
+        "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": pitch}})
+    m = trimesh.creation.box(extents=[60, 10, 4])
+    m.apply_translation([30, 5, 2])
+    return st, m
 
 
-def main():
-    failures = 0
-    for t in TESTS:
-        t0 = time.time()
-        try:
-            t()
-            print(f"PASS {t.__name__} ({time.time() - t0:.1f}s)")
-        except Exception:  # noqa: BLE001
-            failures += 1
-            print(f"FAIL {t.__name__}")
-            traceback.print_exc()
-    if failures:
-        print(f"\n{failures}/{len(TESTS)} FAILED")
-        sys.exit(1)
-    print(f"\nall {len(TESTS)} passed")
+def test_a_force_of_unknown_direction_on_a_seat_is_solved_in_each_direction():
+    """A seat lets go where the force lifts it, so a force of unknown
+    direction is not three axis solves added up: the contact is solved per
+    direction (pushseat.SeatedSpread), in the gaps' space from the axis
+    solves and the patches' unit pushes. Every direction's answer is the
+    one a seated solve of that force alone gives, and the worst direction's
+    compliance is the most over the sphere."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from loadpath import pushseat
+    from loadpath.directions import expand
+    from loadpath.verify import _analysis_grid, _solve_grid
+
+    st, m = _pried_plate([("any", {"force": [0, 0, 50], "direction": "any"})])
+    g = _analysis_grid(st, m, float(m.volume), 20000)
+    hm, bc = g.hm, g.bc
+    ps = pushseat.patches(bc.seats, hm.node_xyz, hm.n_dof)
+    ks, held = pushseat.hold(ps, hm.node_xyz, g.pitch)
+    gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=held)})
+
+    def inner(r):
+        return _solve_grid(st, gs, st.elastic(st.material), st.material.E, r)
+
+    rhs, layout = expand(bc.loads, bc.spreads)
+    _, _, _, cases = pushseat.solve_cases(inner, rhs, ps, st.material.E * ks, layout=layout, spreads=bc.spreads)
+    case = cases[0]
+    rows = case.samples(200)
+    worst = rows[-1]
+    assert worst[1] >= max(r[1] for r in rows[:-1]) * (1 - 1e-12)
+    for d in (worst[0], np.array([0, 0, 1.0]), np.array([0, 0, -1.0]), np.array([0, 0.6, 0.8])):
+        c, _, mu, lam, _ = case.at(d)
+        _, us, lam1 = pushseat.solve(inner, [case.f(d)], ps, st.material.E * ks)
+        assert abs(case.f(d) @ us[0] / c - 1) < 1e-9, d
+        assert np.abs(case.u(d, mu) - us[0]).max() < 1e-9 * np.abs(us[0]).max(), d
+        assert np.abs(lam - lam1[0]).max() < 1e-6 * max(lam.sum(), 1e-9)
+    # pried up the heel bears; pressed down the plate lies on the seat, far stiffer
+    up, down = case.at(np.array([0, 0, 1.0])), case.at(np.array([0, 0, -1.0]))
+    assert up[0] > 100 * down[0] and up[3].sum() > 0 and down[3].sum() > 0
 
 
-if __name__ == "__main__":
-    main()
+def test_the_checks_judge_a_seated_part_in_the_worst_direction_and_the_tet_check_solves_the_seat():
+    """The grid's check and the tetrahedral one solve a force of unknown
+    direction on a seated part per direction and judge it in the one that
+    stresses the part most: no less than the worst axis. The tet check
+    solves the seat itself now (it declined push studies): pried up it
+    reads the grid's lift, pressed down the seat holds the plate."""
+    from loadpath.crosscheck import crosscheck, unsupported
+    from loadpath.verify import verify_part
+
+    st, m = _pried_plate([("up", {"force": [0, 0, 50]}), ("down", {"force": [0, 0, -50]}),
+                          ("any", {"force": [0, 0, 50], "direction": "any"})])
+    assert unsupported(st) is None
+    grid = {c["name"]: c for c in verify_part(st, m)["cases"]}
+    assert grid["any"]["peakStress"] >= grid["up"]["peakStress"] * 0.999
+    assert len(grid["any"]["worstDirection"]) == 3
+    tet = {c["name"]: c for c in crosscheck(st, m, size=1.0)["cases"]}
+    assert abs(tet["up"]["deflection"] / grid["up"]["deflection"] - 1) < 0.1, (tet["up"], grid["up"])
+    assert tet["down"]["deflection"] < 0.01 * tet["up"]["deflection"]
+    assert tet["any"]["peakStress"] >= tet["up"]["peakStress"] * 0.999
+    assert tet["any"]["deflection"] > 0.5 * tet["up"]["deflection"]
+
+
+def test_the_optimizer_designs_a_seated_part_for_a_force_of_unknown_direction():
+    """The optimizer judges a force of unknown direction on a seated part in
+    its worst direction with the contact solved in each: the design made for
+    it is several times stiffer in its worst direction than the one made for
+    the force as written, read the same way; and the run's own number is the
+    delivered design's."""
+    from loadpath.directions import collapse, expand
+    from loadpath.domain import build_domain
+    from loadpath.simp import E_MIN, PENALTY, SimpOptions, _Analysis, optimize
+
+    def study(direction):
+        ld = {"shape": _box([26, -8, 19], [30, 8, 20.5]), "force": [0, 0, -60]}
+        if direction:
+            ld["direction"] = direction
+        return study_from_dict({
+            "designSpace": [_box([0, -10, 0], [30, 10, 20])],
+            "supports": [{"shape": _box([-0.5, -8, 13], [0.6, -4, 17])},
+                         {"shape": _box([-0.5, 4, 13], [0.6, 8, 17])},
+                         {"shape": _box([-0.5, -10, 0], [0.2, 10, 20]), "push": "+x"}],
+            "loads": [ld], "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2},
+            "resolution": {"pitch": 2.0}})
+
+    opts = SimpOptions(volume_fraction=0.25, filter_radius=3.0, max_iterations=30, escape=None)
+    d = build_domain(study("any"))
+    robust = optimize(d, 0.35, opts)
+    nominal = optimize(build_domain(study(None)), 0.35, opts)
+    rhs, layout = expand(d.loads, d.spreads)
+
+    def worst(xp):
+        fe = _Analysis(d, 0.35, 1e-8)
+        us = fe.solve(E_MIN + xp ** PENALTY * (1 - E_MIN), xp, [None] * len(rhs), loads=rhs, layout=layout)
+        return collapse(rhs, layout, us, d.spreads, seated=fe.seated_worst())[0].compliance
+
+    assert abs(worst(robust.xphys) / robust.compliance - 1) < 1e-3, (worst(robust.xphys), robust.compliance)
+    assert 2 * worst(robust.xphys) < worst(nominal.xphys)
 
 
 def test_the_constrained_limit_steps_by_its_measured_response():
@@ -623,3 +719,129 @@ def test_a_block_that_barely_passes_draws_the_search_up_to_it():
     assert _toward_block(nxt, 0.9, (0.3, 0.9), 12.0) == nxt
     assert _toward_block(nxt, 0.9, (0.3, 0.9), None) == nxt
     assert _toward_block(nxt, 0.9, (0.3, 0.9), 0.8) == nxt     # a failing block says nothing here
+
+
+def _wall_plate(fasteners=True, fix="xy"):
+    """A plate screwed to a wall (the plane z = 0) by two M4 screws, sitting
+    on the wall (a seat) and pulled straight off it: the held-out pillow
+    block and Pi mount, written the way SKILL.md says (bores held across
+    the screw, the face a push support)."""
+    d = {"designSpace": [_box([-30, -10, 0], [30, 10, 6])],
+         "supports": [{"shape": _box([-30, -10, -0.5], [30, 10, 0.3]), "push": "+z"}],
+         "loads": [{"shape": _box([-5, -5, 5.5], [5, 5, 6]), "force": [0, 0, 40]}],
+         "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}}
+    if fasteners:
+        d["fasteners"] = [{"id": i, "size": "M4", "seat": [x, 0, 6], "direction": "-z", "grip": 6, "end": "face"}
+                          for i, x in (("a", -22), ("b", 22))]
+        d["supports"] += [{"region": "a-bore", "fix": fix}, {"region": "b-bore", "fix": fix}]
+    else:
+        d["supports"] += [{"shape": _cyl([x, 0, 3], "z", 8, 2.6), "fix": fix} for x in (-22, 22)]
+    return d
+
+
+def test_a_screw_holds_its_part_by_the_head_and_an_unheld_case_is_refused_at_check():
+    """A screw whose bore is a support holds the part along the screw, one
+    way, by its head: the plate pulled off its wall bears on its heads and
+    check passes. Held only across the screws (inline shapes, no screw),
+    nothing holds it off the wall and check says so in a second, naming the
+    case and the way it goes, instead of a run that flies off and then calls
+    it a limit other than strength."""
+    from loadpath.fasteners import expand_fasteners
+
+    d = expand_fasteners(_wall_plate())
+    holds = [s for s in d["supports"] if s.get("region", "").endswith("-seat")]
+    assert len(holds) == 2 and all(s["push"] == [0, 0, -1] for s in holds), d["supports"]
+    c = check_study(_wall_plate())
+    assert c["ok"], c
+    # fixed along the screw too: nothing to add
+    assert not [s for s in expand_fasteners(_wall_plate(fix="all"))["supports"] if s.get("region", "").endswith("-seat")]
+    t0 = time.time()
+    c = check_study(_wall_plate(fasteners=False))
+    assert not c["ok"] and "lifts the part off its seat" in c["error"] and "along +z" in c["error"], c
+    assert time.time() - t0 < 30
+
+
+def test_a_holes_roof_across_the_layers_is_a_bridge_not_unreachable_drawn_geometry():
+    """A screw hole lying across the layers (a bracket printed on its side)
+    has a roof the 45-degree reach misses: a printer bridges it, so check
+    does not call the ring round it drawn geometry that needs support. A
+    peg drawn in mid-air still is."""
+    from loadpath.domain import _unprintable_preserve
+
+    dims = (20, 20, 20)
+    g = np.indices(dims).transpose(1, 2, 3, 0) + 0.5
+    active = np.ones(dims, bool)
+    # a 6-cell hole along x through the block, its axis at y = 10, z = 10
+    hole = (g[..., 1] - 10) ** 2 + (g[..., 2] - 10) ** 2 < 9
+    active &= ~hole
+    ring = ~hole & ((g[..., 1] - 10) ** 2 + (g[..., 2] - 10) ** 2 < 25)
+    args = ((2, 1), dims, active.reshape(-1), (ring & active).reshape(-1), 1.0, (0, 0, 0))
+    assert _unprintable_preserve(*args) != []                    # the 45-degree reach alone: the roof
+    assert _unprintable_preserve(*args, process="fdm") == []     # bridged
+    # a peg standing out over nothing (the bed is z = 0; the peg at z 12-14 from x 0-6, the block x 6-20)
+    active2 = np.zeros(dims, bool)
+    active2[6:, :, :] = True
+    peg = np.zeros(dims, bool)
+    peg[:6, 8:12, 12:14] = True
+    active2 |= peg
+    w = _unprintable_preserve((2, 1), dims, active2.reshape(-1), peg.reshape(-1), 1.0, (0, 0, 0), process="fdm")
+    assert w and "cannot be reached" in w[0]
+
+
+TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
+
+
+def main():
+    failures = 0
+    for t in TESTS:
+        t0 = time.time()
+        try:
+            t()
+            print(f"PASS {t.__name__} ({time.time() - t0:.1f}s)")
+        except Exception:  # noqa: BLE001
+            failures += 1
+            print(f"FAIL {t.__name__}")
+            traceback.print_exc()
+    if failures:
+        print(f"\n{failures}/{len(TESTS)} FAILED")
+        sys.exit(1)
+    print(f"\nall {len(TESTS)} passed")
+
+
+if __name__ == "__main__":
+    main()
+
+
+def _socket(support):
+    """A block with a 20 mm tube through it along x (a tee's rail), the
+    block pushed down 100 N and pulled 30 N along the tube."""
+    return {"designSpace": [_box([-20, -16, -16], [20, 16, 16])],
+            "keepOut": [{"id": "rail", "shape": _cyl([0, 0, 0], "x", 60, 10), "fit": "slip"}],
+            "supports": [dict(support, region="rail")],
+            "loadCases": [{"name": "down", "loads": [{"shape": _box([-20, -16, 15.5], [20, 16, 16]),
+                                                      "force": [0, 0, -100]}]},
+                          {"name": "along", "loads": [{"shape": _box([-20, -16, 15.5], [20, 16, 16]),
+                                                       "force": [30, 0, -100]}]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.5}}
+
+
+def test_a_tube_in_a_bore_bears_radially_and_a_glued_slip_bore_is_named():
+    """push 'radial' on a bore: the wall is twelve seats round the axis,
+    each pushing out along its middle's normal; with friction the part is
+    held along the tube too, without it check refuses the case that pulls
+    it along. Held fixed all round where the fit says the tube slips,
+    check names the glue."""
+    from loadpath.domain import build_domain, radial_seats
+
+    pts = np.array([[0.0, 10 * np.cos(t), 10 * np.sin(t)] for t in np.linspace(0, 2 * np.pi, 72, endpoint=False)])
+    secs = radial_seats(pts, [0, 0, 0], [1, 0, 0])
+    assert len(secs) == 12 and sum(len(s) for s, _ in secs) == 72
+    for sub, n in secs:
+        assert abs(n[0]) < 1e-12 and abs(np.linalg.norm(n) - 1) < 1e-12
+        assert (pts[sub] @ n).min() > 10 * np.cos(np.pi / 12) - 1e-9   # each sector faces its normal
+    dom = build_domain(study_from_dict(_socket({"push": "radial", "friction": 0.3})))
+    assert len(dom.seats) == 12
+    c = check_study(_socket({"push": "radial"}))
+    assert not c["ok"] and "'along'" in c["error"], c
+    c = check_study(_socket({"fix": "all"}))
+    assert c["ok"] and any("as if glued to what is in it" in w for w in c["warnings"]), c

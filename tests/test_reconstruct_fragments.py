@@ -122,13 +122,38 @@ def test_saved_field_round_trips_and_remeshes():
 
 
 def test_feather_edges_at_a_bore_are_cut_to_what_prints():
-    """A bore leaving a block's top at a slant (11 degrees) leaves the
-    material beside it tapering to a knife edge: MJF forms what a 0.8 mm
-    ball sweeps, and the edge reached 2.7 mm past that (processcheck reads
-    it as walls that will not form). reconstruct cuts it along the ball's
-    sweep, so the part ends in a round, as it will print, losing a few
-    mm^3."""
+    """Designed material the print cannot form is cut along the 0.8 mm
+    ball's sweep, so the part ends in a round, as it will print: a 0.4 mm
+    fin between two keep-outs goes. A bore leaving a block's top at a slant
+    (11 degrees) once read as a feather reaching 2.7 mm past the sweep, but
+    that was the thin-wall reading's own search box cutting the block
+    (processcheck._unformed, fixed 2026-11-24): read over the whole grid the
+    edge only rounds, and nothing there is cut."""
+    import trimesh
+
+    import loadpath.reconstruct as rc
     from loadpath.processcheck import check_process
+    from loadpath.shapes import manifold_from_trimesh
+
+    fin_spec = {"name": "fin", "designSpace": {"type": "box", "min": [-20, -15, 0], "max": [20, 15, 12]},
+                "keepOut": [{"id": "slot", "shape": {"type": "box", "min": [-21, 0.4, 4], "max": [21, 16, 13]}},
+                            {"id": "gap", "shape": {"type": "box", "min": [-21, -5, 4], "max": [21, 0, 13]}}],
+                "supports": [{"shape": {"type": "box", "min": [-21, -16, -1], "max": [21, 16, 0.01]}}],
+                "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [-21, -16, 11],
+                                                                 "max": [21, 16, 13]}, "force": [0, 0, -100]}]}],
+                "material": "pa12", "process": {"type": "mjf"}, "goal": {"volumeFraction": 0.5},
+                "resolution": {"pitch": 1.0}}
+    fs = study_from_dict(fin_spec)
+
+    def box(lo, hi):
+        b = trimesh.creation.box(extents=np.subtract(hi, lo))
+        b.apply_translation(np.add(lo, hi) / 2)
+        return b
+    part = manifold_from_trimesh(trimesh.boolean.union([box((-20, -15, 0), (20, -5, 12)),
+                                                        box((-20, -5, 0), (20, 15, 4)),
+                                                        box((-20, 0, 4), (20, 0.4, 12))]))
+    cut, dropped = rc._drop_unformed(part, fs, list(fs.keep_out), 0.8)
+    assert dropped and 80.0 < part.volume() - cut.volume() < 128.0, (dropped, part.volume() - cut.volume())
 
     spec = {"name": "groove", "designSpace": {"type": "box", "min": [-20, -15, 0], "max": [20, 15, 12]},
             "keepOut": [{"id": "bore", "shape": {"type": "cylinder", "p0": [-25, 0, 10], "p1": [25, 0, 14],
@@ -138,22 +163,21 @@ def test_feather_edges_at_a_bore_are_cut_to_what_prints():
                                                              "max": [21, 16, 13]}, "force": [0, 0, -100]}]}],
             "material": "pa12", "process": {"type": "mjf", "buildDirection": "+z"},
             "goal": {"volumeFraction": 0.9}, "resolution": {"pitch": 1.0}, "minMember": 2.0}
-    import loadpath.reconstruct as rc
     s = study_from_dict(spec)
     d = build_domain(s)
-    # the cut itself, with the room for a member (below) not yet taken out
-    room = rc._member_room
+    # with the room for a member (below) and the rounded keep-out rim
+    # (reconstruct.SOFT_CUT) not yet taken out
+    room, soft = rc._member_room, rc.SOFT_CUT
     rc._member_room = lambda *a, **k: None
+    rc.SOFT_CUT = False
     try:
         mesh, info = reconstruct(s, d, np.ones(d.mesh.n_elem))
     finally:
-        rc._member_room = room
-    assert info.get("unformedDropped"), info
+        rc._member_room, rc.SOFT_CUT = room, soft
+    assert not info.get("unformedDropped"), info
     w = check_process(mesh, "mjf", build="+z", material="pa12")["walls"]
     assert w["ok"] is True and not w["unformed"], w
-    assert mesh.volume > 13500, mesh.volume   # 13543 mm^3 before: a round, not a groove widened
-    from loadpath.verify import _creases
-    assert _creases(s, mesh)["creaseLength"] < 10.0
+    assert mesh.volume > 13500, mesh.volume
     # As delivered: beside the bore there is no room for a 2 mm member where
     # the edge was, so the material ends in that member's round before any
     # feather forms, and nothing is left to cut (13459 mm^3, crease 0.2 mm).
@@ -264,3 +288,45 @@ def test_gap_weld_leaves_bodies_a_cell_apart_alone():
     b = m3d.Manifold.cube((10, 10, 4), True).translate((0, 0, 4.1))
     w = _gap_weld(trimesh_from_manifold(a), trimesh_from_manifold(b), 1.0, 2.0)
     assert w is not None and len((a + b + w).decompose()) == 1
+
+
+def test_a_body_on_the_skin_cells_is_joined_and_welded_across_most_of_a_cell():
+    # The smart button's cell cradle stood 0.72 mm (pitch 1) over the skin
+    # round its back opening: its cells shared faces with the skin cells,
+    # which carry the skin's stiffness whatever their density, so the
+    # design carried the cell through them. The field bodies count the
+    # skin cells, and the weld spans the gap the two stand at, not more.
+    import types
+
+    import manifold3d as m3d
+
+    from loadpath.reconstruct import WELD_GAP, _FieldBodies, _gap_weld, trimesh_from_manifold
+
+    dims = (6, 6, 6)
+    ijk = np.argwhere(np.ones(dims, bool))
+    x = np.zeros(len(ijk))
+    x[(ijk[:, 2] >= 3)] = 1.0                       # a body from z 3 up
+    on_skin = ijk[:, 2] == 2                        # the skin cells under it, thin
+    dom = types.SimpleNamespace(dims=dims, origin=(0.0, 0.0, 0.0), pitch=1.0,
+                                mesh=types.SimpleNamespace(elem_ijk=ijk),
+                                skin=types.SimpleNamespace(elem=np.nonzero(on_skin)[0],
+                                                           phi=np.full(on_skin.sum(), 0.3)))
+    dom.full_grid = lambda v: _full(dims, ijk, v)
+    assert _FieldBodies(dom, x, 0.5).labels.max() == 1
+    dom.skin = None
+    x[on_skin] = 0.0
+    x[ijk[:, 2] <= 1] = 1.0
+    assert _FieldBodies(dom, x, 0.5).labels.max() == 2
+
+    a = m3d.Manifold.cube((10, 10, 2), True)
+    b = m3d.Manifold.cube((10, 10, 2), True).translate((0, 0, 2.72))
+    w = _gap_weld(trimesh_from_manifold(a), trimesh_from_manifold(b), WELD_GAP * 1.0, 1.0)
+    assert w is not None and len((a + b + w).decompose()) == 1
+    extra = (w - a - b).volume()
+    assert 10 * 10 * 0.72 * 0.95 <= extra <= 10 * 10 * 0.72 * 1.3, extra
+
+
+def _full(dims, ijk, v):
+    g = np.zeros(dims)
+    g[ijk[:, 0], ijk[:, 1], ijk[:, 2]] = v
+    return g

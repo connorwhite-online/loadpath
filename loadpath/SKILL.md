@@ -140,7 +140,20 @@ buckling, printability) you can report to the user.
    the face it sits on its own support with `"push": "+z"` (the way the
    wall or table pushes the part): it carries pressure only and lets go
    where the load lifts it, so the heel bears and the bolts pull, as they
-   do. A slab over the whole face with `fix` glues the part down, and a
+   do. What holds the part along each screw is the screw: when its bore
+   is a support held across it and nothing else fixes that axis, its head
+   (or, for a screw from the mating part, its thread) holds the part
+   toward the joint, one way, as a seat added for you. A load case that
+   still has nothing to hold it (supports drawn as shapes, a seat alone
+   against a pull) is refused by `check` with the case and the way it
+   goes. A seat holds nothing across unless you give it `"friction"`
+   (Coulomb, from the two materials: printed plastic on wood or painted
+   steel about 0.3, on rubber 0.6): a stand on a desk, a foot on a floor
+   or a clamp on a tube holds sideways only by it, so set it there, and
+   leave it out where the screws should carry the shear. `"preload"` (N)
+   presses a seat on before the loads (a clamp's screw, a press fit); a
+   fastener's head seat takes its screw's preload once the seats have
+   friction. A slab over the whole face with `fix` glues the part down, and a
    load that lifts or tips it then reads far too strong (a stepper bracket:
    SF 3.5 glued, 0.98 bolted; a shelf bracket on two screws: 5.0 g glued,
    8.5 g on a seat, and no part at all on the screw pads alone).
@@ -217,7 +230,7 @@ buckling, printability) you can report to the user.
    (kg x 9.81 x the dynamic factor).
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"push": "+x"` on the face it bears against
-   (a seat: pressure only; not yet with a force of unknown direction).
+   (a seat: pressure only, and across only with `friction`).
    A shaft in a bearing: support on the bore.
    A part that hangs on a rod, hook or peg bears only where it touches:
    support the strip of the hole that carries the weight (`fix` on a

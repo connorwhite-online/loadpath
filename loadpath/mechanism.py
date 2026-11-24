@@ -110,6 +110,14 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
         sum(_spring_diag(domain.loads[o], opts.k_out, mesh.n_dof) for o in outs)
     sd[domain.fixed] = 0.0
     springs = sp.diags(sd).tocsr()
+    if getattr(domain, "seats", None):
+        # seats (supports[].push): the linear design holds them shut (along the
+        # normal, across with friction); the large-deflection check reads them
+        # as contact (nonlinear.verify_mechanism), where the part may lift off
+        from .pushseat import bilateral
+
+        springs = (springs + bilateral(domain.seats, mesh.node_xyz, mesh.pitch, opts.modulus,
+                                       domain.fixed)).tocsr()
 
     stiff = Stiffness(mesh, nu, domain.fixed)
     solver = Solver(mesh, rtol=1e-5)

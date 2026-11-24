@@ -354,7 +354,7 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 12 | Function parts with no route today: snap fits and living hinges by strain, ducts from two ports, threads, gears | 7 | very common requests | **Partly**: six held-out cases written cold (second batch above): snap fits, ducts and skinned enclosure parts pass as force-loaded parts. Open: a prescribed deflection as a load (the snap itself), a duct designed from its ports and flow |
 | 12a | A sound design failed because the floor of a blind tapped hole is read as a blocked hole | 5 | 2 of 17, any thread in a thick part | **Fixed** |
 | 12b | A skin or duct wall under two cells: warned about, then designed on anyway | 4 | 4 of 6 in the second batch, every skinned part given a cell budget | **Fixed**: the wall sets the cell, up to four times the budget |
-| 12c | A bolted face held over its whole area against a load that lifts it | 2 | 2 of 6 in the second batch | **Fixed**: `supports[].push` is a seat that carries pressure only, solved as contact in the optimizer and the check; `check` names it where a face is held as if glued. A shelf bracket on two screws: 5.0 g with the face glued (a hold it does not have), no part on the screw pads alone (the block reads 1.36 for 2), 8.5 g at 2.42 on a seat. Open: with a force of unknown direction; on the tetrahedral check; friction A part that only its seat stops (it lies on a table, or rocks on one screw line) is solved too: the seat is held on springs for the solves and they are taken out again exactly; the seat's force is in `report.reactions`; a load that lifts such a part off is refused by name. In the check the patches that bear are cut in four, twice, so a part pressed on its seat near a rim bears on a band there and does not tilt about one coarse patch (far-end lift of a pressed plate 1.15 mm to 0.10 mm). |
+| 12c | A bolted face held over its whole area against a load that lifts it | 2 | 2 of 6 in the second batch | **Fixed**: `supports[].push` is a seat that carries pressure only, solved as contact in the optimizer and the check; `check` names it where a face is held as if glued. A shelf bracket on two screws: 5.0 g with the face glued (a hold it does not have), no part on the screw pads alone (the block reads 1.36 for 2), 8.5 g at 2.42 on a seat. With a force of unknown direction the contact is solved in each direction (a seat lets go where the force lifts it, so the axes do not add up), in the space of the patches' gaps from the axis solves and the patches' unit pushes: exact against a seated solve of each direction to 1e-9; the worst for compliance by ascent on its convexity, the worst for stress on a truncated basis of the answers. A bracket on two screws and a seat, 60 N of any direction: 4.4x stiffer in its worst direction than the design for the force as written. The tetrahedral check solves the seat itself too (the patches' springs exact in its CG operator): a plate pried off its seat lifts 15.7 mm on tets, 15.2 on the grid, and CalculiX now takes seats as well (the patches' springs as SPRING1 on *EQUATION means; it reads the native tet check's lift and stress within 0.02%). Friction (`supports[].friction`, Coulomb on each patch: two force rows across it, |tau| <= mu lambda, solved by a semismooth Newton on the Alart-Curnier equations in the gaps' space, the load put on in steps when that fails) and preload (`supports[].preload`, N: the seat set into the part by the interference that gives that force with no load, so a rigid screw's joint stays shut until the load takes the clamp off): a block resting on a table at mu 0.3 holds 29 N across on 100 N and slides at 31 N; a plate clamped between two jaws by 200 N holds about 2 mu times the clamp force; a screw's head seat takes its screw's preload when the study's seats have friction. `check` counts friction too (the octagon round each node's friction disc), so a stand on a desk is no longer refused for being pushed across. A part that only its seat stops (it lies on a table, or rocks on one screw line) is solved too: the seat is held on springs for the solves and they are taken out again exactly; the seat's force is in `report.reactions`; a load that lifts such a part off is refused by name. In the check the patches that bear are cut in four, twice, so a part pressed on its seat near a rim bears on a band there and does not tilt about one coarse patch (far-end lift of a pressed plate 1.15 mm to 0.10 mm). |
 | 12d | Parts come out lumpy, beaded along edges and lopsided | 8 | all 12 rendered parts, worst on small ones | **Fixed** in four places, each found on development parts (see "Why parts looked misshapen" below) |
 | 13 | Physical ground truth | 9 | all | **Open**: calibration prints (calibration/) |
 
@@ -478,6 +478,36 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    field: the same mass and shape; its reading moves 6.25 to 5.96 from the
    pins bearing on the bosses only, a load placement, not a geometry change. `LOADPATH_DRAWN_CARRY=0` and `LOADPATH_DRAWN_BEARS=0`
    turn the meshing and domain halves off.
+
+12. **Knife edges where a keep-out crosses the body.** (2026-11-24, after
+   the bike phone mount's phone side came out with sharp, broken edges at
+   its slots and the phone's way in.) A keep-out was cut exactly after
+   meshing: wherever a slot, an opening or a way in crossed the generated
+   surface the rim was a knife edge, and where it crossed at a slant a
+   feather edge thinner than the process prints (then cut off by
+   `_drop_unformed`, which left a ragged edge of its own). The field is
+   now cut first with a G2 round (`reconstruct._soft_cut`, the pipeline's
+   form of `sdf_kit.soft_subtract`), and the exact cut afterwards only
+   trims the fit. The round's size is physics, not taste:
+   - a free rim (nothing bears on it): a quarter of the member it ends, as
+     at any shoulder (Peterson: little gained past r/t 0.25);
+   - a rim a load or support acts on (a pin's bore, a screw's seat): an
+     edge break of 0.1 t, since a round there is bearing lost: r off each
+     end of a bore of length t raises its bearing stress by 1 / (1 - 2r/t);
+   - where the body lies along the keep-out's face (a floor under a
+     board's room) no round, or the smooth max would shave the wall (the
+     wall box lost 6% of its mass so before this was weighted by angle);
+   - beside a drawn shape its own edge stands.
+   A plate with a free slot and a supported bore
+   (`tests/test_drawn_transitions.py`): the slot's rim is a 1.5 mm round
+   (was flat to within 0.6 mm of the face, then a drop), the bore's wall
+   unchanged over its depth, 1.2% of the volume. The slanted bore of
+   `test_feather_edges_at_a_bore_are_cut_to_what_prints` now has no feather
+   to drop. `build` gives a component's pocket the same edge break where it
+   runs through the body; a drawn `cut` interface stays exact, its faces
+   being the spec (the pod's port is checked present to 98%; a round on it
+   is drawn with it, as the pod's USB-C mouth is). `LOADPATH_SOFT_CUT=0`
+   turns both off.
 
 ### Fixed: parts left heavier than they need to be
 

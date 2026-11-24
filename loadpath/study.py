@@ -2275,15 +2275,21 @@ def _binding(study: Study, domain: Domain, src) -> tuple | None:
     deflection, the robot arm's upper arm spent 84% on cases its axial push
     out-binds (methodChoice.idleCompliance 0.19 and 0.37). Case i's binding
     ratio is b_i = max(deflection_i / maxDeflection, safetyFactor /
-    (its safety factor x its case factor)), the per-case safety factors
+    (its safety factor x its case factor), travel / maxTravel of each
+    goal.clearances entry the case is held to), the per-case safety factors
     scaled to the reported one (a tetrahedral confirm reads the part, the
     cases are the voxel ones); the optimizer carries b_i in proportion to
     the case's compliance C_i (a deflection under a point load is C_i over
     the force exactly; a peak stress follows it as the members it loads
     thin or thicken) and minimizes a smooth maximum of them.
 
-    None, so the plain weighted sum: one case; no deflection or strength
-    goal; no verified readings for every case; a margin set by something
+    The clearances were left out until 2026-11-24: the MJF wrist link, held
+    by its J6 mount's travel at SF 15, read none of its cases as binding
+    and spent its material on the plain sum of three compliances that
+    differ by orders of magnitude between a 2.9 N m torque and a 20 N push.
+
+    None, so the plain weighted sum: one case; no deflection, strength or
+    clearance goal; no verified readings for every case; a margin set by something
     other than the cases' deflections and strengths (buckling, durability,
     vibration, warp); or LOADPATH_BINDING=0."""
     g = study.goal
@@ -2293,7 +2299,8 @@ def _binding(study: Study, domain: Domain, src) -> tuple | None:
     cc = (src.optimizer or {}).get("caseCompliance")
     rep = src.report or {}
     cases = {c.get("name"): c for c in rep.get("cases") or []}
-    if len(names) < 2 or cc is None or len(cc) != len(names) or (g.safety_factor is None and not g.max_deflection) \
+    if len(names) < 2 or cc is None or len(cc) != len(names) \
+            or (g.safety_factor is None and not g.max_deflection and not g.clearances) \
             or not all(n in cases for n in names) or rep.get("margin") is None:
         return None
     k_sf = 1.0
@@ -2310,6 +2317,12 @@ def _binding(study: Study, domain: Domain, src) -> tuple | None:
             r = float(c["deflection"]) / g.max_deflection
         if g.safety_factor is not None:
             r = max(r, g.safety_factor / (float(c["safetyFactor"]) * study.case_factor(n) * k_sf))
+        for q in c.get("clearances") or []:
+            # goal.clearances: the most a node of the region travels in this
+            # case, against its limit. A point's travel under the case's own
+            # loads goes with the case's compliance as a deflection does.
+            if q.get("travel") is not None and q.get("maxTravel"):
+                r = max(r, float(q["travel"]) / float(q["maxTravel"]))
         b.append(r)
     b = np.asarray(b)
     c_v = np.asarray(cc, float)

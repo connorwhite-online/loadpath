@@ -236,6 +236,119 @@ def fillet_check(spec, mesh, a, solid=None) -> dict:
                 maxEdgeDeg=max_edge)
 
 
+def _thin_declared(spec):
+    """The spec's declared thin features: [{id, near (Shape), min, why}].
+    A drawn feature thinner than the process's minimum wall (a snap lip, a
+    living hinge) is the designer's to state, never the build's to pass:
+    each names its window, the thinnest it may be, and why."""
+    cache = spec.__dict__.get("_thin")
+    if cache is not None:
+        return cache
+    out = []
+    for j, t in enumerate(spec.doc.get("thin") or []):
+        from .shapes import shape_from_spec
+
+        out.append({"id": str(t.get("id", f"thin-{j + 1}")), "near": shape_from_spec(t["near"], spec.base_dir),
+                    "min": float(t["min"]), "why": str(t.get("why", ""))})
+    spec.__dict__["_thin"] = out
+    return out
+
+
+def _min_detail(spec):
+    from .dfm_reference import limits
+
+    try:
+        ref = limits(spec.process, spec.material)
+    except Exception:  # noqa: BLE001
+        ref = None
+    return None if not ref else ref.get("minDetail")
+
+
+def _judge_pieces(spec, pieces, pitch, want):
+    """Say whose each piece of unformed material is, and hold the declared
+    ones to their own limit. Each piece gets boundedBy (the surfaces within
+    half a wall of it: the exterior, an interface, a component's pocket, the
+    body's cavity) and owner: "build" when the cavity bounds it (the build
+    made it thin, and fixes it: buildcheck reports it as a build fault),
+    "drawn" when only drawn surfaces do (the inputs leave it thin: the
+    build never moves a drawn surface, so the spec must change or declare
+    it). Returns (failing pieces, declared pieces)."""
+    body = spec.__dict__.get("_body")
+    thin = _thin_declared(spec)
+    floor = _min_detail(spec)
+    bad, declared = [], []
+    for u in pieces:
+        P = u.pop("_points", None)
+        reach = u.pop("_reach", None)
+        if P is not None and reach is not None and (reach >= want).any():
+            # judge by what is missing past a wall's reach from what forms: the
+            # piece's rim of a cell or two runs along the formed surface
+            # (the cavity's too) wherever the cluster touches it
+            P = P[reach >= want]
+        if P is None or not len(P):
+            bad.append(u)
+            continue
+        tol = 0.5 * want + 1.5 * pitch
+        src = [("exterior", spec.exterior)]
+        src += [(i.id, i.brep.as_shape()) for i in spec.interfaces]
+        from .build import _Pocket
+
+        src += [(c.id, _Pocket(c.brep.as_shape(), c.clearance)) for c in spec.components]
+        share = {}
+        for name, sh in src:
+            try:
+                share[name] = float((np.abs(sh.sdf(P)) < tol).mean())
+            except Exception:  # noqa: BLE001 - a shape that cannot say its distance names nothing
+                continue
+        if body is not None and not spec.solid:
+            share["cavity"] = float((np.abs(body.cavity(P)) < tol).mean())
+        by = [k for k, v in sorted(share.items(), key=lambda kv: -kv[1]) if v >= 0.15]
+        u["boundedBy"] = by
+        u["owner"] = "build" if "cavity" in by else "drawn"
+        hit = None
+        for t in thin:
+            if float((t["near"].sdf(P) <= 0).mean()) >= 0.9:
+                hit = t
+                break
+        if hit is not None and u["owner"] == "drawn":
+            ok_min = u.get("wallMm") is None or u["wallMm"] >= hit["min"] - 1e-9
+            ok_floor = floor is None or hit["min"] >= floor - 1e-9
+            if ok_min and ok_floor:
+                u["declared"] = hit["id"]
+                declared.append(u)
+                continue
+            u["declaredButFails"] = (f"{hit['id']} allows {hit['min']:g} mm" if not ok_min else
+                                     f"{hit['id']} asks for {hit['min']:g} mm, under the {floor:g} mm the "
+                                     f"process forms as a detail")
+        bad.append(u)
+    return bad, declared
+
+
+def _pieces_detail(bad, want, kind_name):
+    """One sentence per failing piece class: what the build will fix and what the spec must."""
+    if not bad:
+        return None
+    u = bad[0]
+    head = (f"{len(bad)} place(s) thinner than {want:g} mm would not form ({kind_name}), the largest "
+            f"{u['volumeMm3']:.2f} mm^3 at {u['at']}")
+    drawn = [b for b in bad if b.get("owner") == "drawn"]
+    built = [b for b in bad if b.get("owner") == "build"]
+    parts = [head]
+    if drawn:
+        who = sorted({n for b in drawn for n in b.get("boundedBy", []) if n != "cavity"})
+        parts.append(f"{len(drawn)} of them lie between drawn surfaces only ({', '.join(who)}): the build does "
+                     "not move a drawn surface, so the spec must: cut by the solid of the part that fills that "
+                     "space (a lid's or flap's own shape with its clearance), move the cut so a "
+                     f"{want:g} mm wall is left or none, or declare a functional thin feature in `thin` "
+                     "({id, near, min, why})")
+    if built:
+        parts.append(f"{len(built)} of them the body's cavity makes thin: a build fault, report it")
+    fails = [b["declaredButFails"] for b in bad if b.get("declaredButFails")]
+    if fails:
+        parts.append("declared but out of bounds: " + "; ".join(fails))
+    return "; ".join(parts)
+
+
 def wall_check(spec, mesh, a) -> dict:
     """No wall under `min` that the process would lose (processcheck's
     reading: what a ball of that diameter cannot sweep, past an edge's
@@ -247,16 +360,23 @@ def wall_check(spec, mesh, a) -> dict:
     near = _near(a, spec.base_dir)
     p = _choose_pitch(np.asarray(mesh.extents, float), want)
     solid, origin = _grid(mesh, np.eye(3), None, p, pad=3)
-    w = _walls(solid, p, origin, want)
+    w = _walls(solid, p, origin, want, keep_points=True)
     if w["ok"] is None:
         return _row(name, "wall", None, limit=want, detail=w.get("inconclusive"))
     bad = w["unformed"]
     if near is not None:
         bad = [u for u in bad if near.sdf(np.asarray([u["at"]], float))[0] <= 0.0]
-    return _row(name, "wall", not bad, value=_r(w["unformedWallMm"] if bad else w["judgedWallMm"]), limit=want,
-                detail=(f"{len(bad)} place(s) thinner than {want:g} mm would not form, the largest "
-                        f"{bad[0]['volumeMm3']:.2f} mm^3 at {bad[0]['at']}") if bad else None,
-                thinnestRidgeMm=_r(w.get("minWallMm")), unformed=bad[:5])
+    bad, declared = _judge_pieces(spec, bad, p, want)
+    for u in w["unformed"]:
+        u.pop("_points", None)
+        u.pop("_reach", None)
+    value = min([u["wallMm"] for u in bad if u.get("wallMm") is not None] or [w["judgedWallMm"]]) if bad \
+        else max(w.get("minWallMm") or want, want) if not declared else want
+    return _row(name, "wall", not bad, value=_r(value), limit=want,
+                detail=_pieces_detail(bad, want, "the process cannot form them"),
+                thinnestRidgeMm=_r(w.get("minWallMm")), unformed=bad[:5],
+                declared=[{"id": u["declared"], "wallMm": u.get("wallMm"), "volumeMm3": u["volumeMm3"],
+                           "at": u["at"]} for u in declared] or None)
 
 
 def clearance_check(spec, mesh, comp, want, name=None, part_man=None) -> dict:
@@ -495,6 +615,136 @@ def drawn_surface_check(spec, mesh, it, near=None, name=None, tol=None, both=Fal
                 **({"strayShare": _r(stray)} if stray is not None else {}))
 
 
+def _radial_reach(mesh, origin, axis, r0, zs, angles=24, dirs=None):
+    """The least radius, over rays from the axis at heights `zs` (mm along
+    `axis` from `origin`), at which the part's material that starts inside
+    r0 ends: the outside of a wall round a bore of radius r0. `dirs`:
+    unit vectors across the axis to cast along (default all round)."""
+    z = np.asarray(axis, float) / np.linalg.norm(axis)
+    ref = np.array([1.0, 0, 0]) if abs(z[0]) < 0.9 else np.array([0, 1.0, 0])
+    x = np.cross(ref, z)
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    if dirs is None:
+        th = np.linspace(0, 2 * np.pi, angles, endpoint=False)
+        dirs = [np.cos(a) * x + np.sin(a) * y for a in th]
+    o = np.asarray(origin, float)
+    best = np.inf
+    worst_at = None
+    for zz in zs:
+        for d in dirs:
+            p = o + zz * z
+            locs, _ri, _ti = mesh.ray.intersects_location([p], [d])
+            if len(locs) == 0:
+                continue
+            r = np.sort(np.linalg.norm(locs - p, axis=1))
+            r = r[r > r0 + 1e-3]
+            if len(r) == 0:
+                continue
+            # the first crossing past the bore leaves the material round it
+            if r[0] < best:
+                best, worst_at = float(r[0]), (p + r[0] * d).tolist()
+    return best, worst_at
+
+
+def joint_checks(spec, mesh, part_man, jt) -> list:
+    """A joint re-sized at the walls measured on the delivered part: a
+    thread's wall round its nut, a hinge's ligament round its bore (the
+    joint's own checks then run at those, joints.check_joint), and the
+    mating part's fit (nothing of the part inside the drawn screw or pin)."""
+    from .joints import check_joint
+    from .shapes import manifold_from_trimesh
+
+    e, des = jt["entry"], jt["design"]
+    kind, member = des["type"], e.get("member")
+    measured = {}
+    note = ""
+    if kind == "thread" and (member or "nut") == "nut":
+        L = float(e.get("length") or des["engage"])
+        rn = float(des["profile"]["nutMajor"])
+        R, at = _radial_reach(mesh, e.get("at", [0, 0, 0]), e.get("axis", [0, 0, 1]), rn,
+                                 np.linspace(0.15 * L, 0.85 * L, 5))
+        if np.isfinite(R):
+            measured["boss"] = 2.0 * R
+            note = f"wall round the nut measured to r {R:.2f} mm (thinnest at {np.round(at, 2).tolist()})"
+    if kind == "hinge":
+        rb = 0.5 * float(des["bore"] if (member or "outer") == "inner" or des["kind"] == "print-in-place"
+                         else des["press"])
+        W = float(des["width"])
+        n = int(des["knuckles"])
+        ga, ti, to = float(des["axialGap"]), float(des["knuckle"]), float(des["outerKnuckle"])
+        z = -0.5 * W
+        mids = []
+        for k in range(n):
+            t = to if k % 2 == 0 else ti
+            if (k % 2 == 0) == ((member or "outer") == "outer"):
+                mids.append(z + 0.5 * t)
+            z += t + ga
+        if (member or "outer") == "outer" and des["kind"] == "print-in-place":
+            mids = []           # the pin is this member's: its knuckles carry it, nothing to measure round a bore
+        if mids:
+            # beside and below the bore (a teardrop's roof is read on its own: the
+            # wall over it is a print limit, the hinge's load leaves through the sides)
+            ax = np.asarray(e.get("axis", [1, 0, 0]), float)
+            ax /= np.linalg.norm(ax)
+            b = np.asarray(jt.get("build") if jt.get("build") is not None else [0, 0, 1], float)
+            up = b - (b @ ax) * ax
+            tear = des["kind"] == "print-in-place" and (member or "outer") == "inner" and np.linalg.norm(up) > 1e-6
+            ref = np.array([1.0, 0, 0]) if abs(ax[0]) < 0.9 else np.array([0, 1.0, 0])
+            x = np.cross(ref, ax)
+            x /= np.linalg.norm(x)
+            y = np.cross(ax, x)
+            dirs = [np.cos(a) * x + np.sin(a) * y for a in np.linspace(0, 2 * np.pi, 24, endpoint=False)]
+            if tear:
+                up = up / np.linalg.norm(up)
+                side = [d for d in dirs if d @ up < np.cos(np.radians(46))]
+                R, at = _radial_reach(mesh, e.get("at", [0, 0, 0]), ax, rb, mids, dirs=side)
+                Ru, _ = _radial_reach(mesh, e.get("at", [0, 0, 0]), ax, rb * np.sqrt(2.0), mids, dirs=[up])
+                if np.isfinite(Ru):
+                    measured["roof"] = Ru - rb * np.sqrt(2.0)
+            else:
+                R, at = _radial_reach(mesh, e.get("at", [0, 0, 0]), ax, rb, mids, dirs=dirs)
+            if np.isfinite(R):
+                measured["ligament"] = R - rb
+                note = f"knuckle wall measured {R - rb:.2f} mm round the bore (thinnest at {np.round(at, 2).tolist()})"
+                if "roof" in measured:
+                    note += f", {measured['roof']:.2f} mm over its teardrop roof"
+    rows = []
+    roof = measured.pop("roof", None)
+    res = check_joint(e, measured, spec.doc.get("material"), spec.doc.get("process"), jt.get("build"))
+    if roof is not None:
+        for r in res["checks"]:
+            if r["id"] == "bore-roof":
+                r.update(stress=round(roof, 3), sf=round(roof / r["allowable"], 2), pass_=None)
+                r["pass"] = roof >= r["allowable"] - 1e-9
+                r.pop("pass_", None)
+        res["pass"] = all(r["pass"] for r in res["checks"])
+        measured["roof"] = roof
+    bad = [r for r in res["checks"] if not r["pass"]]
+    sfs = [r["sf"] for r in res["checks"] if r.get("unit") == "MPa" and r.get("sf") is not None]
+    detail = note
+    if bad:
+        detail = (note + "; " if note else "") + "fails: " + "; ".join(
+            f"{r['id']} {r['stress']}{' ' + r['unit'] if r['unit'] else ''} vs {r['allowable']}"
+            + (f" (SF {r['sf']})" if r.get("sf") is not None else "") for r in bad)
+    rows.append(_row(f"joint:{jt['id']}", "joint", res["pass"], value=_r(min(sfs) if sfs else None),
+                     limit=res["checks"][0].get("target") if res["checks"] else None, detail=detail or None,
+                     measured={k: _r(v) for k, v in measured.items()}, joint=jt["id"], type=kind,
+                     modes={r["id"]: r["sf"] for r in res["checks"]}))
+    # the mating part drawn where it goes: none of the part inside it
+    for name, solid in (jt.get("mates") or {}).items():
+        if name not in ("screw", "pin") or (kind == "hinge" and (member or "outer") == "outer"):
+            continue                       # a pin is pressed into the outer knuckles by design
+        from .brepio import load_brep
+
+        m = load_brep(solid, tolerance=0.01).manifold()
+        inside = float((m ^ part_man).volume()) if part_man is not None else 0.0
+        lim = 1e-3 * float(m.volume())
+        rows.append(_row(f"joint-fit:{jt['id']}", "joint-fit", inside <= lim, value=_r(inside, 4), limit=_r(lim, 4),
+                         detail=None if inside <= lim else f"{inside:.3f} mm3 of the part inside the drawn {name}"))
+    return rows
+
+
 def _interface_checks(spec, part_man):
     rows = []
     ext = spec.exterior_manifold()
@@ -578,18 +828,41 @@ def _process_checks(spec, mesh):
             pd = spec.doc.get("process") if isinstance(spec.doc.get("process"), dict) else {}
             rules = {"minWall": float(pd["minFeature"])} if pd.get("minFeature") else None
             rep = check_process(mesh, proc, build=spec.build_direction, material=spec.material, slicer=False,
-                                rules=rules)
+                                rules=rules, keep_points=True)
         except Exception as exc:  # noqa: BLE001
             rows.append(_row("process", "process", None, detail=f"{type(exc).__name__}: {exc}"))
             rep = None
         if rep is not None:
             measured = rep["walls"].get("judgedWallMm")
             own = [w for w in rep["warnings"] if "Materialize" not in w]
-            rows.append(_row("process", "process", bool(rep["ok"]) if rep["probesRan"] else None,
-                             value=_r(measured), limit=rep["rules"]["minWall"],
+            ok = bool(rep["ok"]) if rep["probesRan"] else None
+            declared = []
+            wall_min = rep["rules"]["minWall"]
+            if rep["walls"].get("ok") is False:
+                bad, declared = _judge_pieces(spec, rep["walls"]["unformed"], rep["pitch"], wall_min)
+                rep["walls"]["unformed"] = bad
+                own = [w for w in own if not w.startswith("walls down to")]
+                if bad:
+                    own.insert(0, _pieces_detail(bad, wall_min, f"{proc} minimum"))
+                    measured = min([u["wallMm"] for u in bad if u.get("wallMm") is not None] or [measured])
+                else:
+                    # every piece the print would lose is a declared feature: the rest of the
+                    # process card decides
+                    measured = wall_min
+                    others = [rep.get("warp", {}).get("ok", True) is not False, rep["trappedVolumeMm3"] < 1.0]
+                    ok = all(others)
+            for u in rep["walls"].get("unformed", []):
+                u.pop("_points", None)
+                u.pop("_reach", None)
+            rows.append(_row("process", "process", ok,
+                             value=_r(measured), limit=wall_min,
                              detail=" | ".join(own) or None, process=proc,
                              trappedVolumeMm3=rep.get("trappedVolumeMm3"),
-                             unformedVolumeMm3=rep["walls"].get("unformedVolumeMm3")))
+                             unformedVolumeMm3=round(float(sum(u["volumeMm3"] for u in rep["walls"]["unformed"])), 2)
+                             if rep["walls"].get("unformed") is not None else None,
+                             unformed=rep["walls"].get("unformed", [])[:5] or None,
+                             declared=[{"id": u["declared"], "wallMm": u.get("wallMm"), "volumeMm3": u["volumeMm3"],
+                                        "at": u["at"]} for u in declared] or None))
     ref = review(proc, spec.material, extents=np.asarray(mesh.extents, float), wall_floor=floor,
                  measured_wall=measured)
     if ref is not None:
@@ -758,6 +1031,7 @@ def check_build(spec, mesh, out_dir=None, solid=None, body=None, render=True, ta
     rows.append(_row("one-piece", "bodies", n == 1, value=n, limit=1,
                      detail=None if n == 1 else f"the part is {n} separate bodies"))
     spec._solid_mesh = trimesh_from_manifold(solid) if solid is not None else None
+    spec.__dict__["_body"] = body
 
     ext_row, img = _exterior_check(spec, mesh, out_dir, render)
     rows.append(ext_row)
@@ -778,6 +1052,11 @@ def check_build(spec, mesh, out_dir=None, solid=None, body=None, render=True, ta
         if c.keep_in is not None:
             rows.append(keep_in_check(spec, c, c.keep_in))
     rows += _process_checks(spec, mesh)
+    for jt in getattr(spec, "joints", None) or []:
+        try:
+            rows += joint_checks(spec, mesh, part_man, jt)
+        except Exception as exc:  # noqa: BLE001 - reported as a check that could not run
+            rows.append(_row(f"joint:{jt['id']}", "joint", None, detail=f"{type(exc).__name__}: {exc}"))
 
     carried = sum(c.mass for c in spec.components)
     mass = {"part": float(mesh.volume * rho), "assembly": float(mesh.volume * rho + carried)}

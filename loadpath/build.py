@@ -110,6 +110,8 @@ class BuildSpec:
     skin_hi: float | None = None
     build_direction: object = None
     solid: bool = False                # skin "solid": the designSpace is the part, no cavity
+    min_wall: float | None = None      # the process's minimum wall (mm): every cut is backed by at least this
+    joints: list = field(default_factory=list)   # [{id, entry, design, mates}] (joints.py, jointcad.py)
     _ext_man: object = None
     _ext_mesh: object = None
 
@@ -143,7 +145,7 @@ class BuildSpec:
 
 def has_build(doc: dict) -> bool:
     """Whether a study document carries what `build` reads."""
-    return any(doc.get(k) for k in ("interfaces", "components", "targetMass", "assert", "references"))
+    return any(doc.get(k) for k in ("interfaces", "components", "joints", "targetMass", "assert", "references"))
 
 
 _AXES = {"x": (1.0, 0, 0), "y": (0, 1.0, 0), "z": (0, 0, 1.0)}
@@ -175,6 +177,53 @@ def _brep_of(shape_spec, base_dir, label):
             and str(shape_spec["path"]).lower().endswith((".step", ".stp")):
         return load_brep(shape_spec["path"], base_dir)
     return load_brep(shape_spec, base_dir)
+
+
+JOINT_TOLERANCE = 0.01   # mm: a thread's tessellation (fine enough for the gap, coarse enough to stay small)
+
+
+def _joints(doc, material, process, build_dir, interfaces, ident) -> list:
+    """Size each `joints` entry (joints.design_joint), draw it
+    (jointcad.joint_interfaces) and add its interfaces as `<id>-<part>`."""
+    entries = doc.get("joints") or []
+    if not entries:
+        return []
+    from .jointcad import joint_interfaces
+    from .joints import design_joint
+
+    out = []
+    for j, e in enumerate(entries):
+        label = f"joints[{j}]"
+        if not isinstance(e, dict) or e.get("type") not in ("thread", "hinge", "snap"):
+            raise ValueError(f"{label} is {{id, type: 'thread' | 'hinge' | 'snap', member, at, axis, ...}} "
+                             "(loadpath schema study, $.joints)")
+        i = ident(e, label)
+        b = e.get("build", build_dir)
+        des = design_joint(e, material, process, b)
+        parts, mates = joint_interfaces(e, des, b)
+        for suffix, op, solid, wall, blend, proud in parts:
+            iid = ident({"id": f"{i}-{suffix}"}, label)
+            interfaces.append(Interface(iid, op, load_brep(solid, tolerance=JOINT_TOLERANCE), blend=blend, wall=wall,
+                                        proud=proud, spec={"joint": i, "backing": False}))
+        out.append({"id": i, "entry": e, "design": des, "mates": mates, "build": b})
+    return out
+
+
+def process_min_wall(doc: dict, proc, material) -> float | None:
+    """The thinnest wall the process forms (mm): process.minFeature when
+    the spec states one, else the process card's (processcheck.RULES, never
+    under Materialize's published minimum). None for a process without a
+    wall rule here."""
+    pd = doc.get("process") if isinstance(doc.get("process"), dict) else {}
+    if pd.get("minFeature"):
+        return float(pd["minFeature"])
+    if proc is None:
+        return None
+    from .processcheck import RULES, rules_for
+
+    if str(proc).lower() not in RULES:
+        return None
+    return float(rules_for(proc, material)["minWall"])
 
 
 def build_spec(doc: dict, base_dir: str | None = None) -> BuildSpec:
@@ -281,10 +330,13 @@ def build_spec(doc: dict, base_dir: str | None = None) -> BuildSpec:
     if proc == "none":
         proc = None
 
+    joints = _joints(doc, mat, doc.get("process"), build_dir, interfaces, ident)
+
     spec = BuildSpec(name=str(doc.get("name", "part")), exterior=exterior, skin=float(t0), zones=zones,
                      interfaces=interfaces, components=components, material=material, process=proc,
                      target=None, asserts=list(doc.get("assert") or []), references=list(doc.get("references") or []),
-                     doc=doc, base_dir=base_dir, build_direction=build_dir, solid=solid)
+                     doc=doc, base_dir=base_dir, build_direction=build_dir, solid=solid,
+                     min_wall=process_min_wall(doc, proc, material), joints=joints)
     if solid and spec.adjustable():
         raise ValueError("a solid part has no wall to move: targetMass.adjust needs a skin")
 
@@ -343,9 +395,96 @@ def _round_union(a, b, r):
     return np.maximum(r, np.minimum(a, b)) - np.sqrt(u * u + v * v)
 
 
+def _round_cut(a, b, r):
+    """max(a, -b): `b` cut out of `a`, the rim where the cut leaves a's
+    surface rounded to radius r (an array, per point)."""
+    r = np.maximum(np.asarray(r, float), 1e-9)
+    na = -a
+    u = np.maximum(r - na, 0.0)
+    v = np.maximum(r - b, 0.0)
+    return -(np.maximum(r, np.minimum(na, b)) - np.sqrt(u * u + v * v))
+
+
+# Where a component's clearance runs through the body (a battery's pocket
+# through a rib, a board's slot in a wall), the exact cut alone leaves a
+# knife edge on the inside all round its rim. The body is cut first with a
+# round there (sdf_kit.soft_subtract's rule), an edge break of
+# RIM_BEARING_SHARE of the wall: the part holds the component there, and a
+# round is seat lost (r off each end of a seat of length t raises its
+# bearing pressure by 1 / (1 - 2r/t), +25% at 0.1 t). The exact cut after
+# trims only the fit. A drawn `cut` interface is not rounded: its faces are
+# the spec (a plug's guide, checked present to 98%), so a rim on one is
+# drawn with it (the pod's USB-C mouth), and the exterior's own rim is the
+# designer's.
+SOFT_CUT = os.environ.get("LOADPATH_SOFT_CUT", "1") != "0"
+RIM_BEARING_SHARE = 0.1
+
+
 def _smooth(x):
     x = np.clip(x, 0.0, 1.0)
     return x * x * (3 - 2 * x)
+
+
+BACKING_MARGIN = 1.25   # the backing wall over the process's minimum: a wall drawn at the limit is a coin flip
+BACKING_SHARP = 4.0     # how sharply the backing stops where the face leaves the material (see _backed)
+BACKING_GATE = 20.0     # ... and where the face enters another cut: within ~0.05 mm, a sign, not a taper
+BACKING_REACH = 0.1     # mm past the material's edge the face still counts as slicing it: a cavity that
+                        # grazes a cut face within the field's resolution leaves no unbacked fringe
+
+
+def _backing_frames(P, shapes, h=0.02):
+    """Where each backing reaches at the points P: per cut, (mask of the
+    points within its wall, their distance d to the cut, Q: the point on the
+    cut's face nearest each, w). Depends on the cuts alone, so a mass solve
+    reads it once."""
+    frames = []
+    for i, (sh, w) in enumerate(shapes):
+        d = sh.sdf(P)
+        m = (d > -h) & (d < w)
+        if not m.any():
+            continue
+        X, dm = P[m], d[m]
+        g = np.stack([sh.sdf(X + h * e) - sh.sdf(X - h * e) for e in np.eye(3)], axis=1)
+        g = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+        Q = X - dm[:, None] * g
+        # the face slices material only where the other cuts leave it: a
+        # face inside another cut (a pocket's face in an opening) backs nothing
+        o = np.full(len(Q), -np.inf)
+        for j, (sj, _) in enumerate(shapes):
+            if j != i:
+                o = np.maximum(o, -sj.sdf(Q))
+        frames.append((m, dm, Q, w, o))
+    return frames
+
+
+def _backed(sol, frames, sol_at):
+    """The solid `sol` (negative in material, at points P) grown to each
+    cut's backing wall: within w of a cut, where the cut's face beside the
+    point runs through material (the cut sliced the body there), the
+    material is kept to w from the face. `sol_at(Q)` is the solid before the
+    cuts at any points. A face of the cut that lies in the cavity (an
+    opening's inner end) runs through no material, so nothing grows on it
+    and the opening stays open; nor does a face inside another cut or
+    pocket (a mating part's pocket inside the opening it closes). Continuous: the backing is
+    max(d - w, k sol(Q)), Q the point on the face nearest P: k > 1 ends it
+    within a fraction of a millimetre of where the material at the face
+    ends, as a flat continuation of that edge, not a taper (a taper is a
+    feather edge the print loses)."""
+    out = sol
+    for m, dm, Q, w, o in frames:
+        out = out.copy() if out is sol else out
+        out[m] = np.minimum(out[m], np.maximum(dm - w, BACKING_SHARP * np.maximum(sol_at(Q) - BACKING_REACH, BACKING_GATE * o)))
+    return out
+
+
+class _Pocket:
+    """A component's pocket (its solid grown by the clearance) as a shape."""
+
+    def __init__(self, shape, clearance):
+        self.shape, self.c = shape, float(clearance)
+
+    def sdf(self, P):
+        return self.shape.sdf(P) - self.c
 
 
 class BodyField:
@@ -384,6 +523,17 @@ class BodyField:
                 self.walls.append((MeshShape(m), i.wall, i.blend))
         self.cuts = [i.brep.as_shape() for i in spec.interfaces if i.op == "cut"]
         self.comps = [(c.brep.as_shape(), c.clearance) for c in spec.components]
+        # every cut face is backed by the process's minimum wall: where the
+        # cavity would come nearer a cut than that, the material beside the
+        # cut is grown to it (backing). A cut's own `wall` keeps material all
+        # round it; this keeps only what the print needs where the cut meets
+        # the body, so an opening into the cavity stays open
+        self.backing = []
+        w = spec.min_wall * BACKING_MARGIN if spec.min_wall else None
+        if w and not spec.solid:
+            self.backing = [(sh, w) for sh, it in zip(self.cuts, [i for i in spec.interfaces if i.op == "cut"])
+                            if not it.wall and it.spec.get("backing", True) is not False]
+            self.backing += [(_Pocket(sh, c), w) for sh, c in self.comps]
 
     def at(self, s):
         out = BodyField.__new__(BodyField)
@@ -405,7 +555,7 @@ class BodyField:
             t = t + w * (tz - t)
         return t
 
-    def _solid(self, P, inset):
+    def _solid(self, P, inset, backing=True):
         """The material inside the exterior, exterior not yet applied."""
         e = self.ext.sdf(P)
         sol = -(e + self.thickness(P))
@@ -413,6 +563,12 @@ class BodyField:
             sol = _round_union(sol, sh.sdf(P) + inset, blend)
         for sh, wall, blend in self.walls:
             sol = _round_union(sol, sh.sdf(P) - wall, blend)
+        if SOFT_CUT:
+            t = self.thickness(P)
+            for sh, c in self.comps:
+                sol = _round_cut(sol, sh.sdf(P) - c, RIM_BEARING_SHARE * t)
+        if backing and self.backing:
+            sol = _backed(sol, _backing_frames(P, self.backing), lambda Q: self._solid(Q, inset, backing=False)[0])
         return sol, e
 
     def cavity(self, P):
@@ -457,6 +613,9 @@ class _Grid:
         self.zone_w = [_smooth(0.5 - z.shape.sdf(self.P) / max(z.blend, 1e-6)) for z in sp.zones]
         self.adds = [(sh.sdf(self.P), blend, proud) for sh, blend, proud in body.adds]
         self.walls = [(sh.sdf(self.P) - wall, blend) for sh, wall, blend in body.walls]
+        self.comp_d = [sh.sdf(self.P) - c for sh, c in body.comps]
+        self.body = body
+        self.frames = _backing_frames(self.P, body.backing) if body.backing else []
         cut = np.full(len(self.P), np.inf)
         for sh in body.cuts:
             cut = np.minimum(cut, sh.sdf(self.P))
@@ -477,6 +636,13 @@ class _Grid:
             sol = _round_union(sol, a, blend)
         for a, blend in self.walls:
             sol = _round_union(sol, a, blend)
+        if SOFT_CUT:
+            for a in self.comp_d:
+                sol = _round_cut(sol, a, RIM_BEARING_SHARE * t)
+        if self.frames:
+            # how far the material at each face reaches depends on the walls' setting
+            b = self.body.at(s)
+            sol = _backed(sol, self.frames, lambda Q: b._solid(Q, 0.0, backing=False)[0])
         d = np.maximum(self.e, sol)
         for a, _, proud in self.adds:
             if proud:
@@ -725,6 +891,8 @@ def run_build(doc: dict, base_dir: str | None = None, out: str | None = None, qu
         os.makedirs(out, exist_ok=True)
         mesh.export(os.path.join(out, "part.stl"))
         report["part"] = "part.stl"
+    if spec.joints:
+        report["joints"] = _export_joints(spec, out)
     if progress:
         progress({"stage": "checks"})
     checks = check_build(spec, mesh, out_dir=out, solid=solid, body=body, render=render, target=mass_info)
@@ -740,6 +908,27 @@ def run_build(doc: dict, base_dir: str | None = None, out: str | None = None, qu
         with open(os.path.join(out, "report.json"), "w") as f:
             json.dump(report, f, indent=1)
     return report
+
+
+def _export_joints(spec: BuildSpec, out: str | None) -> list:
+    """Each joint's design (sizes, checks, assumptions) and its mating
+    parts written to out/joints/<id>-<name>.step and .stl."""
+    rows = []
+    for jt in spec.joints:
+        des = {k: v for k, v in jt["design"].items() if k not in ("strengths",)}
+        files = []
+        if out is not None and jt["mates"]:
+            from build123d import export_step, export_stl
+
+            d = os.path.join(out, "joints")
+            os.makedirs(d, exist_ok=True)
+            for name, solid in jt["mates"].items():
+                base = os.path.join(d, f"{jt['id']}-{name}")
+                export_step(solid, base + ".step")
+                export_stl(solid, base + ".stl", tolerance=0.01, angular_tolerance=0.1)
+                files += [os.path.relpath(base + ".step", out), os.path.relpath(base + ".stl", out)]
+        rows.append({"id": jt["id"], "member": jt["entry"].get("member"), "design": des, "files": files})
+    return rows
 
 
 def check_part(doc: dict, part, base_dir: str | None = None, out: str | None = None, render: bool = True) -> dict:

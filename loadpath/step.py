@@ -1664,8 +1664,13 @@ def _unify(shape):
     A bore's faces built on the mesh (_cut_on_mesh) sit on their seam edges
     within EDGE_TOL; merging them, or the edges along them, can leave a
     face OpenCascade rejects, and then they stay as built (a bore in three
-    sectors) while the planes still merge."""
+    sectors) while the planes still merge. Each try works on a copy:
+    UnifySameDomain changes the shape it is given in place (its edges'
+    and vertices' tolerances), so a failed try left the solid to fall back
+    on invalid too, and the export wrote facets with no exact bores (the
+    step-import tutorial's elbow on CI, 2026-11-24)."""
     from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
     from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.GeomAbs import GeomAbs_Plane
     from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
@@ -1675,10 +1680,11 @@ def _unify(shape):
 
     valid = BRepCheck_Analyzer(shape).IsValid()
     for planes_only in (False, True):
-        u = ShapeUpgrade_UnifySameDomain(shape, not planes_only, True, False)
+        work = BRepBuilderAPI_Copy(shape).Shape() if valid else shape
+        u = ShapeUpgrade_UnifySameDomain(work, not planes_only, True, False)
         u.SetLinearTolerance(1e-5)
         if planes_only:
-            fe = TopExp_Explorer(shape, TopAbs_FACE)
+            fe = TopExp_Explorer(work, TopAbs_FACE)
             while fe.More():
                 if BRepAdaptor_Surface(TopoDS.Face(fe.Current())).GetType() != GeomAbs_Plane:
                     ee = TopExp_Explorer(fe.Current(), TopAbs_EDGE)

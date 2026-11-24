@@ -78,6 +78,33 @@ def test_thin_walls():
     assert rb["walls"]["ok"] is False and rb["walls"]["judgedWallMm"] < 0.8, rb["walls"]
 
 
+def test_a_wall_running_through_the_search_box_is_not_thin():
+    """The thin-wall reading works in a box round each cluster of thin
+    cells. A 2 mm ring running out through that box's face read as a wall
+    ending there, and a column of cells along the face came out unformed
+    (the Touch-Mic body's rim, 2026-11-24: 3 of its 4 failing places).
+    Only the 0.5 mm fin is missing."""
+    from loadpath.processcheck import _choose_pitch, _grid, _walls
+
+    base = _box((0, 0, 0), (40, 40, 3))
+    fin = _box((10, 5, 3), (10.5, 25, 9))
+    ring = trimesh.creation.annulus(r_min=14, r_max=16, height=6)
+    ring.apply_translation((20, 20, 6))
+    part = trimesh.boolean.union([base, fin, ring])
+    p = _choose_pitch(np.asarray(part.extents, float), 0.8)
+    solid, origin = _grid(part, np.eye(3), None, p, pad=3)
+    w = _walls(solid, p, origin, 0.8, keep_points=True)
+    assert w["ok"] is False and w["unformed"], w
+    vol = 0.0
+    for u in w["unformed"]:
+        P, reach = u["_points"], u["_reach"]
+        far = P[reach >= 0.8]
+        on_fin = (far[:, 0] > 9.3) & (far[:, 0] < 11.2) & (far[:, 1] > 4.3) & (far[:, 1] < 25.7)
+        assert on_fin.all(), np.round(far[~on_fin][:5], 2)
+        vol += u["volumeMm3"]
+    assert vol < 70.0, vol        # the fin is 60 mm^3; the ring added 30 more before
+
+
 def test_a_slanted_edge_is_rounded_not_missing():
     """A wedge's edge tapers through every thickness to nothing; the print
     rounds it a little, as it does every edge, and that is not a thin wall.
@@ -134,6 +161,28 @@ def test_process_field_and_spec():
         return np.max(np.abs(p - 15.0), axis=-1) - 10.0     # a 20 mm solid cube
     r = check_process(field, "sls", bounds=((0, 0, 0), (30, 30, 30)))
     assert r["ok"] and abs(r["volumeMm3"] - 8000) < 400, r["volumeMm3"]
+
+
+def test_drawn_alone_decides_who_owns_an_unformed_piece():
+    # reconstruct._drawn_unformed: a 2.4 mm drawn ring forms on its own, so a
+    # piece at its rim is the designed material's to cut; a 0.4 mm drawn
+    # plate does not, and stays for the check to report as the designer's
+    from loadpath.reconstruct import _drawn_unformed
+
+    def study(shape):
+        return study_from_dict({
+            "designSpace": {"type": "box", "min": [-20, -20, -5], "max": [20, 20, 5]},
+            "preserve": [{"id": "drawn", "shape": shape}],
+            "supports": [{"region": "drawn"}],
+            "loadCases": [{"name": "a", "loads": [{"region": "drawn", "force": [0, 0, -1]}]}],
+            "material": "pa12", "process": {"type": "mjf"}})
+
+    ring = study({"type": "cylinder", "p0": [0, 0, -2], "p1": [0, 0, 2], "r": 3.5, "rInner": 1.1})
+    rim = np.array([[3.3, 0.0, 1.8], [3.3, 0.2, 1.9], [3.2, 0.5, 1.9]])
+    assert _drawn_unformed(ring, [], rim, 0.2, 0.8) is False
+    plate = study({"type": "box", "min": [-5, -5, 0], "max": [5, 5, 0.4]})
+    mid = np.array([[0.0, 0.0, 0.2], [1.0, 0.0, 0.2], [2.0, 1.0, 0.2]])
+    assert _drawn_unformed(plate, [], mid, 0.1, 0.8) is True
 
 
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]

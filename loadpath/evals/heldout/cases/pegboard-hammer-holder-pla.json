@@ -1,0 +1,340 @@
+{
+ "id": "pegboard-hammer-holder-pla",
+ "batch": 3,
+ "brief": "A hammer holder for a 1/4 inch pegboard (6.35 mm holes on a 25.4 mm grid, board 5 mm thick), PLA on FDM, printed on its side so the layers stack along X. The board's front face is the plane y = 0 (board from y = -5 to 0). An upper peg (5.8 mm) goes through the hole at x = 0, z = 0 and hooks down 9 mm behind the board; a straight lower peg goes into the hole at z = -25.4 to stop it turning. The holder stays in front of the board inside x = -25 to 25, y = 0 to 70, z = -35 to 10. The hammer hangs head up with its 30 mm handle through a 34 mm wide slot open at the front (x = -17 to 17, from y = 30 outwards), its head resting on the two prongs either side. Dropping the 1 kg head in puts up to 30 N down on the prong tops; knocking it puts 20 N sideways (X) either way. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "pegboard",
+  "hook",
+  "holder",
+  "fdm",
+  "push-support"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -25,
+     0,
+     -35
+    ],
+    "max": [
+     25,
+     70,
+     10
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "upper-peg",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        -4,
+        0
+       ],
+       "axis": "y",
+       "length": 8,
+       "r": 2.9
+      },
+      {
+       "type": "box",
+       "min": [
+        -2.9,
+        -8,
+        -9
+       ],
+       "max": [
+        2.9,
+        -5.4,
+        0
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "id": "lower-peg",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      -2.5,
+      -25.4
+     ],
+     "axis": "y",
+     "length": 5,
+     "r": 2.9
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "slot",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "box",
+       "min": [
+        -17,
+        36,
+        -36
+       ],
+       "max": [
+        17,
+        71,
+        11
+       ]
+      },
+      {
+       "type": "box",
+       "min": [
+        -11,
+        30,
+        -36
+       ],
+       "max": [
+        11,
+        36,
+        11
+       ]
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -11,
+        36,
+        -12.5
+       ],
+       "axis": "z",
+       "length": 47,
+       "r": 6
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        11,
+        36,
+        -12.5
+       ],
+       "axis": "z",
+       "length": 47,
+       "r": 6
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -3,
+      -5.5,
+      -9
+     ],
+     "max": [
+      3,
+      -5.2,
+      0
+     ]
+    },
+    "push": "-y"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -3,
+      -5,
+      -3.0
+     ],
+     "max": [
+      3,
+      0,
+      -2.6
+     ]
+    },
+    "push": "+z"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -25,
+      -0.3,
+      -35
+     ],
+     "max": [
+      25,
+      0.5,
+      -12
+     ]
+    },
+    "push": "+y"
+   },
+   {
+    "region": "lower-peg",
+    "fix": "x"
+   },
+   {
+    "region": "upper-peg",
+    "fix": "x"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "drop-in",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "box",
+         "min": [
+          17,
+          50,
+          8
+         ],
+         "max": [
+          25,
+          70,
+          10
+         ]
+        },
+        {
+         "type": "box",
+         "min": [
+          -25,
+          50,
+          8
+         ],
+         "max": [
+          -17,
+          70,
+          10
+         ]
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       -30
+      ]
+     }
+    ]
+   },
+   {
+    "name": "knock+",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "box",
+         "min": [
+          17,
+          50,
+          8
+         ],
+         "max": [
+          25,
+          70,
+          10
+         ]
+        },
+        {
+         "type": "box",
+         "min": [
+          -25,
+          50,
+          8
+         ],
+         "max": [
+          -17,
+          70,
+          10
+         ]
+        }
+       ]
+      },
+      "force": [
+       20,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "knock-",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "box",
+         "min": [
+          17,
+          50,
+          8
+         ],
+         "max": [
+          25,
+          70,
+          10
+         ]
+        },
+        {
+         "type": "box",
+         "min": [
+          -25,
+          50,
+          8
+         ],
+         "max": [
+          -17,
+          70,
+          10
+         ]
+        }
+       ]
+      },
+      "force": [
+       -20,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+x"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "pegboard-hammer-holder-pla",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

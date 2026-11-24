@@ -2094,9 +2094,12 @@ def _child(job_path: str):
     kw = dict(job["kw"])
     if job["progress"]:
         kw["on_progress"] = _progress_line
+    from .integrity import IntegrityError
+
     try:
         out = {"result": fn(*job["args"], **kw)}
-    except ValueError as exc:
+    except (ValueError, IntegrityError) as exc:
+        # (a part in pieces said as such, not as a process that died)
         out = {"valueError": str(exc)}
     with open(job["result"], "w") as fh:
         json.dump(_jsonable(out), fh, default=float)

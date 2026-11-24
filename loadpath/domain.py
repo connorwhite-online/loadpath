@@ -481,6 +481,37 @@ def patch_acceleration(study: Study, mesh: HexMesh, f_raw: np.ndarray, density=1
     return inertia_balance(f_raw, m, phi, carried_bodies(study, mesh, phi, tol_floor))[1]
 
 
+# a bore's seat in sectors round its axis: each sector pushes along its middle's
+# outward normal, within cos(15 deg) = 0.97 of the wall's own at its edges
+RADIAL_SECTORS = 12
+
+
+def radial_seats(pts, p0, ax, sectors: int = RADIAL_SECTORS) -> list:
+    """A tube, shaft or pin in a bore (supports[].push = "radial") as
+    seats: [(indices into pts, outward unit normal)], one per sector of
+    the bore wall round the axis through p0. What is in the bore pushes out
+    on the wall where it bears and nowhere pulls; held "fix" the wall is
+    glued to it all round, and a part that wraps the tube less than half
+    way round passes on that glue (held-out batch 3: a tube tee's rail
+    socket came out a saddle under the rail)."""
+    ax = np.asarray(ax, float) / np.linalg.norm(ax)
+    d = np.asarray(pts, float) - np.asarray(p0, float)
+    rad = d - (d @ ax)[:, None] * ax
+    a = np.cross(ax, [1.0, 0.0, 0.0] if abs(ax[0]) < 0.9 else [0.0, 1.0, 0.0])
+    a /= np.linalg.norm(a)
+    b = np.cross(ax, a)
+    th = np.arctan2(rad @ b, rad @ a)
+    k = np.floor((th + np.pi) / (2 * np.pi / sectors)).astype(int) % sectors
+    out = []
+    for j in range(sectors):
+        sub = np.nonzero(k == j)[0]
+        if len(sub) == 0:
+            continue
+        mid = -np.pi + (j + 0.5) * 2 * np.pi / sectors
+        out.append((sub, np.cos(mid) * a + np.sin(mid) * b))
+    return out
+
+
 def _cylinder_of(study: Study, region, shape, label):
     sh = shape if shape is not None else study.region_shape(region)[0]
     if not hasattr(sh, "axis"):
@@ -547,7 +578,14 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         idx = np.nonzero(nodes)[0]
         if s.push is not None:
             share = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)[idx].astype(float)
-            seats.append((idx, np.asarray(s.push, float), share / share.sum()))
+            if isinstance(s.push, str):
+                p0, ax = _cylinder_of(study, s.region, s.shape, label)
+                for sub, n in radial_seats(xyz[idx], p0, ax):
+                    seats.append((idx[sub], n, share[sub] / share[sub].sum(), getattr(s, "friction", None),
+                                  None))
+                continue
+            seats.append((idx, np.asarray(s.push, float), share / share.sum(), getattr(s, "friction", None),
+                          getattr(s, "preload", None)))
             continue
         for a in range(3):
             if s.fix[a]:
@@ -680,7 +718,8 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             spread = Spread(f.copy(), spread[0], spread[1], spread[2])
             f = spread.load(spread.nominal)
         spreads.append(spread)
-        if check_loads and not np.any(f) and study.gravity is None and not study.inertia_relief:
+        clamp = case.name == "preload" and any(len(s_) > 4 and (s_[4] or 0) > 0 for s_ in seats)
+        if check_loads and not np.any(f) and study.gravity is None and not study.inertia_relief and not clamp:
             if not applied and spread is None:
                 raise ValueError(f"load case {case.name!r} adds up to nothing at pitch {mesh.pitch:.3g} mm: its "
                                  "forces cancel on the same grid nodes (a fastener's seat and face rings closer "
@@ -704,12 +743,139 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     if study.inertia_relief:
         raw = [f.copy() for f in loads]
         loads = _inertia_relief(study, mesh, loads, fixed, tol_floor)
-    if seats and any(sp_ is not None for sp_ in spreads):
-        raise ValueError("a push support with a force of unknown direction (direction: any, or a cone) is not "
-                         "solved yet: a seat lets go where it is lifted, so the directions do not add up from "
-                         "unit loads. Give the force the directions that matter as separate load cases")
+    if seats and check_loads and not pinned and not study.inertia_relief:
+        _seated_statics(study, xyz, fixed, seats, loads, spreads)
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
                               case_wet, imbalance, spreads, raw, pinned=pinned, seats=seats)
+
+
+def _seated_statics(study, xyz, fixed, seats, loads, spreads=None) -> None:
+    """Refuse a load case the supports cannot hold as a rigid body. A seat
+    (supports[].push) only pushes: a case whose force and moment no sum of
+    the fixed supports' reactions and the seats' pushes balances lifts the
+    part off, and every solve of it flies off (pushseat.resolve). Read on
+    the rigid part, it is six numbers per case, so `check` says so in a
+    second and names the case and the way it goes, where the run used to
+    spend its time and then call it a limit other than strength (held-out
+    batch 3: a pillow block lifted by its shaft, a Pi mount pulled off its
+    wall, both held by screws fixed across their axis only)."""
+    from scipy.optimize import nnls
+
+    c = xyz.mean(axis=0)
+    r = xyz - c
+
+    def wrench(nodes, dirs):
+        return np.concatenate([dirs, np.cross(r[nodes], dirs)], axis=1)
+
+    cols = []
+    for a in range(3):
+        nodes = np.nonzero(fixed[a::3])[0]
+        if len(nodes):
+            e = np.zeros((len(nodes), 3))
+            e[:, a] = 1.0
+            cols.append(wrench(nodes, e))
+    q = np.zeros((6, 0))
+    if cols:
+        w = np.concatenate(cols, axis=0)
+        # scale moments to forces by the part's size, so both count alike
+        size = max(float(np.ptp(xyz, axis=0).max()), 1e-9)
+        sc = np.array([1, 1, 1, 1 / size, 1 / size, 1 / size])
+        u, sv, _ = np.linalg.svd((w * sc).T, full_matrices=False)
+        q = u[:, sv > 1e-9 * max(sv.max(), 1e-300)]
+    else:
+        size = max(float(np.ptp(xyz, axis=0).max()), 1e-9)
+        sc = np.array([1, 1, 1, 1 / size, 1 / size, 1 / size])
+    proj = np.eye(6) - q @ q.T
+    if np.abs(proj).max() < 1e-9:
+        return                                        # the fixed supports hold every rigid motion
+    seat_cols, fric_cols, fric_mu = [], [], []
+    # friction across a seat (pushseat.py) as eight forces round each node, bounded together by
+    # mu times its push: the octagon round the friction disc, so a case that holds is never refused
+    ring = 2 * np.pi * np.arange(8) / 8
+    widen = 1.0 / np.cos(np.pi / 8)
+    for s in seats:
+        idx, n = np.asarray(s[0]), np.asarray(s[1], float)
+        mu = float(s[3] or 0.0) if len(s) > 3 else 0.0
+        most = 100 if mu > 0 else 400
+        if len(idx) > most:
+            idx = idx[np.linspace(0, len(idx) - 1, most).astype(int)]
+        if mu > 0:
+            from .pushseat import _across
+
+            a, b_ = _across(n)
+            for k, t in enumerate(ring):
+                fric_cols.append(wrench(idx, np.repeat((np.cos(t) * a + np.sin(t) * b_)[None], len(idx), axis=0)))
+            fric_mu.append((len(np.concatenate(seat_cols, axis=0)) if seat_cols else 0, len(idx), mu * widen))
+        seat_cols.append(wrench(idx, np.repeat(n[None], len(idx), axis=0)))
+    sw = (proj @ (np.concatenate(seat_cols, axis=0) * sc).T)
+    sf = (proj @ (np.concatenate(fric_cols, axis=0) * sc).T) if fric_cols else None
+
+    def balance(b):
+        """(seat pushes, what is left unbalanced) for the wrench b."""
+        if sf is None:
+            lam, _ = nnls(sw, b, maxiter=50 * sw.shape[1])
+            return b - sw @ lam
+        import scipy.sparse as sp_
+        from scipy.optimize import linprog
+
+        nl, nf = sw.shape[1], sf.shape[1]
+        # columns: pushes, friction (8 per node, seat by seat, direction-major), slack +, slack -
+        a_eq = np.concatenate([sw, sf, np.eye(6), -np.eye(6)], axis=1)
+        rows, cols, vals = [], [], []
+        f0, r = 0, 0
+        for start, count, m in fric_mu:
+            for j in range(count):
+                for k in range(8):
+                    rows.append(r)
+                    cols.append(nl + f0 + k * count + j)
+                    vals.append(1.0)
+                rows.append(r)
+                cols.append(start + j)
+                vals.append(-m)
+                r += 1
+            f0 += 8 * count
+        a_ub = sp_.csr_matrix((vals, (rows, cols)), shape=(r, nl + nf + 12))
+        cost = np.concatenate([np.zeros(nl + nf), np.ones(12)])
+        res = linprog(cost, A_ub=a_ub, b_ub=np.zeros(r), A_eq=a_eq, b_eq=b, bounds=(0, None), method="highs")
+        if res.status != 0:
+            lam, _ = nnls(sw, b, maxiter=50 * sw.shape[1])
+            return b - sw @ lam
+        x = res.x
+        return b - sw @ x[:nl] - sf @ x[nl:nl + nf]
+    for ci, (case, f) in enumerate(zip(study.load_cases, loads)):
+        if spreads and ci < len(spreads) and spreads[ci] is not None:
+            continue                                  # a force of unknown direction: pushseat.SeatedSpread
+        fn = f.reshape(-1, 3)
+        on = np.abs(fn).sum(axis=1) > 0
+        if not on.any():
+            continue
+        wl = np.concatenate([fn[on].sum(axis=0), np.cross(r[on], fn[on]).sum(axis=0)]) * sc
+        b = -(proj @ wl)
+        total = float(np.abs(fn).sum())
+        if np.linalg.norm(b) < 1e-6 * total:
+            continue
+        rest = balance(b)
+        if np.linalg.norm(rest) <= 1e-3 * max(np.linalg.norm(wl), 1e-12):
+            continue
+        left = -rest                                 # what nothing balances: where the part goes
+        fpart, mpart = left[:3], left[3:]
+        if np.linalg.norm(fpart) >= np.linalg.norm(mpart):
+            d = fpart / np.linalg.norm(fpart)
+            ax = int(np.argmax(np.abs(d)))
+            way = f"along {'+' if d[ax] > 0 else '-'}{'xyz'[ax]}" if abs(d[ax]) > 0.9 else \
+                f"along [{', '.join(f'{v:.2f}' for v in d)}]"
+        else:
+            d = mpart / np.linalg.norm(mpart)
+            ax = int(np.argmax(np.abs(d)))
+            way = (f"turning about {'xyz'[ax]}" if abs(d[ax]) > 0.9 else
+                   f"turning about [{', '.join(f'{v:.2f}' for v in d)}]")
+        raise ValueError(
+            f"load case {case.name!r} lifts the part off its seat and nothing else holds it {way}: "
+            "a seat (supports[].push) only pushes" + (", and holds across only by its friction" if sf is not None
+                                                      else " (give it friction to hold across)") +
+            ". Hold it where it is really held that way: write the screws "
+            "as `fasteners` with their bores as supports (a screw's head then holds the part along it), "
+            "fix a bore or face along that axis, or add a seat on the face the load presses it against")
 
 
 def _near_cells(mesh: HexMesh, nodes: np.ndarray, layers: int = 2) -> np.ndarray:
@@ -1368,7 +1534,10 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
         mesh = HexMesh(ijk[active], pitch, origin)
 
     if getattr(study, "print_direction", None) is not None:
-        warnings.extend(_unprintable_preserve(study.print_direction, dims, active, preserve, pitch, origin))
+        proc = getattr(study, "process", None)
+        warnings.extend(_unprintable_preserve(study.print_direction, dims, active, preserve, pitch, origin,
+                                              process=getattr(proc, "kind", None),
+                                              bridge_span=getattr(proc, "bridge_span", None)))
     pres_el = preserve[active]
     joints = drawn_joints(preserve.reshape(dims), mesh.elem_ijk) & ~pres_el
     stock_el = None
@@ -1721,6 +1890,48 @@ def _warp_term(study, mesh):
                     f)
 
 
+def _reach_bridged(env, direction, pitch, process, bridge_span=None):
+    """Cells of `env` (bool, grid shape) a print along `direction` (axis,
+    sign) reaches from the bed: each layer stands on the 45-degree cross of
+    the layer below, and what is left of a layer prints if it is a bridge
+    or a ledge by printcheck's reading (spans no longer than the bridge
+    span, landing on reached cells of the same layer at both ends)."""
+    from scipy import ndimage
+
+    from .printcheck import _CROSS, _EIGHT, _LEDGE, _spans, BRIDGE_SPAN
+    from .edtops import edt
+
+    axis, sign = direction
+    g = np.moveaxis(np.asarray(env, bool), axis, 0)
+    g = g if sign > 0 else g[::-1]
+    span_mm = float(bridge_span if bridge_span is not None else BRIDGE_SPAN.get(process, 15.0))
+    max_steps = int(np.ceil(span_mm / pitch)) + 2
+    ledge_cells = _LEDGE / pitch
+    out = np.zeros_like(g)
+    out[0] = g[0]
+    for k in range(1, g.shape[0]):
+        lay = g[k] & ndimage.binary_dilation(out[k - 1], _CROSS)
+        free = g[k] & ~lay
+        if free.any() and lay.any():
+            lbl, n = ndimage.label(free, _EIGHT)
+            dist = None
+            for r in range(1, n + 1):
+                reg = lbl == r
+                if not (ndimage.binary_dilation(reg, _EIGHT) & lay).any():
+                    continue
+                if dist is None:
+                    dist = edt(~lay)
+                if dist[reg].max() <= ledge_cells + 1.0:
+                    lay = lay | reg
+                    continue
+                frac, span = _spans(reg, lay, pitch, max_steps)
+                if frac >= 0.97 and span <= span_mm:
+                    lay = lay | reg
+        out[k] = lay
+    out = out if sign > 0 else out[::-1]
+    return np.moveaxis(out, 0, axis)
+
+
 @dataclass
 class WarpSpec:
     term: object                  # buildsim.WarpTerm or CoarseWarp: measures(e, de, weights)
@@ -1730,7 +1941,8 @@ class WarpSpec:
     coarsen: int = 1
 
 
-def _unprintable_preserve(direction, dims, active, preserve, pitch, origin) -> list:
+def _unprintable_preserve(direction, dims, active, preserve, pitch, origin, process=None,
+                          bridge_span=None) -> list:
     """Drawn geometry the print cannot reach from its bed. The overhang rule
     holds preserved cells solid whatever is under them (they are the
     user's), so a feature hanging over air in the build direction is never
@@ -1740,7 +1952,15 @@ def _unprintable_preserve(direction, dims, active, preserve, pitch, origin) -> l
     nothing at all (an iPhone mount read safety factor 0.003 for it). Here
     the whole envelope is printed solid along the build direction with no
     cell held: whatever cannot be reached at 45 degrees even then is said,
-    before an optimization is spent on it."""
+    before an optimization is spent on it.
+
+    A printer also bridges: a cell the 45-degree reach misses but that a
+    straight span of at most the process's bridge span holds at both ends
+    (the roof of a hole lying across the layers, a 4.5 mm screw hole in a
+    bracket printed on its side) prints as a slicer prints it, and is read
+    as printcheck.check_print reads the finished part (a narrow ledge off
+    a wall too). Without that, every horizontal hole's roof was called
+    preserved geometry needing support."""
     from .am import AMFilter, direction_label
 
     try:
@@ -1749,6 +1969,11 @@ def _unprintable_preserve(direction, dims, active, preserve, pitch, origin) -> l
     except Exception:  # noqa: BLE001 - a check, never a reason not to build
         return []
     cant = active & (printed < 0.5)
+    if (cant & preserve).any() and process is not None and len(direction) == 2:
+        try:
+            cant = active & ~_reach_bridged(active.reshape(dims), direction, pitch, process, bridge_span).reshape(-1)
+        except Exception:  # noqa: BLE001 - a check, never a reason not to build
+            pass
     pres_cant = cant & preserve
     n_act = int(active.sum())
     if not pres_cant.any() or n_act == 0:

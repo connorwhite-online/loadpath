@@ -62,7 +62,14 @@ class Cage:
         nv = max(len(self.V), int(Q.max()) + 1 if Q.size else 0)
         # an edge as one integer (lo n + hi): the same order as unique rows, a fraction of the time
         key = np.minimum(a, b) * nv + np.maximum(a, b)
-        u, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
+        # sorted once (np.unique hashes int keys: seconds on a subdivided cage)
+        o = np.argsort(key)
+        ks = key[o]
+        head = np.r_[True, ks[1:] != ks[:-1]]
+        u = ks[head]
+        inv = np.empty(len(key), np.int64)
+        inv[o] = np.cumsum(head) - 1
+        cnt = np.diff(np.r_[np.flatnonzero(head), len(ks)])
         E = np.stack([u // nv, u % nv], 1)
         if (cnt != 2).any():
             raise ValueError(f"cage is not closed and manifold: {int((cnt != 2).sum())} edges with "
@@ -72,8 +79,8 @@ class Cage:
         n = len(self.V)
         self.valence = np.bincount(E.ravel(), minlength=n)
         # each directed half-edge once (orientation consistent)
-        d = a * n + b
-        if len(np.unique(d)) != len(d):
+        d = np.sort(a * n + b)
+        if (d[1:] == d[:-1]).any():
             raise ValueError("cage faces are not consistently oriented")
 
     @property
@@ -101,9 +108,9 @@ def subdivision_matrix(cage):
     EF = sp.csr_matrix((np.ones(4 * m), (QE.ravel(), np.repeat(np.arange(m), 4))), shape=(e, m))
     Ae = 0.25 * EV + 0.25 * (EF @ Af)
     val = cage.valence.astype(float)
-    VV = (EV.T @ EV).tolil()
-    VV.setdiag(0)
-    VV = VV.tocsr()
+    VV = (EV.T @ EV).tocsr()
+    VV = (VV - sp.diags(VV.diagonal())).tocsr()
+    VV.eliminate_zeros()
     VF = sp.csr_matrix((np.ones(4 * m), (Q.ravel(), np.repeat(np.arange(m), 4))), shape=(n, m))
     D = sp.diags(1.0 / val ** 2)
     Av = sp.diags((val - 2.0) / val) + D @ VV + D @ (VF @ Af)
@@ -580,8 +587,7 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
             # M^T diag(1 + w2 count) M, and M[j] (as many rows as samples)
             # is never formed
             cnt = wP + w2 * np.bincount(j, weights=wX, minlength=len(P))
-            acc = np.zeros_like(P)
-            np.add.at(acc, j, wX[:, None] * t2)
+            acc = np.stack([np.bincount(j, weights=wX * t2[:, k], minlength=len(P)) for k in range(3)], 1)
             rhs = MT @ (wP[:, None] * t1 + w2 * acc)
             if pre is None:
                 # factor once a round, at the mean pull; conjugate gradients
@@ -597,7 +603,9 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
         folds = _folds(H, C)
         if not len(folds):
             break
-        # stiffen the cage round each fold and fit again
+        # stiffen the cage round each fold and fit again (whole cage: the
+        # later rounds also carry on the slow closest-point convergence,
+        # which the worst-point pulls need as headroom under tolerance)
         verts = np.unique(cage.Q[folds])
         ring = np.unique(cage.Q[(np.isin(cage.Q, verts)).any(1)])
         stiff[ring] *= 30.0
@@ -654,9 +662,7 @@ def _limit_normals(H, P):
     a = P[Q[:, 2]] - P[Q[:, 0]]
     b = P[Q[:, 3]] - P[Q[:, 1]]
     fn = np.cross(a, b)
-    N = np.zeros_like(P)
-    for k in range(4):
-        np.add.at(N, Q[:, k], fn)
+    N = np.stack([np.bincount(Q.ravel(), weights=np.repeat(fn[:, k], 4), minlength=len(P)) for k in range(3)], 1)
     return N / np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-300)
 
 
@@ -826,47 +832,55 @@ def pick_tolerance(accuracy=None, noise=None):
     return tol, why
 
 
-def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress=None):
-    """Star points cancelled in pairs (subdcoarse.cancel: edge rotations
-    and diagonal collapses) where the surface can do without them: the
+def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress=None, over=None, fair=0.0,
+                 attempts=2):
+    """Star points cancelled in pairs (subdcoarse.simplify: edge rotations
+    and diagonal collapses, and 3-5 pairs slid together first) where the surface can do without them: the
     moved neighbourhoods are fitted again (subdedit.refit) and the moves
     stand only if the 99th percentile holds and no place misses by more
     than twice the bound or closes a printable hole that did not before;
     where a new place misses, the vertices round it are frozen and the
-    rest tried once more. Returns (cage, hierarchy, deviation, report)."""
+    rest tried once more. `over`: the miss a surface place may not newly
+    exceed (twice the bound; the bound's aim once the worst points are
+    pulled in), `fair`: the bending the refit keeps. Returns (cage,
+    hierarchy, deviation, report)."""
     from scipy.spatial import cKDTree
 
-    from .subdcoarse import cancel
+    from .subdcoarse import simplify
     from .subdedit import refit
 
     def bad(H, C, d1, d2, X):
-        pl, _ = misses(H, C, mesh, d1, d2, X, bound, min_hole)
-        return [p for p in pl if p.get("printable") or (p["kind"] == "surface" and p["miss"] > 2.0 * bound)]
+        pl, _ = misses(H, C, mesh, d1, d2, X, min(bound, lim), min_hole)
+        return [p for p in pl if p.get("printable") or (p["kind"] == "surface" and p["miss"] > lim)]
+    lim = 2.0 * bound if over is None else float(over)
     d1, d2, X = deviation(H, cage.V, mesh, data=check)[1]
     before = {tuple(np.round(p["at"], 0)) for p in bad(H, cage.V, d1, d2, X)}
     stars = int((cage.valence != 4).sum())
     frozen = np.zeros(0, np.int64)
     h = float(np.sqrt(mesh.area / len(cage.Q)))
     rep = {"moves": 0, "starPoints": [stars, stars]}
-    for attempt in range(2):
-        Vn, Qn, touched, taken = cancel(cage.V, cage.Q, frozen=frozen)
+    for attempt in range(attempts):
+        Vn, Qn, touched, taken = simplify(cage.V, cage.Q, frozen=frozen)
         if not taken:
             break
         c2 = Cage(Vn, Qn)
         H2 = Hierarchy(c2, level)
-        refit(c2, H2, mesh, touched, data, settle=tol / 50)
+        refit(c2, H2, mesh, touched, data, fair=fair, settle=tol / 50)
         d2v, (e1, e2, X2) = deviation(H2, c2.V, mesh, data=check)
         new = [p for p in bad(H2, c2.V, e1, e2, X2) if tuple(np.round(p["at"], 0)) not in before]
         if progress:
             progress(f"star points {stars} -> {int((c2.valence != 4).sum())} ({taken} moves): "
-                     f"p99 {d2v['p99']:.4f} mm, {len(new)} new places over {2 * bound:.2f}")
+                     f"p99 {d2v['p99']:.4f} mm, {len(new)} new places over {lim:.2f}")
         if d2v["p99"] <= tol and not new:
             rep = {"moves": int(taken), "starPoints": [stars, int((c2.valence != 4).sum())]}
             return c2, H2, d2v, rep
         if not new:
             break
         near = cKDTree(cage.V).query_ball_point(np.array([p["at"] for p in new]), 3.0 * h)
-        frozen = np.unique(np.r_[frozen, np.concatenate([np.asarray(x, np.int64) for x in near])])
+        grown = np.unique(np.r_[frozen, np.concatenate([np.asarray(x, np.int64) for x in near])])
+        if len(grown) == len(frozen):
+            break               # the same places miss with them held: another try is the same try
+        frozen = grown
     return cage, H, dev, rep
 
 
@@ -974,7 +988,12 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
         rate = 2.5
         if len(tries) >= 2 and tries[-2]["p99"] > dev["p99"] > 0:
             rate = 2.0 * np.log(tries[-2]["p99"] / dev["p99"]) / np.log(len(cage.Q) / tries[-2]["faces"])
-            rate = float(np.clip(rate, 2.5, 4.0))
+            # under 3 the last two tries were still finding the features
+            # (a coarse cage misses a loop or a rim outright): near the
+            # tolerance the bench parts converge at 2.6-4.5, median 3.3
+            # (pebble, arm link, 2026-11-24), and a floor of 2.5 there laid
+            # a cage 40% finer than the tolerance needed
+            rate = float(np.clip(rate, 3.0, 4.0))
         grow = (dev["p99"] / (0.9 * tol)) ** (2.0 / rate)
         # finer only where the shape is tight: a closed hole opens once four
         # or so edges go round it (edge under 0.7 of its diameter: pi d / 4);
@@ -1005,7 +1024,12 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
                 grow = max(grow, (max(coarse) / bound) ** (2.0 / rate))
             n = int(min(max_faces, len(cage.Q) * min(4.0, max(1.3, grow))))
         elif dev["p99"] > tol:
-            n = int(min(max_faces, len(cage.Q) * min(4.0, max(1.3, grow))))
+            # no cap on the step: far from the tolerance the error falls
+            # slower than the rate's floor says (features not yet followed:
+            # the pebble went 1.89 -> 0.97 mm for 4x the faces), so the
+            # step under-shoots and a cap only adds a lay (122, 501, 2045,
+            # 5642 faces where 122, 1390, ~4000 do)
+            n = int(min(max_faces, len(cage.Q) * max(1.3, grow)))
         else:
             # the next cage is laid afresh and its 99th percentile moves a
             # few percent with it: keep it aimed just under the tolerance
@@ -1039,66 +1063,90 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     # with (miss / 0.75 aim)^6 a round, at most x17, once it is within a
     # quarter of the aim, holes aside), so the fit spends its freedom only where the
     # shape is tight, while the 99th percentile stays within the tolerance
-    wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
-    dev, (d1, d2, Xc) = deviation(H, cage.V, mesh, data=check)
     # the patches are held within a third of the tolerance of the limit
     # surface (lay_out), so the limit aims that much under the bound
     aim = bound - tol / 3.0
-    places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
-    pulls = insets = 0
     from scipy.spatial import cKDTree
 
     from .subdedit import inset, refit
 
     def over(places):
         return max((p["miss"] for p in places if p["kind"] == "surface"), default=0.0)
-    while (kind == 1).any():
-        stage = 0
-        while (kind == 1).any() and stage < 4:
-            j = cKDTree(H.M @ cage.V).query(data[0], workers=-1)[1]
-            wP *= np.where(kind != 2, np.clip(d1 / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
-            dX = np.linalg.norm(data[0] - _closest_limit(H, cage.V, data[0]), axis=1)
-            wX *= np.where(kind[j] != 2, np.clip(dX / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
-            # only the control points round the places that miss are fitted
-            # again (subdedit.refit): the rest of the surface is where the
-            # fairing left it, and a pull costs seconds, not a whole fit
-            c2 = Cage(cage.V.copy(), cage.Q)
-            refit(c2, H, mesh, np.unique(cage.Q[H.root[(kind == 1)[H.fine.Q].any(axis=1)]]), data, fair=fair,
-                  iterations=8, settle=tol / 50, weights=(wP, wX))
-            d2v, (e1, e2, Xc) = deviation(H, c2.V, mesh, data=check)
-            if d2v["p99"] > tol:
-                break
-            was = over(places)
-            cage.V, dev, pulls, stage, d1, d2 = c2.V, d2v, pulls + 1, stage + 1, e1, e2
-            places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
-            if progress:
-                progress(f"worst-point pull {pulls}: max {dev['max']:.4f} mm, "
-                         f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
-            if over(places) > 0.9 * was:
-                break                   # the pull has stopped gaining: the faces are too wide there
-        if not (kind == 1).any() or insets >= 3:
-            break
-        # what pulling cannot bring in gets finer faces, there only: a ring
-        # of quads inside the faces that still miss (subdedit.inset), the
-        # control points round it fitted again
-        res = inset(cage.V, cage.Q, np.unique(H.root[(kind == 1)[H.fine.Q].any(axis=1)]))
-        if res is None:
-            break
-        try:
-            c2 = Cage(res[0], res[1])
-            H2 = Hierarchy(c2, level)
-            refit(c2, H2, mesh, res[2], data, fair=fair, settle=tol / 50)
-        except (ValueError, RuntimeError):
-            break
-        d2v, (e1, e2, Xc) = deviation(H2, c2.V, mesh, data=check)
-        if d2v["p99"] > tol or len(_folds(H2, c2.V)):
-            break
-        cage, H, dev, d1, d2, insets = c2, H2, d2v, e1, e2, insets + 1
+
+    def pull_in(cage, H, max_insets=3):
         wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
+        dev, (d1, d2, Xc) = deviation(H, cage.V, mesh, data=check)
         places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
-        if progress:
-            progress(f"faces inset where the pull stalled: {len(cage.Q)} faces, max {dev['max']:.4f} mm, "
-                     f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
+        pulls = insets = 0
+        while (kind == 1).any():
+            stage = 0
+            while (kind == 1).any() and stage < 4:
+                j = cKDTree(H.M @ cage.V).query(data[0], workers=-1)[1]
+                wP *= np.where(kind != 2, np.clip(d1 / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
+                dX = np.linalg.norm(data[0] - _closest_limit(H, cage.V, data[0]), axis=1)
+                wX *= np.where(kind[j] != 2, np.clip(dX / (0.75 * aim), 1.0, 1.6) ** 6, 1.0)
+                # only the control points round the places that miss are fitted
+                # again (subdedit.refit): the rest of the surface is where the
+                # fairing left it, and a pull costs seconds, not a whole fit
+                c2 = Cage(cage.V.copy(), cage.Q)
+                refit(c2, H, mesh, np.unique(cage.Q[H.root[(kind == 1)[H.fine.Q].any(axis=1)]]), data, fair=fair,
+                      iterations=8, settle=tol / 50, weights=(wP, wX))
+                d2v, (e1, e2, Xc) = deviation(H, c2.V, mesh, data=check)
+                if d2v["p99"] > tol:
+                    break
+                was = over(places)
+                pl2, k2 = misses(H, c2.V, mesh, e1, e2, Xc, aim, min_hole)
+                if over(pl2) > was and len(pl2) >= len(places):
+                    break               # the pull made the worst place worse: keep what there was
+                cage.V, dev, pulls, stage, d1, d2 = c2.V, d2v, pulls + 1, stage + 1, e1, e2
+                places, kind = pl2, k2
+                if progress:
+                    progress(f"worst-point pull {pulls}: max {dev['max']:.4f} mm, "
+                             f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
+                if over(places) > 0.9 * was:
+                    break                   # the pull has stopped gaining: the faces are too wide there
+            if not (kind == 1).any() or insets >= max_insets:
+                break
+            # what pulling cannot bring in gets finer faces, there only: a ring
+            # of quads inside the faces that still miss (subdedit.inset), the
+            # control points round it fitted again
+            res = inset(cage.V, cage.Q, np.unique(H.root[(kind == 1)[H.fine.Q].any(axis=1)]))
+            if res is None:
+                break
+            try:
+                c2 = Cage(res[0], res[1])
+                H2 = Hierarchy(c2, level)
+                refit(c2, H2, mesh, res[2], data, fair=fair, settle=tol / 50)
+            except (ValueError, RuntimeError):
+                break
+            d2v, (e1, e2, X2) = deviation(H2, c2.V, mesh, data=check)
+            if d2v["p99"] > tol or len(_folds(H2, c2.V)):
+                break
+            pl2, k2 = misses(H2, c2.V, mesh, e1, e2, X2, aim, min_hole)
+            cage, H, dev, d1, d2, Xc, insets = c2, H2, d2v, e1, e2, X2, insets + 1
+            wP, wX = np.ones(H.M.shape[0]), np.ones(len(data[0]))
+            places, kind = pl2, k2
+            if progress:
+                progress(f"faces inset where the pull stalled: {len(cage.Q)} faces, max {dev['max']:.4f} mm, "
+                         f"{int(sum(p['kind'] == 'surface' for p in places))} places over {aim:.3f}")
+        return cage, H, dev, d1, d2, Xc, places, kind, pulls, insets
+
+    cage, H, dev, d1, d2, Xc, places, kind, pulls, insets = pull_in(cage, H)
+    if insets and not faces:
+        # an inset cuts four 3-5 pairs into the cage (its corners); they and
+        # any the first pass had to leave are slid together and cancelled
+        # as there, now held to the aim the pulls brought every place
+        # within: where a place would miss again the star points round it
+        # stay (they are the inset's finer faces), up to four tries
+        c2, H2, d2v, again = _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress,
+                                          over=aim, fair=fair, attempts=4)
+        if again["moves"]:
+            cage, H, dev = c2, H2, d2v
+            dev, (d1, d2, Xc) = deviation(H, cage.V, mesh, data=check)
+            places, kind = misses(H, cage.V, mesh, d1, d2, Xc, aim, min_hole)
+            cancelled = {"moves": cancelled.get("moves", 0) + again["moves"],
+                         "starPoints": cancelled.get("starPoints", again["starPoints"])[:1]
+                         + again["starPoints"][1:], "afterInsets": again["starPoints"]}
     P = H.M @ cage.V
     surface = [p for p in places if p["kind"] == "surface"]
     holes = [p for p in places if p["kind"] == "hole"]

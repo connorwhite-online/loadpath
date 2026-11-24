@@ -1,0 +1,171 @@
+{
+ "id": "tube-tee-20mm-petg-b",
+ "batch": 3,
+ "brief": "A tee connector in PETG (FDM, printed on its side so the layers stack along Y) for a rack made of 20 mm OD tube. A top rail runs straight through it along X (centre line y = 0, z = 0); a leg tube goes down from it along -Z and bottoms out 2 mm below the rail. Both tubes slip in (drawn at 20 mm) and are held by the joint itself. The tee stays inside x = -35 to 35, y = -16 to 16, z = -45 to 16. The rail is what holds the tee. The leg carries 150 N up from the floor, and a racking push of 30 N on the leg's foot, 400 mm below the rail, either way along X or Y. Safety factor 2.5.",
+ "attachments": [],
+ "tags": [
+  "tube",
+  "connector",
+  "joint",
+  "fdm"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -35,
+     -16,
+     -45
+    ],
+    "max": [
+     35,
+     16,
+     16
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "rail",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "axis": "x",
+     "length": 100,
+     "r": 10
+    },
+    "fit": "slip"
+   },
+   {
+    "id": "leg",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      -36
+     ],
+     "axis": "z",
+     "length": 48,
+     "r": 10
+    },
+    "fit": "slip"
+   }
+  ],
+  "supports": [
+   {
+    "region": "rail",
+    "push": "radial",
+    "friction": 0.3
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "stand",
+    "loads": [
+     {
+      "region": "leg",
+      "force": [
+       0,
+       0,
+       150
+      ]
+     }
+    ]
+   },
+   {
+    "name": "rack-x+",
+    "loads": [
+     {
+      "region": "leg",
+      "force": [
+       30,
+       0,
+       0
+      ],
+      "at": [
+       0,
+       0,
+       -400
+      ]
+     }
+    ]
+   },
+   {
+    "name": "rack-x-",
+    "loads": [
+     {
+      "region": "leg",
+      "force": [
+       -30,
+       0,
+       0
+      ],
+      "at": [
+       0,
+       0,
+       -400
+      ]
+     }
+    ]
+   },
+   {
+    "name": "rack-y+",
+    "loads": [
+     {
+      "region": "leg",
+      "force": [
+       0,
+       30,
+       0
+      ],
+      "at": [
+       0,
+       0,
+       -400
+      ]
+     }
+    ]
+   },
+   {
+    "name": "rack-y-",
+    "loads": [
+     {
+      "region": "leg",
+      "force": [
+       0,
+       -30,
+       0
+      ],
+      "at": [
+       0,
+       0,
+       -400
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+y"
+  },
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "tube-tee-20mm-petg-b",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5
+ },
+ "note": "Twin of tube-tee-20mm-petg, written as check now advises: the rail bears on its bore (push radial) with friction 0.3 for PETG on aluminium, in place of a bore fixed all round. The cold case passed on that glue with a saddle under the rail that slides off once the rail can only push."
+}

@@ -1,5 +1,10 @@
-# The full eval suite takes about an hour on a 4-core runner, so it runs on
-# request and weekly rather than on every push. Exit code = failing cases.
+# The full eval suite runs on request and weekly rather than on every push.
+# One job per case: the whole suite in one job ran past what a hosted runner
+# keeps going (the runner was shut down after about 10 of 22 cases, the
+# scheduled run of 2026-11-23 and both dispatches of 2026-11-24), and lost
+# every result with it, since the scorecard is written at the end. Each case
+# uploads its own scorecard; the summary job joins them and fails when any
+# case failed.
 name: evals
 
 on:
@@ -13,9 +18,38 @@ on:
     - cron: "0 6 * * 1"
 
 jobs:
-  evals:
+  cases:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        env:
+          CASES: ${{ github.event.inputs.cases }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import glob, json, os
+          names = sorted(os.path.splitext(os.path.basename(f))[0] for f in glob.glob("loadpath/evals/cases/*.json"))
+          want = (os.environ.get("CASES") or "").split()
+          if want:
+              unknown = sorted(set(want) - set(names))
+              if unknown:
+                  raise SystemExit(f"unknown cases: {unknown}")
+              names = [n for n in names if n in want]
+          print("list=" + json.dumps(names))
+          EOF
+
+  case:
+    needs: cases
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      # the runner pool is shared with every push's CI
+      max-parallel: 4
+      matrix:
+        case: ${{ fromJson(needs.cases.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,9 +61,38 @@ jobs:
       # exterior: libigl, for the generated-mesh products of the enclosure
       # cases (the wrap and the skin's exact distance)
       - run: pip install -e ".[render,crosscheck,exterior]"
+      # the case's result is in its scorecard (the summary job fails the
+      # run); this job fails only when the case could not run at all
+      - run: python -m loadpath.evals.run ${{ matrix.case }} --out evals-out || true
+      - run: test -f evals-out/scorecard.json
+      - if: always()
+        run: cat evals-out/scorecard.md >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evals-${{ matrix.case }}
+          path: evals-out/
+
+  summary:
+    needs: [cases, case]
+    if: always() && needs.cases.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: evals-*
+          path: parts
+      # every case asked for is in the summary: one whose job died without a
+      # scorecard is listed as failed
       - env:
-          CASES: ${{ github.event.inputs.cases }}
-        run: python -m loadpath.evals.run $CASES --out evals-out --jobs 2
+          EXPECT: ${{ join(fromJson(needs.cases.outputs.list), ' ') }}
+        run: python -m loadpath.evals.run --merge parts --out evals-out $EXPECT
       - if: always()
         run: cat evals-out/scorecard.md >> "$GITHUB_STEP_SUMMARY" || true
       - if: always()

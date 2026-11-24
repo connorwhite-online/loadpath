@@ -129,8 +129,6 @@ def unsupported(study: Study) -> str | None:
         return "no supports (a self-equilibrated part)"
     if study.gravity is not None:
         return "gravity loads"
-    if any(getattr(sp, "push", None) is not None for sp in study.supports):
-        return "a support that only pushes (its contact is solved on the grid, pushseat.py)"
     if getattr(study, "stock", None):
         return "bought stock members (the tet mesh is the printed part alone)"
     if any(ld.pressure for c in study.load_cases for ld in c.loads):
@@ -730,6 +728,92 @@ def _worst_directions(loads, spreads, solve, stress, counted):
     return out_u, out_l, dirs
 
 
+def _seats_on(study, pts, surf, tol, faces):
+    """The study's seats (supports[].push) on the tet mesh's vertices:
+    [(vertex indices, unit push, area shares)], as domain.py builds them on
+    the grid. (Loads go on the vertices too, _load_vectors.)"""
+    out = []
+    for i, sup in enumerate(study.supports):
+        if getattr(sup, "push", None) is None:
+            continue
+        sh = sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
+        vn = _region_nodes(study, sh, pts, tol, surf)
+        if len(vn) == 0:
+            raise ValueError(f"supports[{i}] touches no surface node of the part")
+        shares = _area_shares(pts, faces, vn)
+        if isinstance(sup.push, str):
+            from .domain import radial_seats
+
+            for sub, n in radial_seats(pts[vn], sh.p0, sh.axis):
+                out.append((vn[sub], n, shares[sub] / max(shares[sub].sum(), 1e-300), getattr(sup, "friction", None),
+                            None))
+            continue
+        out.append((vn, np.asarray(sup.push, float), shares, getattr(sup, "friction", None),
+                    getattr(sup, "preload", None)))
+    return out
+
+
+def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, judge=None):
+    """The cases solved with the seats pushing (pushseat.py), as the grid's
+    check solves them: the seat's force an unknown on patches of the face,
+    the patches held by springs for the solves (in the CG's operator,
+    _solver's `lowrank`) and the springs taken out again exactly, the
+    patches that bear cut finer; a force of unknown direction judged in the
+    direction that stresses the part most with the contact solved in each
+    (pushseat.worst_stress). Returns (displacements (n, 3) per case, the
+    directions or None)."""
+    from . import pushseat
+    from .directions import Spread
+
+    n = len(nodes)
+    ps = pushseat.patches(seats, nodes, 3 * n)
+    ks, _ = pushseat.hold(ps, nodes, size)
+    ks = E * ks
+    solver = solver_for((ps, ks))
+    try:
+        rhs, layout, sps = [], [], []
+        for (name, f, ln), sp in zip(loads, spreads):
+            if sp is None:
+                layout.append((len(rhs),))
+                rhs.append(f)
+                sps.append(None)
+                continue
+            basis, nominal, cos_half = sp
+            base = f - sum(nominal[a] * basis[a] for a in range(3))
+            i0 = None
+            if np.abs(base).max() > 1e-9 * max(float(np.abs(f).max()), 1e-300):
+                i0 = len(rhs)
+                rhs.append(base)
+            layout.append((i0, len(rhs), len(rhs) + 1, len(rhs) + 2))
+            rhs.extend(basis)
+            sps.append(Spread(None, None, np.asarray(nominal, float), cos_half))
+
+        def flat(f):
+            v = np.zeros(3 * n)
+            v[: f.size] = np.asarray(f, float).ravel()
+            return v
+
+        def inner(r):
+            return None, [u.ravel() for u in solver.solve([("", v.reshape(-1, 3), None) for v in r])]
+
+        _, us, _, cases = pushseat.solve_cases(inner, [flat(f) for f in rhs], ps, ks, strict=True, xyz=nodes,
+                                               layout=layout, spreads=sps)
+    finally:
+        solver.close()
+    out_u, dirs = [], []
+    for ci, idx in enumerate(layout):
+        if len(idx) == 1:
+            out_u.append(us[idx[0]].reshape(n, 3))
+            dirs.append(None)
+            continue
+        sc = cases[ci]
+        d, mu, _ = pushseat.worst_stress(sc, lambda v: stress([v.reshape(n, 3)])[0], counted, strict=True,
+                                          judge=judge)
+        out_u.append(sc.u(d, mu).reshape(n, 3))
+        dirs.append(np.asarray(d, float))
+    return out_u, dirs
+
+
 # 4-point Gauss rule on a tetrahedron (exact for degree 2: a P2 stiffness
 # integrand is degree 2), in barycentric coordinates.
 _QA, _QB = 0.5854101966249685, 0.1381966011250105
@@ -949,6 +1033,15 @@ def _assemble(nodes, conn, E, nu, chunk=20_000, extra=()):
 
 
 def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
+    """_solver's answer for `loads`, the solver closed after."""
+    solver = _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges)
+    try:
+        return solver.solve(loads)
+    finally:
+        solver.close()
+
+
+def _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges, lowrank=None):
     """P2 elasticity by CG with a two-level preconditioner: symmetric
     Gauss-Seidel on the quadratic system, and a coarse correction on the
     linear (vertex-only) problem, Galerkin-projected. (Aggregation AMG on
@@ -965,7 +1058,16 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     126 s against 337; the turret (1.44M dofs): 72 s against 116; the motor
     mount 15 s against 23; the same safety factors to 9 digits.
     `fixed_dof` marks held dofs; `springs` (or None; _pin_springs) is
-    added to the stiffness (pins)."""
+    added to the stiffness (pins). `lowrank`: (rows (m x 3n), k (m,)), the
+    springs sum_j k_j r_j r_j' that hold a seat's patches (pushseat.hold):
+    in the operator exactly, and in the smoother as each patch's spring
+    spread over its nodes by their shares (the same stiffness against a
+    translation; a patch's spring couples nodes of one colour, which the
+    coloured sweep cannot take).
+
+    Returns an object with solve(loads) -> displacements (n, 3) per load,
+    in batches of BATCH (the CG keeps five copies of every column), and
+    close()."""
     import scipy.sparse as sp
 
     from . import tetsolve
@@ -979,6 +1081,17 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     inv[q] = np.arange(n)
     qd = (3 * q[:, None] + np.arange(3)).ravel()          # new dof -> old dof
     extra = [(inv[np.asarray(idx, np.int64)], b) for idx, b in (springs or ())]
+    lump = []
+    if lowrank is not None:
+        rows_, kk = lowrank
+        for r_, k_ in zip(rows_, kk):
+            r_ = np.asarray(r_, float).reshape(-1, 3)
+            nz = np.nonzero(np.abs(r_).sum(axis=1))[0]
+            v = r_[nz]
+            sh = np.linalg.norm(v, axis=1)
+            nn = v / np.maximum(sh, 1e-300)[:, None]
+            lump.append((inv[nz], k_ * sh[:, None, None] * nn[:, :, None] * nn[:, None, :]))
+        extra = extra + lump
     k = _assemble(nodes[q], inv[conn], E, nu, extra=extra)
     # held dofs eliminated in place, not by slicing out the free block (a
     # second copy of the matrix): their rows and columns zeroed and a unit
@@ -1028,7 +1141,26 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
             return out
     del a1
     op = tetsolve.Blocked(k, bounds)
+    mv = op.mv
+    if lowrank is not None:
+        # the operator is the stiffness with the patches' springs exactly:
+        # the matrix's lumped ones out, the rank-one ones in (rows on held
+        # dofs left out, as the elimination leaves them)
+        free_q = (~fixed_dof[qd]).astype(float)
+        rr, cc_, vv = [], [], []
+        for idx, blk in lump:
+            dof = (3 * idx[:, None] + np.arange(3)).ravel()
+            rr.append(np.repeat(dof, 3))
+            cc_.append((3 * idx[:, None, None] + np.zeros((1, 3, 1), np.int64) + np.arange(3)[None, None, :]).ravel())
+            vv.append(blk.ravel())
+        lumped = sp.csr_matrix((np.concatenate(vv), (np.concatenate(rr), np.concatenate(cc_))), shape=(3 * n, 3 * n))
+        lumped = (sp.diags(free_q) @ lumped @ sp.diags(free_q)).tocsr()
+        rows = sp.csr_matrix(np.asarray(lowrank[0], float))[:, qd] @ sp.diags(free_q)
+        rows = rows.tocsr()
+        lr_k = np.asarray(lowrank[1], float)
 
+        def mv(x):
+            return op.mv(x) - lumped @ x + rows.T @ (lr_k[:, None] * (rows @ x))
     def precond(r):
         # one symmetric sweep each side: 106 iterations at 0.17 s beat two
         # sweeps' 82 at 0.28 s (wrist yoke)
@@ -1038,23 +1170,35 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
         op.sgs(x, r)
         return x
 
-    fs = []
-    for _n, f, _ in loads:
-        fn = np.zeros((n, 3))
-        fn[: len(f)] = f
-        fs.append(np.where(free_mask, fn.ravel(), 0.0)[qd])
-    # 1e-7 is six digits of stress; 1e-9 cost a third more iterations
-    x, _its = tetsolve.cg(np.ascontiguousarray(np.stack(fs, axis=1)), precond, op.mv, rtol=1e-7, maxiter=2000)
-    fac = getattr(coarse, "factor", None)
-    if fac is not None:
-        fac.close()           # its gigabyte back before the stress read
-    out = []
-    for j in range(x.shape[1]):
-        u = np.empty(3 * n)
-        u[qd] = x[:, j]
-        u[fixed_dof] = 0.0
-        out.append(u.reshape(n, 3))
-    return out
+    def solve(loads):
+        out = []
+        for b0 in range(0, len(loads), _BATCH):
+            fs = []
+            for _n, f, _ in loads[b0:b0 + _BATCH]:
+                fn = np.zeros((n, 3))
+                fn[: len(f)] = f
+                fs.append(np.where(free_mask, fn.ravel(), 0.0)[qd])
+            # 1e-7 is six digits of stress; 1e-9 cost a third more iterations
+            x, _its = tetsolve.cg(np.ascontiguousarray(np.stack(fs, axis=1)), precond, mv, rtol=1e-7, maxiter=2000)
+            for j in range(x.shape[1]):
+                u = np.empty(3 * n)
+                u[qd] = x[:, j]
+                u[fixed_dof] = 0.0
+                out.append(u.reshape(n, 3))
+        return out
+
+    def close():
+        fac = getattr(coarse, "factor", None)
+        if fac is not None:
+            fac.close()           # its gigabyte back before the stress read
+
+    from types import SimpleNamespace
+
+    return SimpleNamespace(solve=solve, close=close)
+
+
+# load columns the CG takes at once (each column is five vectors of the mesh's dofs)
+_BATCH = 16
 
 
 def _coarse_factor(a1, n_tets):
@@ -1420,11 +1564,19 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         return {"safetyFactor": min(sfs), "safetyFactorNoAllowance": min(sfs_raw), "cases": cases}
 
     out = {}
+    seats = _seats_on(study, pts, surf, tol, bfaces)
+    from .failure import equivalent_stress
     if backend in ("native", "both"):
         springs = _pin_springs(pin_blocks, mat.E * size, len(nodes))
-        us, _, dirs = _worst_directions(
-            loads, spreads, lambda ls: _solve(nodes, conn, mat.E, el, fixed_dof, springs, ls, len(pts), edges),
-            stress_of, far)
+        if seats:
+            us, dirs = _seated(seats, loads, spreads, nodes, size, mat.E,
+                               lambda lowrank: _solver(nodes, conn, mat.E, el, fixed_dof, springs, len(pts), edges,
+                                                       lowrank),
+                               stress_of, far, judge=lambda sig: peak_of(equivalent_stress(sig, m_c))[0])
+        else:
+            us, _, dirs = _worst_directions(
+                loads, spreads, lambda ls: _solve(nodes, conn, mat.E, el, fixed_dof, springs, ls, len(pts), edges),
+                stress_of, far)
         out["native"] = summarize(_read_stress(nodes, conn, us, mat.E, el, len(pts), radius, normal, m_c,
                                                shear_ratio), dirs)
         timings["native"] = time.time() - t1
@@ -1436,11 +1588,18 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         # (its stress read from its displacements the way the native one's
         # is, averaged over the same radius: CalculiX's own nodal stress,
         # extrapolated from its integration points, is a point value)
-        us_c, _, dirs_c = _worst_directions(
-            loads, spreads,
-            lambda ls: [r[0] for r in _solve_ccx(mat, nodes, conn, supports, ls, len(pts), el, normal, m_c,
-                                                 shear_ratio)],
-            stress_of, far)
+        if seats:
+            # the same contact (pushseat.py) on CalculiX's solves: the patches'
+            # springs as springs on their means, every push a step of its own
+            us_c, dirs_c = _seated(seats, loads, spreads, nodes, size, mat.E,
+                                   lambda lowrank: _CcxSolver(mat, nodes, conn, supports, len(pts), el, lowrank),
+                                   stress_of, far, judge=lambda sig: peak_of(equivalent_stress(sig, m_c))[0])
+        else:
+            us_c, _, dirs_c = _worst_directions(
+                loads, spreads,
+                lambda ls: [r[0] for r in _solve_ccx(mat, nodes, conn, supports, ls, len(pts), el, normal, m_c,
+                                                     shear_ratio)],
+                stress_of, far)
         out["ccx"] = summarize(_read_stress(nodes, conn, us_c, mat.E, el, len(pts), radius, normal, m_c,
                                             shear_ratio), dirs_c)
         timings["ccx"] = time.time() - t2
@@ -1460,6 +1619,24 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                      **({"coarsenedFrom": asked} if size > asked else {}),
                      "mesher": mesher or ("tetwild" if _has_tetwild() and not adaptive else "gmsh"),
                      "seconds": time.time() - t0}
+
+
+class _CcxSolver:
+    """_solver's interface on CalculiX: solve(loads) -> displacements (n, 3)
+    per load, one deck a call, the seats' springs in it (write_abaqus's
+    `lowrank`)."""
+
+    def __init__(self, mat, nodes, conn, supports, n_vertices, el, lowrank):
+        self.args = (mat, nodes, conn, supports)
+        self.n_vertices, self.el, self.lowrank = n_vertices, el, lowrank
+
+    def solve(self, loads):
+        mat, nodes, conn, supports = self.args
+        return [r[0] for r in _solve_ccx(mat, nodes, conn, supports, list(loads), self.n_vertices, self.el,
+                                         lowrank=self.lowrank)]
+
+    def close(self):
+        pass
 
 
 def _ccx_material(mat, el) -> str:
@@ -1489,12 +1666,19 @@ def _ccx_material(mat, el) -> str:
             "*SOLID SECTION,ELSET=PART,MATERIAL=M,ORIENTATION=LAYERS\n")
 
 
-def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, heading=None):
+def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, heading=None, lowrank=None):
     """An Abaqus / CalculiX input deck: C3D10 elements, a node set per
     support (a pin in cylindrical axes about it), the material (layered as
     engineering constants in the layers' frame), and one static step per
     load case of nodal forces. `solver` names CalculiX's (its *STATIC
-    option); without it the deck is plain Abaqus."""
+    option); without it the deck is plain Abaqus.
+
+    `lowrank`: (rows (m x 3n), k (m,)), springs sum_j k_j (r_j . u)^2 / 2
+    on weighted means of the nodes' displacements (a seat's patches,
+    pushseat.hold): each a node of its own beyond the mesh (numbered from
+    n + 1) tied to its mean by an *EQUATION, on a SPRING1 to ground. The
+    same stiffness exactly; the steps' displacements of those nodes are
+    the patches' means."""
     if heading:
         fh.write(f"*HEADING\n{heading}\n")
     fh.write("*NODE,NSET=NALL\n")
@@ -1513,6 +1697,23 @@ def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, he
             fh.write(f"*TRANSFORM,NSET=S{k},TYPE=C\n" + ",".join(f"{v:.9g}" for v in (*a, *b)) + "\n")
             bc += [f"S{k},1,1", f"S{k},3,3"]
         bc += [f"S{k},{a + 1},{a + 1}" for a in range(3) if fix[a]]
+    if lowrank is not None:
+        rows_, kk = lowrank
+        n = len(nodes)
+        rows_ = np.asarray(rows_, float).reshape(len(kk), -1)
+        own = np.asarray([nodes[np.abs(r_).reshape(-1, 3).sum(axis=1) > 0].mean(axis=0) for r_ in rows_])
+        fh.write("*NODE,NSET=PATCHES\n")
+        np.savetxt(fh, np.column_stack([n + 1 + np.arange(len(kk)), own]), fmt="%d,%.9g,%.9g,%.9g")
+        for j, k_ in enumerate(kk):
+            fh.write(f"*ELEMENT,TYPE=SPRING1,ELSET=PS{j}\n{len(conn) + 1 + j},{n + 1 + j}\n"
+                     f"*SPRING,ELSET=PS{j}\n1\n{float(k_):.12e}\n")  # (an integer reads as no data)
+        for j in range(len(kk)):
+            dof = np.nonzero(rows_[j])[0]
+            terms = [(n + 1 + j, 1, -1.0)] + [(int(d // 3) + 1, int(d % 3) + 1, float(rows_[j][d])) for d in dof]
+            fh.write(f"*EQUATION\n{len(terms)}\n")
+            for t0 in range(0, len(terms), 4):
+                fh.write(",".join(f"{a},{b},{c:.15g}" for a, b, c in terms[t0:t0 + 4]) + "\n")
+        bc += [f"{n + 1 + j},2,3" for j in range(len(kk))]
     fh.write(_ccx_material(mat, mat.nu if el is None else el) + "*BOUNDARY\n" + "\n".join(bc) + "\n")
     for _name, f, _l in loads:
         fh.write("*STEP\n" + (f"*STATIC,SOLVER={solver}\n" if solver else "*STATIC\n") + "*CLOAD,OP=NEW\n")
@@ -1522,7 +1723,7 @@ def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, he
 
 
 def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=None, ratio=1.0,
-               shear_ratio=float(np.sqrt(3.0))):
+               shear_ratio=float(np.sqrt(3.0)), lowrank=None):
     """The quadratic system solved by CalculiX (ccx on PATH): one Abaqus-
     style deck, one static step per load case. Returns [(u, von Mises at
     the vertices)] per case, as the native solve does, and with `normal`
@@ -1539,7 +1740,7 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=No
     with tempfile.TemporaryDirectory() as tmp:
         deck = os.path.join(tmp, "job")
         with open(deck + ".inp", "w") as fh:
-            write_abaqus(fh, mat, nodes, conn, supports, loads, el, solver=solver)
+            write_abaqus(fh, mat, nodes, conn, supports, loads, el, solver=solver, lowrank=lowrank)
         # One thread unless LOADPATH_CCX_THREADS asks for more: the packaged
         # CalculiX (2.21, SPOOLES) on several threads returned a different
         # answer run to run on the same deck (a propped cantilever's
@@ -1556,7 +1757,9 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=No
         run = subprocess.run([exe, "job"], cwd=tmp, capture_output=True, text=True, timeout=7200, env=env)
         if run.returncode != 0 or not os.path.exists(deck + ".frd"):
             raise RuntimeError(f"CalculiX failed: {(run.stdout + run.stderr)[-2000:]}")
-        steps = _read_frd(deck + ".frd", len(nodes))
+        extra = 0 if lowrank is None else len(lowrank[1])
+        steps = [(u[:len(nodes)], vm[:len(nodes)], sig[:len(nodes)])
+                 for u, vm, sig in _read_frd(deck + ".frd", len(nodes) + extra)]
     if len(steps) != len(loads):
         raise RuntimeError(f"CalculiX returned {len(steps)} steps for {len(loads)} load cases")
     from .failure import bond_stress, equivalent_stress

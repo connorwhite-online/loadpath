@@ -854,7 +854,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     sliding.
     springs:
     grounded linear springs, N/mm per dof (an actuator's compliance, a
-    workpiece pushing back).
+    workpiece pushing back), or a sparse spring matrix (N/mm).
 
     stability: after each step, check the tangent's lowest eigenvalue. Newton
     happily converges to an equilibrium that is unstable (a column kept
@@ -908,7 +908,11 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     seeded = False
 
     spr = None
-    if springs is not None:
+    if springs is not None and sp.issparse(springs):
+        # a spring matrix (a preloaded seat held shut: pushseat.bilateral)
+        spr = (keep_free_ := sp.diags((~cons).astype(float))) @ springs @ keep_free_
+        spr = spr.tocsr()
+    elif springs is not None:
         sd = np.where(cons, 0.0, np.asarray(springs, float))
         spr = sp.diags(sd).tocsr()
 
@@ -1463,6 +1467,63 @@ def solid_submesh(mesh: HexMesh, keep: np.ndarray, fixed: np.ndarray, vectors: l
     return sub, el, fx.ravel(), out
 
 
+def _seated_sub(domain, keep, vectors):
+    """solid_submesh for a mechanism on seats (supports[].push): a seat holds
+    its piece (it is not dropped as floating), and the seats come back on the
+    submesh: (sub, el, fixed, vectors, seats)."""
+    seats = getattr(domain, "seats", None) or []
+    hold = np.asarray(domain.fixed, bool).copy()
+    for s_ in seats:
+        hold[(3 * np.asarray(s_[0])[:, None] + np.arange(3)).ravel()] = True
+    tag = []
+    for s_ in seats:
+        t = np.zeros(domain.mesh.n_dof)
+        t[3 * np.asarray(s_[0])] = 1.0 + np.arange(len(s_[0]))
+        tag.append(t)
+    sub, el, _, out = solid_submesh(domain.mesh, keep, hold, [np.asarray(domain.fixed, float)] + list(vectors) + tag)
+    fx = out[0] > 0.5
+    vecs = out[1:1 + len(vectors)]
+    sseats = []
+    for s_, t in zip(seats, out[1 + len(vectors):]):
+        tv = t.reshape(-1, 3)[:, 0]
+        on = np.flatnonzero(tv > 0.5)
+        if len(on):
+            w = np.asarray(s_[2], float)[np.round(tv[on]).astype(int) - 1]
+            sseats.append((on, s_[1], w / w.sum(), *s_[3:]))
+    return sub, el, fx, vecs, sseats
+
+
+def _seat_terms(sseats, sub, modulus, fx):
+    """The seats on a mechanism's submesh: (rigid springs for the linear
+    answers, or None; contact planes for the large-deflection solve). A
+    preloaded seat stays shut (springs in both)."""
+    if not sseats:
+        return None, None, []
+    from .pushseat import bilateral, obstacles
+
+    e = float(np.mean(modulus))
+    lin = bilateral(sseats, sub.node_xyz, sub.pitch, e, fx)
+    shut = [s_ for s_ in sseats if len(s_) > 4 and s_[4]]
+    held = bilateral(shut, sub.node_xyz, sub.pitch, e, fx) if shut else None
+    # a part resting on its seats is free until it presses into them: the
+    # first Newton step (at no load, nothing pressed) would meet its rigid
+    # motions, and the contact has no stiffness before it is pressed. A
+    # spring 1/200000 of the contact's (E x pitch / 10^4) on the seats' nodes
+    # takes those: the first iterate presses the seat, and the spring holds
+    # a part that lifts off by under 1% of what its stiffness carries
+    soft = np.zeros(sub.n_dof)
+    for s_ in sseats:
+        soft[(3 * np.asarray(s_[0])[:, None] + np.arange(3)).ravel()] = 1e-4 * e * sub.pitch
+    soft = sp.diags(np.where(fx, 0.0, soft)).tocsr()
+    held = soft if held is None else (held + soft).tocsr()
+    return lin, held, obstacles(sseats, sub.node_xyz)
+
+
+def _with(sd, held):
+    """Diagonal springs (per dof) plus a sparse block, as solve_nonlinear takes them."""
+    return sd if held is None else (sp.diags(sd) + held).tocsr()
+
+
 def verify_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, input_case: int = 0,
                      output_case: int = 1, threshold: float = 0.5, input_scale: float = 1.0,
                      steps: int = 10, buckling: bool = True, material: str = "neo-hookean",
@@ -1483,7 +1544,8 @@ def verify_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, input
     fin = domain.loads[input_case] * input_scale
     lout = domain.loads[output_case]
     keep = np.asarray(xphys) > threshold
-    sub, el, fx, (f, lo) = solid_submesh(mesh, keep, domain.fixed, [fin, lout])
+    sub, el, fx, (f, lo), sseats = _seated_sub(domain, keep, [fin, lout])
+    s_lin, s_held, s_contact = _seat_terms(sseats, sub, modulus, fx)
     dirn = lo.reshape(-1, 3).sum(axis=0)
     nrm = np.linalg.norm(dirn)
     if nrm == 0:
@@ -1498,9 +1560,15 @@ def verify_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, input
     # the linear answer on the nonlinear element's own small-strain limit
     stiff = Stiffness(sub, nu, fx)
     k = (stiff.assemble(np.full(sub.n_elem, modulus)) + sp.diags(sd)).tocsr()
+    if s_lin is not None:
+        k = (k + s_lin).tocsr()
     ul = _Linear(sub).solve(k, np.where(fx, 0.0, f))
     report["linearOutput"] = float(lw @ ul)
-    r = solve_nonlinear(sub, nu, modulus, fx, f, material=material, steps=steps, springs=sd, probes={"output": lw})
+    r = solve_nonlinear(sub, nu, modulus, fx, f, material=material, steps=steps, springs=_with(sd, s_held),
+                        probes={"output": lw}, contact=s_contact or None)
+    if s_contact:
+        report["seats"] = [{"force": [round(float(v), 4) for v in c.info.get("force", np.zeros(3))]}
+                           for c in s_contact]
     report["nonlinearOutput"] = float(lw @ r.u)
     report["loadFactorReached"] = r.load_factor
     report["converged"] = r.converged
@@ -1512,7 +1580,8 @@ def verify_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, input
     if report["linearOutput"]:
         report["nonlinearOverLinear"] = report["nonlinearOutput"] / report["linearOutput"]
     if buckling:
-        b = linear_buckling(sub, nu, modulus, fx, f, n_modes=1, springs=sd)
+        b = linear_buckling(sub, nu, modulus, fx, f, n_modes=1,
+                            springs=sd if s_lin is None else (sp.diags(sd) + s_lin).tocsr())
         report["bucklingFactor"] = float(b.factors[0])
     report["u"] = r.u
     report["elementIndex"] = el
@@ -1536,8 +1605,8 @@ def stroke_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, strok
     from .mechanism import _spring_diag
     mesh = domain.mesh
     keep = np.asarray(xphys) > threshold
-    sub, el, fx, (f, lo) = solid_submesh(mesh, keep, domain.fixed, [domain.loads[input_case],
-                                                                    domain.loads[output_case]])
+    sub, el, fx, (f, lo), sseats = _seated_sub(domain, keep, [domain.loads[input_case], domain.loads[output_case]])
+    s_lin, s_held, s_contact = _seat_terms(sseats, sub, modulus, fx)
     fv = f.reshape(-1, 3)
     loaded = np.flatnonzero(np.abs(fv).sum(axis=1) > 0)
     if len(loaded) == 0:
@@ -1566,13 +1635,17 @@ def stroke_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, strok
     stiff = Stiffness(sub, nu, cons)
     k_free = Stiffness(sub, nu, np.zeros(sub.n_dof, bool)).assemble(np.full(sub.n_elem, modulus))
     kc = (stiff.assemble(np.full(sub.n_elem, modulus)) + sp.diags(np.where(cons, 0.0, sd))).tocsr()
+    if s_lin is not None:
+        free = sp.diags((~cons).astype(float))
+        kc = (kc + free @ s_lin @ free).tocsr()
+        k_free = (k_free + s_lin).tocsr()
     up = np.zeros(sub.n_dof)
     up[pd] = pv
     rhs = np.where(cons, up, -(k_free @ up))
     ul = _Linear(sub).solve(kc, rhs)
     lin_force = float(((k_free @ ul).reshape(-1, 3)[np.unique(pd // 3)].sum(axis=0)) @ din)
     r = solve_nonlinear(sub, nu, modulus, fx, None, prescribed=(pd, pv), material=material, steps=steps,
-                        springs=sd, probes={"output": lw})
+                        springs=_with(sd, s_held), probes={"output": lw}, contact=s_contact or None)
     out_nl = float(lw @ r.u)
     force = float(np.asarray(r.history[-1]["reaction"]) @ din) if r.history else float("nan")
     rep = {"elements": int(sub.n_elem), "stroke": stroke, "kOut": k_out, "converged": r.converged,

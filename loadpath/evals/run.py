@@ -1078,12 +1078,40 @@ def _run_budgeted(files: list, out: str, tier: str = "full", critic=None, spread
     return [rows[f] for f in files]
 
 
+def _merge(src, out, expect=()):
+    """One scorecard from the per-case ones under `src`; exit code = failing
+    cases, a named case with no scorecard among them."""
+    from ..__main__ import _jsonable
+
+    rows = []
+    for f in sorted(glob.glob(os.path.join(src, "**", "scorecard.json"), recursive=True)):
+        with open(f) as fh:
+            rows.extend(json.load(fh))
+    have = {r.get("case") for r in rows}
+    for name in expect:
+        if name not in have:
+            rows.append({"case": name, "tier": "full", "pass": False, "seconds": 0.0, "checks": [],
+                         "error": "no scorecard: its job did not finish"})
+    rows.sort(key=lambda r: str(r.get("case")))
+    os.makedirs(out, exist_ok=True)
+    md = _md(rows)
+    with open(os.path.join(out, "scorecard.json"), "w") as fh:
+        json.dump(_jsonable(rows), fh, indent=2)
+    with open(os.path.join(out, "scorecard.md"), "w") as fh:
+        fh.write(md)
+    print(md)
+    return sum(0 if r.get("pass") else 1 for r in rows)
+
+
 def main(argv=None):
     from ..__main__ import _jsonable
 
     p = argparse.ArgumentParser(prog="loadpath.evals.run")
     p.add_argument("cases", nargs="*", help="case names (default: all)")
     p.add_argument("--out", default="evals-out")
+    p.add_argument("--merge", metavar="DIR",
+                   help="join the scorecards under DIR (one per case: evals.yml's jobs) into one in --out; "
+                        "a case named but without a scorecard counts as failed")
     p.add_argument("--jobs",
                    help="cases to run at once (each case also parallelizes its own outcomes); default 2 (full tier), "
                         "or every core for the coarse tier (its cases are small); 'auto': as many as fit in "
@@ -1104,6 +1132,8 @@ def main(argv=None):
                    help="run although no tetrahedral mesher is installed (the safety-factor cases then "
                         "confirm on voxels and come out heavier than the baselines)")
     args = p.parse_args(argv)
+    if args.merge:
+        return _merge(args.merge, args.out, args.cases)
     from ..crosscheck import mesher_missing
 
     no_tets = mesher_missing()

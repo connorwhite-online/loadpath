@@ -31,6 +31,18 @@ A screw driven from the mating part into this one is `"headOn": "mating"`,
 `"end": "thread"`: the seat is then where the mating part clamps down, and
 only the bore and the tap are kept clear.
 
+What holds a screw's part along the screw: a bore held across the screw
+only (as above) leaves the part free along it, and where nothing else in
+the supports holds that direction (the usual case beside a push support
+on the face the part sits on), the screw itself does, one way: its head
+bears on the seat and pulls the part toward the far end (`headOn: "this"`),
+or its thread pulls it toward the seat (`headOn: "mating"`, `end:
+"thread"`). That hold is added as a seat (a push support on the head's
+bearing face, or on the thread) for each screw whose bore is a support.
+A wall-mounted part pried off the wall then bears on its heads and its
+heel, as it does; before, nothing held it and the solve flew off
+(held-out batch 3: four of six studies written that way).
+
 Regions it adds, by id: `<id>-bore`, `<id>-head` (unless the head is on
 the other part; and `<id>-tap` for a thread) as keep-outs; `<id>-seat` and `<id>-face` or `<id>-thread` as
 preserves. Supports and loads can name any of them. Hold a bore across
@@ -109,6 +121,67 @@ def _exit_distance(d: dict, p, direction) -> float:
         elif u[k] < -1e-12:
             t = min(t, (lo[k] - p[k]) / u[k])
     return float(max(t, 0.0)) if np.isfinite(t) else 0.0
+
+
+def _held_axes(supports) -> np.ndarray:
+    """Which axes the study's fixed supports (not seats, not pins) hold."""
+    held = np.zeros(3, bool)
+    for s in supports or []:
+        if not isinstance(s, dict) or s.get("push") is not None:
+            continue
+        fix = s.get("fix", "all")
+        if fix == "all":
+            held[:] = True
+        elif isinstance(fix, str) and fix != "pin":
+            held |= np.array([a in fix for a in "xyz"])
+        elif isinstance(fix, (list, tuple)) and len(fix) == 3:
+            held |= np.array([bool(v) for v in fix])
+    return held
+
+
+def _screw_holds(d: dict, fs, preloads=None) -> list:
+    """Seats for the screws that hold the part along their axis (module
+    docstring): one per screw whose bore (or tap) is a support, when no
+    fixed support holds that axis. When the study's seats have friction,
+    each takes its screw's preload (`preloads`: N by fastener id): the
+    clamp is what the joint's friction holds by (pushseat.py)."""
+    supports = d.get("supports") or []
+    held = _held_axes(supports)
+    named = {s.get("region") for s in supports if isinstance(s, dict) and s.get("push") is None}
+    rough = any(isinstance(s, dict) and s.get("push") is not None and (s.get("friction") or 0) > 0
+                for s in supports)
+    keep = 1.0
+    if rough:
+        from .durability import clamp_retention
+        from .materials import material_from_spec
+
+        mat_in = d.get("material", "pla")
+        keep = clamp_retention(material_from_spec(mat_in[0] if isinstance(mat_in, list) else mat_in),
+                               d.get("durability"))
+    out = []
+    for i, f in enumerate(fs):
+        fid = f.get("id") or f"fastener-{i}"
+        if not ({f"{fid}-bore", f"{fid}-tap"} & named):
+            continue
+        a = _direction(f["direction"], f"fasteners[{i}]")
+        if (held & (np.abs(a) > 0.1)).any():
+            continue
+        head_on = str(f.get("headOn", "this"))
+        hold = None
+        if head_on == "this":
+            # the head bears on the seat ring (a face one cell wide of
+            # annulus under the head finds no node on a coarse grid)
+            hold = {"region": f"{fid}-seat", "push": a.tolist()}
+        elif head_on == "mating" and str(f.get("end", "face")) == "thread":
+            hold = {"region": f"{fid}-thread", "push": (-a).tolist()}
+        if hold is not None:
+            if rough and (preloads or {}).get(fid, 0.0) > 0:
+                # what the clamp keeps over the joint's life (durability.clamp_retention):
+                # the friction it holds by in every case is the relaxed one
+                hold["preload"] = float(preloads[fid]) * keep
+                hold["_relaxed"] = True
+            out.append(hold)
+    return out
 
 
 def expand_fasteners(d: dict) -> dict:
@@ -210,13 +283,30 @@ def expand_fasteners(d: dict) -> dict:
             if p > 0:
                 joints.append({"id": fid, "preload": p, "area": 0.25 * np.pi * (head ** 2 - hole ** 2),
                                "axis": a.tolist()})
-                preload_loads.append({"region": f"{fid}-seat", "force": (a * p).tolist()})
-                preload_loads.append({"region": far, "force": (-a * p).tolist()})
+                preload_loads.append((fid, {"region": f"{fid}-seat", "force": (a * p).tolist()}))
+                preload_loads.append((fid, {"region": far, "force": (-a * p).tolist()}))
     d["preserve"] = preserve
     d["keepOut"] = keep_out
+    holds = _screw_holds(d, fs, {j["id"]: j["preload"] for j in joints})
+    if holds:
+        d["supports"] = list(d.get("supports") or []) + holds
+    # a screw whose head seat takes its preload clamps in every case (pushseat.py), at what
+    # the clamp keeps over its life; the preload case is the fresh clamp: the seat's
+    # relaxed share plus a pair of forces for the share still to relax
+    clamped = {(h["region"][:-len("-seat")] if h["region"].endswith("-seat") else h["region"][:-len("-thread")]):
+               h["preload"] for h in holds if h.get("preload")}
     if preload_loads:
+        loads = []
+        for fid, ld in preload_loads:
+            if fid in clamped:
+                full = next(j["preload"] for j in joints if j["id"] == fid)
+                rest = 1.0 - clamped[fid] / full if full > 0 else 0.0
+                if rest <= 1e-6:
+                    continue
+                ld = {**ld, "force": [rest * v for v in ld["force"]]}
+            loads.append(ld)
         cases = list(d.get("loadCases") or [])
-        cases.append({"name": "preload", "loads": preload_loads})
+        cases.append({"name": "preload", "loads": loads, **({"_clamp": True} if clamped else {})})
         d["loadCases"] = cases
     d.pop("fasteners")
     # for the durability check's preload relaxation (spec pops it)

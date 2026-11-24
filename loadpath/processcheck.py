@@ -137,7 +137,7 @@ def _choose_pitch(extents, min_wall, pitch=None, budget=_BUDGET):
     return max(want, floor)
 
 
-def _walls(solid, pitch, origin, min_wall, rot=None, drawn=None):
+def _walls(solid, pitch, origin, min_wall, rot=None, drawn=None, keep_points=False):
     """Walls under the process's minimum, judged by what the print loses.
 
     A powder bed forms what a ball of the minimum wall's diameter can sweep
@@ -160,13 +160,18 @@ def _walls(solid, pitch, origin, min_wall, rot=None, drawn=None):
     w = wall_thickness(solid, pitch, cap_mm=4.0 * min_wall, limit_mm=min_wall, spots=5, origin=origin,
                        thin_cells=True)
     reach = min_wall + pitch
-    unformed, rounded, judged = _unformed(solid, w.get("thinCells"), pitch, min_wall, reach, cells=bool(drawn))
+    unformed, rounded, judged = _unformed(solid, w.get("thinCells"), pitch, min_wall, reach,
+                                          cells=bool(drawn) or keep_points)
     R = rot if rot is not None else np.eye(3)
     world = (lambda ijk: [round(float(c), 2) for c in R.T @ (origin + (np.asarray(ijk, float) + 0.5) * pitch)])
     for u in unformed:
         u["at"] = world(u.pop("ijk"))
         cells = u.pop("cells", None)
-        u.pop("cellReach", None)
+        reach_c = u.pop("cellReach", None)
+        if keep_points and cells is not None:
+            # the piece's cells, world mm, and each one's reach from what forms
+            u["_points"] = (origin + (cells + 0.5) * pitch) @ R
+            u["_reach"] = reach_c
         if drawn and cells is not None:
             pts = (origin + (cells + 0.5) * pitch) @ R
             inside = [(rid, float((sh.sdf(pts) < 0).mean())) for rid, sh in drawn]
@@ -217,10 +222,23 @@ def _unformed(solid, thin, pitch, min_wall, reach, cells=False):
         hi = np.minimum(np.array([s.stop for s in sl]) + off + halo, solid.shape)
         crop = tuple(slice(a, b) for a, b in zip(lo, hi))
         sub = solid[crop]
-        # void outside the crop where the crop meets the grid's edge
-        din = ndimage.distance_transform_edt(np.pad(sub, 1, constant_values=False))[1:-1, 1:-1, 1:-1]
-        core = din > r
-        swept = (ndimage.distance_transform_edt(~core) <= r) & sub if core.any() else np.zeros_like(sub)
+        # the ball's reading needs the solid a ball's diameter past the crop:
+        # cut at the crop's face, material running on through it read as a
+        # wall ending there, and a column of cells along the face came out
+        # unformed (the Touch-Mic body's rim, 2026-11-24). Past the grid's
+        # own edge it is void.
+        m = int(np.ceil(2.0 * r)) + 2
+        elo = np.maximum(lo - m, 0)
+        ehi = np.minimum(hi + m, solid.shape)
+        big = np.pad(solid[tuple(slice(a, b) for a, b in zip(elo, ehi))], 1, constant_values=False)
+        inner = tuple(slice(1 + a - e, 1 + a - e + (b - a)) for a, b, e in zip(lo, hi, elo))
+        din_big = ndimage.distance_transform_edt(big)
+        core_big = din_big > r
+        swept_big = ndimage.distance_transform_edt(~core_big) <= r if core_big.any() else np.zeros_like(big)
+        din = din_big[inner]
+        core = core_big[inner]
+        swept_big &= big
+        swept = swept_big[inner]
         lost = sub & ~swept
         mine = np.zeros_like(sub)
         cl = (lbl == k) & mark[box]
@@ -233,7 +251,8 @@ def _unformed(solid, thin, pitch, min_wall, reach, cells=False):
         keep = keep[keep > 0]
         if not len(keep):
             continue
-        far = ndimage.distance_transform_edt(~swept) * pitch if swept.any() else np.full(sub.shape, np.inf)
+        far = (ndimage.distance_transform_edt(~swept_big)[inner] * pitch if swept_big.any()
+               else np.full(sub.shape, np.inf))
         cell3 = pitch ** 3
         for j in keep:
             piece = ll == j
@@ -389,7 +408,8 @@ def _layers(solid, pitch):
 
 
 def check_process(part, process="sls", build=None, material=None, pitch: float | None = None,
-                  bounds=None, rules: dict | None = None, slicer: bool = True, drawn=None) -> dict:
+                  bounds=None, rules: dict | None = None, slicer: bool = True, drawn=None,
+                  keep_points: bool = False) -> dict:
     """Process checks for powder-bed polymer (sls, mjf) and resin (sla, dlp)
     parts. `part` is a trimesh (mm) or a field f(P) < 0 inside with
     `bounds`. `process` is a name or a spec.Process; `build` the direction
@@ -442,7 +462,7 @@ def check_process(part, process="sls", build=None, material=None, pitch: float |
         rep["materialize"] = ref
         warnings.extend(ref["warnings"])
 
-    rep["walls"] = _walls(solid, p, origin, card["minWall"], rot, drawn)
+    rep["walls"] = _walls(solid, p, origin, card["minWall"], rot, drawn, keep_points=keep_points)
     if rep["walls"]["ok"] is False:
         u = rep["walls"]["unformed"][0]
         who = sorted({d for x in rep["walls"]["unformed"] for d in x.get("drawn", [])})

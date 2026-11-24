@@ -228,6 +228,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     warnings += _preserve_cut(s)
     notes += _resting_supports(s)
     notes += _glued_faces(s, warnings)
+    warnings += _glued_bores(s)
     warnings.extend(_split_shafts(s))
     w, n = _blind_bores(s)
     warnings += w
@@ -410,6 +411,45 @@ def _resting_supports(s) -> list[str]:
                        "rod, a cradle, a peg), it bears on a narrow line where the load pushes it: support a thin "
                        "box over that line instead (e.g. ±0.2 r wide, the hole's top), or the bending at the "
                        "opening is hidden")
+    except Exception:  # noqa: BLE001 - a lint
+        return out
+    return out
+
+
+def _glued_bores(s) -> list[str]:
+    """A support holding a bore that something slides or turns in (a
+    tube, a shaft, a pin: fit slip or clearance) across its
+    axis: the wall is held as if glued to it all round. What is in a bore
+    only pushes on the wall, so a part that wraps it less than half way
+    passes on a hold it does not have (held-out batch 3: a tube tee grew a
+    saddle under its rail that slides off once the rail can only push).
+    Only bores whose fit says something slides or turns in them (slip,
+    clearance): a pressed bearing, a bonded tube and a bolt hole (the bolt
+    clamps) are held another way."""
+    import numpy as np
+
+    out = []
+    try:
+        fits = {f.get("id"): f.get("fit") for f in (s.fits or [])}
+        bores = {k.id: k for k in s.keep_out}
+        for i, sp in enumerate(s.supports):
+            if sp.region not in bores or sp.pin or getattr(sp, "push", None) is not None:
+                continue
+            if fits.get(sp.region) not in ("slip", "clearance"):
+                continue                     # only where the study says it slides or turns
+            leaves = _leaves(bores[sp.region].shape)
+            if len(leaves) != 1 or getattr(leaves[0], "kind", None) != "cylinder":
+                continue
+            ax = np.abs(np.asarray(leaves[0].axis, float))
+            across = [a for a in range(3) if ax[a] < 0.9]
+            if not all(sp.fix[a] for a in across):
+                continue
+            out.append(f"supports[{i}] holds bore {sp.region!r} fixed all round, as if glued to what is in it: "
+                       "a tube, shaft or pin there only pushes on the wall, so a part that wraps it less than half "
+                       "way round passes on a hold it does not have. Give the support \"push\": \"radial\" in "
+                       "place of fix (it then bears only where it is pressed), with \"friction\" (about 0.3 for a "
+                       "printed part on metal) if nothing else stops it sliding along or turning, unless it is "
+                       "bonded or pressed in (fit \"press\")")
     except Exception:  # noqa: BLE001 - a lint
         return out
     return out

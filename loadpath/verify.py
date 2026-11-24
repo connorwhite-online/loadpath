@@ -965,15 +965,17 @@ def use_cut_cells(study, cut_cells=None) -> bool:
     return not any(ld.pressure for case in getattr(study, "load_cases", ()) for ld in case.loads)
 
 
-def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs):
+def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs, memo=None):
     """Solve the cut-cell model (cutcell.CutGrid) for each right-hand side:
     the shared-matrix cells as usual, the cut cells' own matrices added
     (assembled), or as the multigrid's extra operator, which its Galerkin
     coarsening carries down exactly. Returns (stiffness object with
-    .cutgrid, displacements)."""
+    .cutgrid, displacements). `memo`: as _solve_grid's."""
     from .simp import _use_mg
 
     hm = cg.mesh
+    if memo is not None and "stiff" in memo:
+        return memo["stiff"], _memo_solve(memo, rhs)
     if _use_mg(hm.n_elem):
         from .mg import GridElasticity
 
@@ -990,12 +992,46 @@ def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs):
         if springs is not None:
             k = (k + e_mat * springs).tocsr()
         stiff.cutgrid = cg
+        if memo is not None:
+            memo.update(stiff=stiff, k=k, hm=hm)
+            return stiff, _memo_solve(memo, rhs)
         us = direct.solve_many(k, rhs, hm.node_ijk)
         if us is None:
             us = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000).solve_many(k, rhs)
         return stiff, us
     stiff.cutgrid = cg
+    if memo is not None:
+        memo.update(stiff=stiff, k=None, hm=hm)
     return stiff, stiff.solve_many(rhs)
+
+
+def _memo_solve(memo, rhs):
+    """Right-hand sides on the matrix a memo holds (_solve_grid's `memo`):
+    one factorization kept for every call (a seated part's cases, then its
+    seat patches, then the patches cut finer: three factorizations of the
+    same matrix were most of a seated verify), or the multigrid's own
+    hierarchy, or a CG whose preconditioner is kept."""
+    from . import direct
+
+    stiff, k, hm = memo["stiff"], memo["k"], memo["hm"]
+    if k is None:
+        return stiff.solve_many(rhs)
+    if not rhs:
+        return []
+    if memo.get("direct", True) and 0 < k.shape[0] <= direct.large_dofs():
+        ds = memo.get("ds") or direct.DirectSolver(hm.node_ijk, refine=False)
+        try:
+            with direct._ONE_SHOT:
+                us = ds.solve_many(k, rhs)
+            memo["ds"] = ds
+            return us
+        except (RuntimeError, MemoryError):
+            ds.invalidate()
+            memo.pop("ds", None)
+            memo["direct"] = False
+    cg = memo.get("cg") or Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
+    memo["cg"] = cg
+    return cg.solve_many(k, rhs)
 
 
 # cells through a member below which it gets a submodel (cut cells)
@@ -1058,7 +1094,7 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
     hm = HexMesh(np.argwhere(solid), pb, origin)
     hm.stock_elastic = mat.nu
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pb)
-    if not bc.fixed.any() and not bc.pinned:
+    if not bc.fixed.any() and not bc.pinned and not bc.seats:
         return None
     # Face connectivity, as the stress check has it: a piece that meets the
     # rest only at a cell's edge or corner hangs on a hinge the stiffness
@@ -1091,6 +1127,8 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
     hold = bc.fixed.copy()
     if springs is not None and bc.pinned and not getattr(study, "stock", None):
         hold |= np.asarray(abs(springs).sum(axis=1)).ravel() > 0
+    for s_ in bc.seats or ():
+        hold[(3 * np.asarray(s_[0])[:, None] + np.arange(3)).ravel()] = True      # a seat holds its piece
     sub, el, _, vecs = solid_submesh(hm, np.ones(hm.n_elem, bool), hold, [bc.fixed.astype(float)] + forces)
     fixed, forces = vecs[0] > 0.5, vecs[1:]
     loaded = [i for i, f in enumerate(forces) if np.any(f)]
@@ -1106,9 +1144,37 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
             # the margin asked (the wrist yoke's lateral case, 207 for 2,
             # took 13 block iterations of the check's 25)
             sf = study.goal.safety_factor
-            res = linear_buckling(sub, mat.nu, mat.E, fixed, [forces[i] for i in loaded], n_modes=1,
-                                  springs=ks, direct_max_dof=10 ** 6, tol=1e-5,
-                                  rough_above=4.0 * max(sf, 1.0) if sf else None)
+            rough = 4.0 * max(sf, 1.0) if sf else None
+            if bc.seats:
+                # seats (supports[].push) hold the part, for the small motion of
+                # buckling, where each case presses it on them (pushseat.linearized):
+                # a factorization per case
+                from .pushseat import linearized
+
+                back = np.full(hm.n_nodes, -1)
+                back[hm.node_id(sub.node_ijk)] = np.arange(sub.n_nodes)
+                seats_s = []
+                for s_ in bc.seats:
+                    on = back[np.asarray(s_[0])]
+                    m_ = on >= 0
+                    if m_.any():
+                        w_ = np.asarray(s_[2], float)[m_]
+                        seats_s.append((on[m_], s_[1], w_ / w_.sum(), *s_[3:]))
+                lins = linearized(seats_s, sub, mat.nu, mat.E, fixed, ks, [forces[i] for i in loaded], pb)
+                res = []
+                for i, lin in zip(loaded, lins):
+                    kc = lin if ks is None else (ks if lin is None else (ks + lin).tocsr())
+                    try:
+                        res += linear_buckling(sub, mat.nu, mat.E, fixed, [forces[i]], n_modes=1, springs=kc,
+                                               direct_max_dof=10 ** 6, tol=1e-5, rough_above=rough)
+                    except (RuntimeError, ValueError, ArithmeticError) as exc:
+                        cases[i]["error"] = str(exc)
+                        res.append(None)
+                pairs = [(i, r) for i, r in zip(loaded, res) if r is not None]
+                loaded, res = [p[0] for p in pairs], [p[1] for p in pairs]
+            else:
+                res = linear_buckling(sub, mat.nu, mat.E, fixed, [forces[i] for i in loaded], n_modes=1,
+                                      springs=ks, direct_max_dof=10 ** 6, tol=1e-5, rough_above=rough)
         except (RuntimeError, ValueError, ArithmeticError) as exc:
             for i in loaded:
                 cases[i]["error"] = str(exc)
@@ -1214,7 +1280,7 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
     hm = members_on(HexMesh(np.argwhere(solid), pm, origin))
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pm)
     free = bool(study.inertia_relief)
-    if not free and not bc.fixed.any() and not bc.pinned:
+    if not free and not bc.fixed.any() and not bc.pinned and not bc.seats:
         return None
     lbl, nb = ndimage.label(solid)
     ijk = hm.elem_ijk
@@ -1275,6 +1341,17 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
     eta = loss_factor(mat)
     tops = [k[1] for k in (band_keepout_(ex, eta) for ex in vib.excitations) if k is not None]
     n_modes = vib.modes if not tops else max(vib.modes, 12)
+    if bc.seats and not free:
+        # seats (supports[].push) hold the part, for a small vibration, where they
+        # bear at rest: under its preload and its own weight (pushseat.linearized)
+        from .pushseat import linearized
+
+        fg = gravity_force(hm, fill, bc.gravity, bc.fixed) if bc.gravity is not None else None
+        lin = linearized(bc.seats, hm, float(mat.nu), moduli, bc.fixed, springs, [fg], pm)[0]
+        if lin is not None:
+            springs = lin if springs is None else (springs + lin).tocsr()
+        elif not bc.fixed.any() and not bc.pinned:
+            return None                        # nothing presses it on its seat: nothing holds it
     while True:
         res = modal_analysis(hm, moduli, rho, float(mat.nu), bc.fixed, n_modes,
                              masses,
@@ -1549,9 +1626,14 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
                            stress_mask=stress_mask, printed_solid=printed_solid)
 
 
-def _solve_grid(study: Study, g, nu, moduli, rhs):
+def _solve_grid(study: Study, g, nu, moduli, rhs, memo=None):
     """Solve the analysis grid `g` (_analysis_grid) with elasticity `nu` for
-    each right-hand side: (stiffness object for nodal_stress, displacements)."""
+    each right-hand side: (stiffness object for nodal_stress, displacements).
+
+    With `memo` (a dict, empty at first) the matrix and its factorization
+    are kept there, and a later call with the same memo solves its
+    right-hand sides on them (the grid, moduli and springs must be the
+    same)."""
     from .simp import _use_mg
 
     mat = study.material
@@ -1560,8 +1642,10 @@ def _solve_grid(study: Study, g, nu, moduli, rhs):
     if scale is not None:
         # a bought member's cells hold only their printed share of the modulus (stock.py)
         moduli = np.broadcast_to(moduli, (hm.n_elem,)) * scale
+    if memo is not None and "stiff" in memo:
+        return memo["stiff"], _memo_solve(memo, rhs)
     if g.cg is not None:
-        return _solve_cut(g.cg, nu, fixed, bc.springs, mat.E, moduli, rhs)
+        return _solve_cut(g.cg, nu, fixed, bc.springs, mat.E, moduli, rhs, memo)
     if g.fill is not None:
         # a part-filled cell is that share as stiff; its stress stays
         # the material's (nodal_stress at the full modulus)
@@ -1577,12 +1661,17 @@ def _solve_grid(study: Study, g, nu, moduli, rhs):
                                rtol=1e-6, maxiter=3000)
         stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
         stiff.stress_mask = getattr(g, "stress_mask", None)
+        if memo is not None:
+            memo.update(stiff=stiff, k=None, hm=hm)
         return stiff, stiff.solve_many(rhs)
     stiff = Stiffness(hm, nu, fixed)
     stiff.stress_mask = getattr(g, "stress_mask", None)
     k = stiff.assemble(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
     if bc.springs is not None:
         k = (k + mat.E * bc.springs).tocsr()
+    if memo is not None:
+        memo.update(stiff=stiff, k=k, hm=hm)
+        return stiff, _memo_solve(memo, rhs)
     # One factorization for every case where the grid is small enough for
     # it (direct.py). Past that, CG: 1e-6 is three-plus significant figures
     # of stress; 1e-7 cost a third more iterations. All cases share one
@@ -2087,9 +2176,11 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     axis_bond = np.zeros(3)
     spreads = bc.spreads or [None] * len(study.load_cases)
 
-    seat_forces = []
+    # with seats and a force of unknown direction: per rhs list solved, the
+    # cases solved per direction (pushseat.SeatedSpread), by case
+    seated = {}
 
-    def solve(moduli, rhs):
+    def solve(moduli, rhs, layout=None, into=None):
         if bc.seats:
             # supports that only push (pushseat.py): their forces are solved with the cases,
             # on springs that hold the seat for the solves and are taken out again
@@ -2102,9 +2193,14 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             ks, held = pushseat.hold(ps, hm.node_xyz, g.pitch)
             sprung = held if bc.springs is None else (bc.springs + held).tocsr()
             gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=sprung)})
-            stiff, us, lam = pushseat.solve(lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r), rhs,
-                                            ps, mat.E * ks, xyz=hm.node_xyz)
-            seat_forces[:] = lam
+            # one matrix for the cases, the patches and the patches cut finer: factored once
+            memo = {}
+            stiff, us, _, cases = pushseat.solve_cases(
+                lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r, memo), rhs, ps, mat.E * ks,
+                xyz=hm.node_xyz, layout=layout, spreads=spreads if layout is not None else None)
+            if into is not None:
+                into.clear()
+                into.update(cases)
             return stiff, us
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
 
@@ -2216,7 +2312,7 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         _bk_pool = pool(2)
         early_bk = _bk_pool.submit(_buckling, study, mesh.copy(), vol, pitch, contact_band, [None] * len(study.load_cases))
         _bk_pool.shutdown(wait=False)
-    stiff, displacements = solve(moduli, rhs)
+    stiff, displacements = solve(moduli, rhs, layout, seated)
     cold = None
     if study.thermal is not None and heat.cold is not None:
         # The cycle's coldest moment, solved the same way: a part held at a
@@ -2232,8 +2328,9 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             fth_c = heat.load(np.ones(hm.n_elem), mat.E)
             fg_c = fth_c if fg_c is None else fg_c + fth_c
         rhs_c = expand(bc.loads, spreads, fg_c)[0]
-        stiff_c, disp_c = solve(mod_c, rhs_c)
-        cold = (stiff_c, disp_c, mod_c, eps_c, g_c)
+        seated_c = {}
+        stiff_c, disp_c = solve(mod_c, rhs_c, layout, seated_c)
+        cold = (stiff_c, disp_c, mod_c, eps_c, g_c, seated_c)
     from scipy.spatial import cKDTree
     cases = []
     worst_sf = np.inf
@@ -2264,6 +2361,19 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         direction = None
         if len(idx) == 1:
             f, u = rhs[idx[0]], displacements[idx[0]]
+        elif ci in seated:
+            # on seats: the contact solved per direction, the worst found on
+            # the stresses of the few vectors every direction's answer is
+            # made of (pushseat.worst_stress); with heat, the fixed part's
+            # expansion stress counted with it, and stress over retention
+            from .pushseat import worst_stress
+
+            sc = seated[ci]
+            off = read(stiff, np.zeros(hm.n_dof), moduli, eps) if eps is not None and idx[0] is not None else None
+            kn = None if g_node is None else 1.0 / np.maximum(g_node, 1e-3)[:, None]
+            direction, mu_d, _ = worst_stress(sc, lambda v: read(stiff, v, moduli), body, scale=kn, strict=True,
+                                              offset=off)
+            f, u = sc.f(direction), sc.u(direction, mu_d)
         else:
             sp = spreads[ci]
             # the fixed part carries the expansion, the uncertain force none;
@@ -2401,8 +2511,10 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             sf = min(sf, sf_inter)
         cyc_row = {}
         if cold is not None:
-            stiff_c, disp_c, mod_c, eps_c, g_c = cold
-            if len(idx) == 1:
+            stiff_c, disp_c, mod_c, eps_c, g_c, seated_c = cold
+            if ci in seated_c:
+                u_c = seated_c[ci].u(direction, seated_c[ci].at(direction)[2])
+            elif len(idx) == 1:
                 u_c = disp_c[idx[0]]
             else:
                 u_c = sum(direction[j] * disp_c[i] for j, i in enumerate(idx[1:]))

@@ -188,6 +188,45 @@ density search (the next cage's size from the error rate the last two
 tries show, aiming just under the tolerance: the old step overshot to a
 cage half again as fine as needed, with more star points).
 
+Fewer faces again (2026-11-24): rectangles side by side that together
+make one rectangle are merged into one B-spline (the motorcycle graph runs
+every line on until it meets another, so a line often parts two
+rectangles of the same width; a B-rep face may meet several neighbours
+along one side); the star points the worst-point insets cut in (eight a
+rectangle) are cancelled in a second pass held to the pulls' aim; and the
+density search steps without a 4x cap, with a rate floor of 3 (near the
+tolerance the bench parts converge at 2.6-4.5; a floor of 2.5 laid the
+pebble's cage 40% finer than needed). Pebble: 4 lays -> 3, 5642 -> 4223
+cage faces, 86 -> 71 star points, 230 -> 174 STEP faces, 172 -> 147 s.
+Arm link: no change beyond run-to-run scatter (back to back, same machine:
+605 -> 610 STEP faces, 325 -> 358 s; five runs span 547-646): its cage
+meets the tolerance on the first lay, merges take 18-37 faces off, and
+Instant Meshes' scatter in star points is larger. Its remaining star points
+are mostly 3-5 pairs one or two edges apart (dislocations): they cancel only
+by gliding to a partner (below).
+
+Pairs slid together (2026-11-24, `subdcoarse.glide`): most star points
+left after cancelling are a 3 and a 5 on one quad, a dislocation of the
+grid that no single move removes. An edge rotation that takes an edge
+from the 5 and gives one to the 3 moves the pair whole one edge on (Peng
+et al. 2011); a breadth-first search over such rotations (at most 24, each
+place once) finds the shortest walk to where a move takes star points
+away, and only that walk is made. The fit check is the same as for
+cancelling. Arm link: 245 -> 156 star points, 466 STEP faces (605-646
+before), valid, every place within the bound, 311 s; pebble 52 star
+points, 132 STEP faces (174).
+
+After the worst-point insets (2026-11-24): an inset's finer faces are
+bounded by four 3-5 pairs at its corners, so they cannot all go; the
+second pass slides and cancels the rest held to the aim, and where a place
+would miss again the star points round it stay (up to four tries). A ring
+of quads split instead adds no star points but runs 1,400-10,800 faces
+round the arm link's cage. Arm link now 406-447 STEP faces (605-646 at the
+start of the day), 300-320 s, valid, within the bound; pebble 132.
+
+![Arm link STEP faces before and after](images/surface/arm-link-step-faces.png)
+![Pebble STEP faces before and after](images/surface/pebble-step-faces.png)
+
 **Face by face (the fallback).** Rectangles of regular cage faces are grown
 greedily and each becomes one clamped bicubic B-spline; faces at a star
 point stay whole as degree-7 patches, split once toward it where that
@@ -197,12 +236,31 @@ off its own edges and readers could not mesh it.
 
 ## Not yet
 
-- Adaptive density beyond repairs: flats still get as many cage faces
-  (and star points, and so patches) as the first cage that meets the
-  tolerance has everywhere. Edits in place (`subdedit.py`) now handle the
-  tight places and paired star points are cancelled; a sizing field for
-  the first cage (Instant Meshes has none) is the lever left on face
-  count.
+- Adaptive density for the first cage: measured, and not a lever on
+  patches (2026-11-24). Instant Meshes has no sizing field, so it was given
+  one by laying it on an as-similar-as-possible copy of the surface (each
+  edge scaled by the size wanted there, local rotations free; a constant
+  size reproduces the plain cage exactly) with the size from the last
+  cage's own per-face error (eroded, then diffused). Same tolerance, same
+  machine:
+
+  | | cage faces | star points | p99 mm |
+  |---|---|---|---|
+  | arm link, uniform | 6369 / 4749 | 267 / 254 | 0.098 / 0.158 |
+  | arm link, adaptive (15 mm smoothing) | 4231 | 275 | 0.111 |
+  | pebble, uniform | 3140 / 4641 | 82 / 85 | 0.118 / 0.071 |
+  | pebble, adaptive (6 / 12 mm) | 3093 / 4635 | 106 / 108 | 0.106 / 0.076 |
+
+  A third fewer cage faces on the arm link, none on the pebble, and never
+  fewer star points: a size that changes over the surface is a curved
+  metric, and the cross field pays for that curvature with singularities
+  (Gauss-Bonnet), about +25 on the pebble; a rougher size field doubled
+  them on the arm link (267 -> 496). Star points, not cage faces, set the
+  patch count (about 2.4 per star point), and on the arm link they sit
+  near the floor its genus sets (Euler -32: at least 128 five-valent
+  points) times two. What is left on patch count is laying out fewer
+  rectangles per star point and cancelling more pairs, not sizing.
+  Scripts: project files `surface/adaptive/`.
 - Slits and bridged holes more than one face deep or with outlines of
   different lengths on their two walls are joined one face pair at a time,
   or left to the old route.

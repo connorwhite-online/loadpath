@@ -1,0 +1,185 @@
+{
+ "id": "spool-holder-arm-pla",
+ "batch": 3,
+ "brief": "A filament spool holder arm in PLA (FDM, printed on its side, layers along X) that bolts to the side of a 2020 aluminium extrusion frame (the extrusion's face is the plane y = 0, 20 mm wide in X) with two M5 screws into T-nuts at x = 0, z = 10 and z = -30, through a 6 mm flange. The arm sticks out along +Y and the spool's 52 mm hole slides over it: from y = 25 to 100 the arm must fit inside a 50 mm circle centred on x = 0, z = -6 (so its top is at z = 19), and the spool rests on its top. Near the frame it stays inside x = -12 to 12, z = -40 to 19. A 1 kg spool bouncing on a moving printer puts 2 g of its weight down on the top; pulling filament off pulls 15 N sideways either way. The tip must not sag more than 1 mm, or the spool rubs the frame. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "cantilever",
+  "stiffness",
+  "fdm",
+  "fasteners",
+  "push-support"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -12,
+     0,
+     -40
+    ],
+    "max": [
+     12,
+     25,
+     19
+    ]
+   },
+   {
+    "type": "cylinder",
+    "center": [
+     0,
+     62.5,
+     -6
+    ],
+    "axis": "y",
+    "length": 75,
+    "r": 25
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "t1",
+    "size": "M5",
+    "seat": [
+     0,
+     6,
+     10
+    ],
+    "direction": "-y",
+    "grip": 6,
+    "end": "face"
+   },
+   {
+    "id": "t2",
+    "size": "M5",
+    "seat": [
+     0,
+     6,
+     -30
+    ],
+    "direction": "-y",
+    "grip": 6,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "t1-bore",
+    "fix": "xz"
+   },
+   {
+    "region": "t2-bore",
+    "fix": "xz"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -10,
+      -0.5,
+      -40
+     ],
+     "max": [
+      10,
+      0.3,
+      19
+     ]
+    },
+    "push": "+y"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "spool",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -8,
+        32,
+        17.5
+       ],
+       "max": [
+        8,
+        98,
+        19.2
+       ]
+      },
+      "mass": 1.0,
+      "dynamic": 2,
+      "gravity": "-z"
+     }
+    ]
+   },
+   {
+    "name": "pull+",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -8,
+        32,
+        17.5
+       ],
+       "max": [
+        8,
+        98,
+        19.2
+       ]
+      },
+      "force": [
+       15,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "pull-",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -8,
+        32,
+        17.5
+       ],
+       "max": [
+        8,
+        98,
+        19.2
+       ]
+      },
+      "force": [
+       -15,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+x"
+  },
+  "goal": {
+   "safetyFactor": 2,
+   "maxDeflection": 1.0
+  },
+  "name": "spool-holder-arm-pla",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

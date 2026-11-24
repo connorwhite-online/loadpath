@@ -563,6 +563,37 @@ def test_step_bores_exact_on_the_elbow_bolt_seat():
     assert abs(rep["volume"] / want - 1) < 1e-3, (rep["volume"], want)
 
 
+def test_step_face_merge_leaves_the_solid_it_falls_back_on_untouched():
+    """_unify merges faces on a copy: OpenCascade's UnifySameDomain changes
+    the shape it is given in place, so when the merge failed the solid kept
+    "as built" was broken too and the elbow's STEP fell back to facets with
+    no exact bores (CI, 2026-11-24). The merged result shares no vertex
+    with the solid it was made from."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.TopAbs import TopAbs_VERTEX
+    from OCP.TopExp import TopExp_Explorer
+
+    from loadpath.step import _unify
+
+    m = FieldGraph(PLATE).mesh(pitch=0.5)
+    with tempfile.TemporaryDirectory() as td:
+        shape = export_step(m, os.path.join(td, "plate.step"), faces=4000, unify=False)["shape"]
+    assert BRepCheck_Analyzer(shape).IsValid()
+    out = _unify(shape)
+    assert BRepCheck_Analyzer(shape).IsValid() and BRepCheck_Analyzer(out).IsValid()
+
+    def vertices(s):
+        out, ex = set(), TopExp_Explorer(s, TopAbs_VERTEX)
+        while ex.More():
+            out.add(ex.Current().TShape())
+            ex.Next()
+        return out
+    assert not vertices(out) & vertices(shape)
+
+
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
          test_mesh_distance_matches_trimesh, test_step_keeps_the_bore_a_cylinder,
          test_study_part_exports_exact_interfaces, test_run_field_reports_edges_and_writes_step,
@@ -574,7 +605,8 @@ TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact
          test_step_boolean_that_does_not_finish_is_written_as_facets,
          test_step_bores_exact_where_the_body_already_lies_on_them,
          test_step_bores_exact_on_the_elbow_bolt_seat, test_step_bores_exact_through_a_pinch_on_the_mount_face,
-         test_step_keeps_an_inside_out_main_body]
+         test_step_keeps_an_inside_out_main_body,
+         test_step_face_merge_leaves_the_solid_it_falls_back_on_untouched]
 
 
 def main():
