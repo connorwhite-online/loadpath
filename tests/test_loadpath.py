@@ -1172,6 +1172,18 @@ def test_viewer_page_carries_fields_and_history():
     assert len(frames) >= 4 and frames[-1]["iteration"] == result.outcomes[0].optimizer["iterations"]
     assert frames[-1]["mesh"] is not None
     assert "<!doctype" not in study_viewer(result, standalone=False, fields=False)
+    # a part already verified with its fields (the run's bundle) keeps them with
+    # fields off, as `run` shows it past its time limit; the others go without
+    from loadpath.verify import verify_part
+
+    bi = result.best if result.best is not None else len(result.outcomes) - 1
+    rep = verify_part(s, result.outcomes[bi].mesh, fields=True)
+
+    def cases(page):
+        return json.loads(re.search(r'id="loadpath-data">(.*?)</script>', page, re.S).group(1))["parts"][0]["cases"]
+
+    assert len(cases(study_viewer(result, fields=False, verified={bi: rep}))) == 1
+    assert not cases(study_viewer(result, fields=False))
 
 
 

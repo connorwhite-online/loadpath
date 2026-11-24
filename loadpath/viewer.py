@@ -381,7 +381,7 @@ def study_viewer(result, path=None, history: HistoryRecorder | None = None, outc
     part this replaces, verified under the same loads, to compare against.
     `history` is a HistoryRecorder the study ran with. `verified`: {outcome
     index: verify_part(..., fields=True) report} already made (the run's
-    results bundle), not made again. Returns the HTML, and writes it to
+    results bundle), not made again, and shown even with `fields` off. Returns the HTML, and writes it to
     `path` when given."""
     import trimesh
 
@@ -404,7 +404,7 @@ def study_viewer(result, path=None, history: HistoryRecorder | None = None, outc
     max_faces = max(20_000, min(max_faces, 160_000 // max(1, n_parts)))
     for i in idx:
         o = result.outcomes[i]
-        rep = (verified.get(i) or verify_part(study, o.mesh, fields=True, **vkw)) if fields else None
+        rep = verified.get(i) or (verify_part(study, o.mesh, fields=True, **vkw) if fields else None)
         name = f"vf {o.volume_fraction:.2f} · {o.report['mass']:.1f} g"
         if i == result.best:
             name = "★ " + name
