@@ -248,6 +248,24 @@ def test_rectangles_side_by_side_merge():
     assert r1["patchToLimit"]["max"] < 0.1 / 3 and r1["edgeAngle"]["max"] < 1.0, r1
 
 
+def test_star_point_pairs_slide_together():
+    """3-5 pairs no single move takes away are slid whole (edge rotations)
+    until they meet star points they cancel with: fewer star points than
+    cancelling alone, the cage still closed, manifold, same genus."""
+    import trimesh
+
+    from loadpath import subdcoarse
+
+    m = trimesh.creation.icosphere(5, radius=10.0)
+    c = subd.quad_cage(m, 3000)
+    V, Q, _, _ = subdcoarse.cancel(c.V, c.Q)
+    V2, Q2, touched, taken = subdcoarse.simplify(c.V, c.Q)
+    a, b = subd.Cage(V, Q), subd.Cage(V2, Q2)
+    stars = lambda k: int((k.valence != 4).sum())  # noqa: E731
+    assert stars(b) < stars(a), (stars(a), stars(b))
+    assert b.n - len(b.E) + len(b.Q) == 2 and b.valence.min() >= 3 and len(touched) > 0
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

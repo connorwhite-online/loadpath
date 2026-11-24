@@ -255,3 +255,153 @@ def cancel(V, Q, frozen=(), rounds=6):
     Vn, Qn, remap = m.arrays()
     t = np.array(sorted(v for v in touched if v not in m.dead_v), np.int64)
     return Vn, Qn, remap[t][remap[t] >= 0] if len(t) else t, taken
+
+
+def _pairs(m, busy):
+    """3-5 pairs: a three-edge star point and a five-or-more one on one
+    quad (a dislocation of the quad grid: on its own neither can go)."""
+    out, seen = [], set()
+    for v in range(len(m.V)):
+        if v in m.dead_v or v in busy or v in seen or m.val(v) != 3:
+            continue
+        for qi in m.vq[v]:
+            w = next((u for u in m.Q[qi] if u != v and u not in seen and u not in busy and m.val(u) >= 5), None)
+            if w is not None:
+                out.append((v, w))
+                seen |= {v, w}
+                break
+    return out
+
+
+def _gains_near(m, verts):
+    """A single move round `verts` that takes star points away."""
+    ring = set(verts)
+    for _ in range(2):
+        ring |= set().union(*(m.nbrs(v) for v in ring))
+    for qi in set().union(*(m.vq[v] for v in ring)):
+        if not m.alive[qi]:
+            continue
+        for k in range(4):
+            if any(_gain(m, mv[0]) < 0 for mv in rotations(m, qi, k)):
+                return True
+        if any(_gain(m, mv[0], extra=(mv[2],)) < 0 for mv in collapses(m, qi)):
+            return True
+    return False
+
+
+def _pair_moves(m, a, b, busy):
+    """Rotations that move the 3-5 pair (a, b) whole: a gets an edge, b
+    gives one, and a new 3 and 5 appear on one quad beside them."""
+    out = []
+    for qi in m.vq[a] | m.vq[b]:
+        for k in range(4):
+            for mv in rotations(m, qi, k):
+                new = mv[0]
+                if new.get(a) != 4 or new.get(b) != 4 or busy & set(new):
+                    continue
+                rest = [v for v in new if v not in (a, b)]
+                if sorted(new[v] for v in rest) != [3, 5]:
+                    continue
+                n3 = next(v for v in rest if new[v] == 3)
+                n5 = next(v for v in rest if new[v] == 5)
+                out.append((mv, n3, n5))
+    return out
+
+
+def glide(V, Q, frozen=(), depth=8):
+    """3-5 pairs slid across the cage until they meet star points they
+    cancel with. A pair is a dislocation: no single move takes it away,
+    but an edge rotation that takes an edge from its five and gives one to
+    its three moves it whole one edge on (Peng et al. 2011, "Connectivity
+    editing for quadrilateral meshes"). From each pair a breadth-first
+    search over such rotations (at most `depth`, each place once) looks
+    for the shortest walk that ends where a move takes star points away;
+    that walk is made (cancel then takes them), nothing else moves.
+    Returns (V, Q, touched vertices in the new numbering, pairs moved)."""
+    from collections import deque
+
+    m = _Mesh(V, Q)
+    busy = set(int(v) for v in frozen)
+    touched = set()
+    moved = 0
+
+    def apply(path):
+        done = []
+        for qa, qb, A, B in path:
+            done.append((qa, qb, list(m.Q[qa]), list(m.Q[qb])))
+            m.set_quad(qa, A)
+            m.set_quad(qb, B)
+        return done
+
+    def undo(done):
+        for qa, qb, A, B in reversed(done):
+            m.set_quad(qa, A)
+            m.set_quad(qb, B)
+
+    for s3, s5 in _pairs(m, busy):
+        if s3 in busy or s5 in busy or m.val(s3) != 3 or m.val(s5) < 5:
+            continue
+        seen = {(s3, s5)}
+        run = deque([((s3, s5), [])])
+        found = None
+        while run and found is None:
+            (a, b), path = run.popleft()
+            if len(path) >= depth:
+                continue
+            done = apply(path)
+            for mv, n3, n5 in _pair_moves(m, a, b, busy):
+                if (n3, n5) in seen:
+                    continue
+                seen.add((n3, n5))
+                new, (qa, qb), qs = mv
+                n0 = m.normal(m.Q[qa]) + m.normal(m.Q[qb])
+                if any(np.dot(m.normal(q), n0) <= 0.0 for q in qs):
+                    continue
+                step = path + [(qa, qb, list(qs[0]), list(qs[1]))]
+                d2 = apply(step[-1:])
+                if _gains_near(m, {n3, n5}):
+                    found = (step, n3, n5)
+                undo(d2)
+                if found:
+                    break
+                run.append(((n3, n5), step))
+            undo(done)
+        if found is None:
+            continue
+        step, n3, n5 = found
+        apply(step)
+        verts = {s3, s5, n3, n5} | {v for qa, qb, A, B in step for v in A + B}
+        busy |= verts | set().union(*(m.nbrs(v) for v in verts))
+        touched |= verts
+        moved += 1
+    Vn, Qn, remap = m.arrays()
+    t = np.array(sorted(touched), np.int64)
+    return Vn, Qn, remap[t][remap[t] >= 0] if len(t) else t, moved
+
+
+def simplify(V, Q, frozen=(), depth=24, rounds=6):
+    """`cancel`, then pairs slid together (`glide`) and cancelled again
+    while that takes star points away. Vertices are renumbered by each
+    collapse, so the touched and frozen ones are carried by position.
+    Returns (V, Q, touched vertices, moves taken)."""
+    from scipy.spatial import cKDTree
+
+    V0 = np.asarray(V, float)
+    fz = V0[np.asarray(list(frozen), np.int64)] if len(frozen) else np.zeros((0, 3))
+    V, Q, t, taken = cancel(V, Q, frozen=frozen, rounds=rounds)
+    hit = [V[t]]
+    for _ in range(rounds):
+        tree = cKDTree(V)
+        fr = tree.query(fz)[1] if len(fz) else ()
+        Vg, Qg, tg, moved = glide(V, Q, frozen=fr, depth=depth)
+        if not moved:
+            break
+        hit.append(Vg[tg])
+        fr = cKDTree(Vg).query(fz)[1] if len(fz) else ()
+        V, Q, tc, n = cancel(Vg, Qg, frozen=fr, rounds=rounds)
+        hit.append(V[tc])
+        taken += moved + n
+    P = np.concatenate(hit) if hit else np.zeros((0, 3))
+    if not len(P):
+        return V, Q, np.zeros(0, np.int64), taken
+    return V, Q, np.unique(cKDTree(V).query(P)[1]), taken

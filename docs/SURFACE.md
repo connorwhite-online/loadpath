@@ -203,7 +203,18 @@ Arm link: no change beyond run-to-run scatter (back to back, same machine:
 meets the tolerance on the first lay, merges take 18-37 faces off, and
 Instant Meshes' scatter in star points is larger. Its remaining star points
 are mostly 3-5 pairs one or two edges apart (dislocations): they cancel only
-by gliding to a partner, which the local moves do not do.
+by gliding to a partner (below).
+
+Pairs slid together (2026-11-24, `subdcoarse.glide`): most star points
+left after cancelling are a 3 and a 5 on one quad, a dislocation of the
+grid that no single move removes. An edge rotation that takes an edge
+from the 5 and gives one to the 3 moves the pair whole one edge on (Peng
+et al. 2011); a breadth-first search over such rotations (at most 24, each
+place once) finds the shortest walk to where a move takes star points
+away, and only that walk is made. The fit check is the same as for
+cancelling. Arm link: 245 -> 156 star points, 466 STEP faces (605-646
+before), valid, every place within the bound, 311 s; pebble 52 star
+points, 132 STEP faces (174).
 
 **Face by face (the fallback).** Rectangles of regular cage faces are grown
 greedily and each becomes one clamped bicubic B-spline; faces at a star

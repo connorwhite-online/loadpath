@@ -827,8 +827,8 @@ def pick_tolerance(accuracy=None, noise=None):
 
 
 def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, progress=None, over=None, fair=0.0):
-    """Star points cancelled in pairs (subdcoarse.cancel: edge rotations
-    and diagonal collapses) where the surface can do without them: the
+    """Star points cancelled in pairs (subdcoarse.simplify: edge rotations
+    and diagonal collapses, and 3-5 pairs slid together first) where the surface can do without them: the
     moved neighbourhoods are fitted again (subdedit.refit) and the moves
     stand only if the 99th percentile holds and no place misses by more
     than twice the bound or closes a printable hole that did not before;
@@ -839,7 +839,7 @@ def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, p
     hierarchy, deviation, report)."""
     from scipy.spatial import cKDTree
 
-    from .subdcoarse import cancel
+    from .subdcoarse import simplify
     from .subdedit import refit
 
     def bad(H, C, d1, d2, X):
@@ -853,7 +853,7 @@ def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, p
     h = float(np.sqrt(mesh.area / len(cage.Q)))
     rep = {"moves": 0, "starPoints": [stars, stars]}
     for attempt in range(2):
-        Vn, Qn, touched, taken = cancel(cage.V, cage.Q, frozen=frozen)
+        Vn, Qn, touched, taken = simplify(cage.V, cage.Q, frozen=frozen)
         if not taken:
             break
         c2 = Cage(Vn, Qn)
