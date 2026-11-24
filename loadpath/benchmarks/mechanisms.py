@@ -289,7 +289,10 @@ def mech_domain(p: MechProblem):
     n_out, c_out, sgn = p.out
     d = {
         "designSpace": [{"type": "box", "min": [0, 0, 0], "max": [nx, ny, nz]}],
-        "supports": [{"shape": _box(n), "fix": "".join(sorted(c))} for n, c in p.fixed],
+        # the problem's clamps, and the plane y = 0 it is half of (symmetric about it, so held
+        # along y there): without it nothing in the study holds y, and the part is free to slide
+        "supports": [{"shape": _box(n), "fix": "".join(sorted(c))} for n, c in p.fixed]
+        + [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [nx + 1, 0.01, nz + 1]}, "fix": "y"}],
         "loadCases": [
             {"name": "in", "loads": [{"shape": _box(n_in), "force": [v_in * len(n_in) if a == c_in else 0.0
                                                                       for a in "xyz"]}]},

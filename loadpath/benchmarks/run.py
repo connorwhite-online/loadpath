@@ -85,6 +85,10 @@ def domain_for(p: Problem):
         d["symmetry"] = list(p.symmetry)
     if p.plane:
         d["extrusion"] = "y"
+        # the slab is half of a plate symmetric about y = 0, so held along y there: without it
+        # nothing in the study holds y and the part is free to slide (domain._held_statics)
+        d["supports"].append({"shape": {"type": "box", "min": [-1, -1, -1], "max": [nx + 1, 0.01, nz + 1]},
+                              "fix": "y"})
     if p.void is not None:
         # the cut-out as keep-out boxes, one per void column run
         ii, _, kk = np.nonzero(p.void)
