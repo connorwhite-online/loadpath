@@ -213,6 +213,13 @@ class _Analysis:
             return "direct"
         if force == "direct" and direct.backend() is None:
             return "amg"
+        if factor and getattr(self.domain, "seats", None) and n_dof <= direct.large_dofs():
+            # A seated part solves a right-hand side per seat patch besides
+            # its cases (_solve_seated), and the constrained method adjoints
+            # on top: one factor serves them all, where the multigrid runs
+            # a CG for each (the pegboard holder's 102k-cell constrained
+            # grid: ~100 s an iteration on the multigrid)
+            return "direct"
         if self._mg_ok and has_mg:
             return "mg"
         if factor and n_dof <= direct.large_dofs():

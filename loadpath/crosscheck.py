@@ -1099,6 +1099,10 @@ def _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges, lowrank=N
     # and every other dof sees exactly the free block.
     _eliminate(k.indptr, k.indices, k.data, fixed_dof[qd])
     free_mask = ~fixed_dof
+    exact = _exact_springs(lump, lowrank, fixed_dof[qd], qd, n) if lowrank is not None else None
+    direct = _seated_factor(k, exact, len(conn)) if exact is not None else None
+    if direct is not None:
+        return _direct_solver(direct, n, qd, free_mask, fixed_dof)
     # P1 -> P2 prolongation: vertices copy, edge nodes average their ends
     nv = n_vertices
     rows, cols, vals = [], [], []
@@ -1146,18 +1150,7 @@ def _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges, lowrank=N
         # the operator is the stiffness with the patches' springs exactly:
         # the matrix's lumped ones out, the rank-one ones in (rows on held
         # dofs left out, as the elimination leaves them)
-        free_q = (~fixed_dof[qd]).astype(float)
-        rr, cc_, vv = [], [], []
-        for idx, blk in lump:
-            dof = (3 * idx[:, None] + np.arange(3)).ravel()
-            rr.append(np.repeat(dof, 3))
-            cc_.append((3 * idx[:, None, None] + np.zeros((1, 3, 1), np.int64) + np.arange(3)[None, None, :]).ravel())
-            vv.append(blk.ravel())
-        lumped = sp.csr_matrix((np.concatenate(vv), (np.concatenate(rr), np.concatenate(cc_))), shape=(3 * n, 3 * n))
-        lumped = (sp.diags(free_q) @ lumped @ sp.diags(free_q)).tocsr()
-        rows = sp.csr_matrix(np.asarray(lowrank[0], float))[:, qd] @ sp.diags(free_q)
-        rows = rows.tocsr()
-        lr_k = np.asarray(lowrank[1], float)
+        lumped, rows, lr_k = exact
 
         def mv(x):
             return op.mv(x) - lumped @ x + rows.T @ (lr_k[:, None] * (rows @ x))
@@ -1199,6 +1192,77 @@ def _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges, lowrank=N
 
 # load columns the CG takes at once (each column is five vectors of the mesh's dofs)
 _BATCH = 16
+
+
+def _exact_springs(lump, lowrank, held_q, qd, n):
+    """(lumped, rows, k) on the colour-ordered dofs: the seats' springs as
+    _solver lumps them into the matrix (a sparse matrix) and exactly (rows
+    r_j, springs k_j: sum_j k_j r_j r_j'), held dofs left out of both."""
+    import scipy.sparse as sp
+
+    free_q = (~held_q).astype(float)
+    rr, cc_, vv = [], [], []
+    for idx, blk in lump:
+        dof = (3 * idx[:, None] + np.arange(3)).ravel()
+        rr.append(np.repeat(dof, 3))
+        cc_.append((3 * idx[:, None, None] + np.zeros((1, 3, 1), np.int64) + np.arange(3)[None, None, :]).ravel())
+        vv.append(blk.ravel())
+    lumped = sp.csr_matrix((np.concatenate(vv), (np.concatenate(rr), np.concatenate(cc_))), shape=(3 * n, 3 * n))
+    lumped = (sp.diags(free_q) @ lumped @ sp.diags(free_q)).tocsr()
+    rows = (sp.csr_matrix(np.asarray(lowrank[0], float))[:, qd] @ sp.diags(free_q)).tocsr()
+    return lumped, rows, np.asarray(lowrank[1], float)
+
+
+def _seated_factor(k, exact, n_tets):
+    """One PARDISO factor of a seated part's stiffness with its patches'
+    springs exactly (k - lumped + R' diag(k) R), or None where PARDISO is
+    missing or the factor does not fit (_coarse_factor's budget). A seated
+    check solves a column per seat patch, twice more as the bearing patches
+    are cut finer (pushseat.solve_cases): ~100 right-hand sides on the
+    pegboard hammer holder's 478k dofs, 16 CG iterations each, 160 s; one
+    factor is 10 s and the hundred solves 30 s."""
+    import scipy.sparse as sp
+
+    from .nonlinear import _have_pardiso, _Pardiso
+    from .study import _available_bytes
+
+    if not _have_pardiso() or os.environ.get("LOADPATH_TET_SEATED", "") == "cg":
+        return None
+    lumped, rows, lr_k = exact
+    room = memory_budget() - _BYTES_PER_TET * n_tets
+    free = _available_bytes()
+    if free:
+        room = min(room, 0.85 * free)
+    if room <= 0:
+        return None
+    a = (k - lumped + rows.T @ sp.diags(lr_k) @ rows).tocsr()
+    try:
+        return _Pardiso(a, budget=room)
+    except (MemoryError, RuntimeError):
+        return None
+
+
+def _direct_solver(fac, n, qd, free_mask, fixed_dof):
+    """_solver's solve/close on a factor (_seated_factor)."""
+    from types import SimpleNamespace
+
+    def solve(loads):
+        out = []
+        for b0 in range(0, len(loads), _BATCH):
+            fs = []
+            for _n, f, _ in loads[b0:b0 + _BATCH]:
+                fn = np.zeros((n, 3))
+                fn[: len(f)] = f
+                fs.append(np.where(free_mask, fn.ravel(), 0.0)[qd])
+            x = np.asarray(fac.solve(np.ascontiguousarray(np.stack(fs, axis=1)))).reshape(len(qd), -1)
+            for j in range(x.shape[1]):
+                u = np.empty(3 * n)
+                u[qd] = x[:, j]
+                u[fixed_dof] = 0.0
+                out.append(u.reshape(n, 3))
+        return out
+
+    return SimpleNamespace(solve=solve, close=fac.close)
 
 
 def _coarse_factor(a1, n_tets):
