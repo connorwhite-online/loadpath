@@ -1715,6 +1715,14 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 or not np.isfinite(v):
                 raise ValueError(f"supports[{i}].{key} must be a number >= 0 ({unit})")
             extra[key] = float(v) if v > 0 else None
+        if extra.get("preload") and not s.get("_relaxed"):
+            # a plastic part held at a fixed squeeze relaxes: the seat keeps what is left
+            # after durability.preloadHours (fasteners.py relaxes its screws' itself)
+            from .durability import clamp_retention
+            from .materials import material_from_spec as _mat
+
+            m_ = d.get("material", "pla")
+            extra["preload"] *= clamp_retention(_mat(m_[0] if isinstance(m_, list) and m_ else m_), d.get("durability"))
         supports.append(Support(region, shape, fix_t, pin, *caps, push, **extra))
 
     cases_in = d.get("loadCases")

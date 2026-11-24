@@ -93,9 +93,15 @@ def test_a_clamp_holds_by_its_preload_on_both_jaws():
     """A plate squeezed between two jaws by a screw's 200 N (the lower jaw's
     preload) and pulled across: it holds by friction on both faces, about
     2 mu times the clamp force, and slides past it; the clamp's force is the
-    preload with no other load (the interference that gives it is solved).
-    Without the preload it holds nothing across."""
+    preload with no other load (the interference that gives it is solved),
+    relaxed by a year of PETG creep. Without the preload it holds nothing
+    across."""
     from loadpath import pushseat
+    from loadpath.durability import clamp_retention
+    from loadpath.materials import material_from_spec
+
+    keep = clamp_retention(material_from_spec("petg"))
+    assert 0.5 < keep < 0.75, keep
 
     def study(pre):
         low = {"shape": _box([10, 5, -0.5], [20, 15, 0.1]), "push": "+z", "friction": 0.3}
@@ -105,16 +111,16 @@ def test_a_clamp_holds_by_its_preload_on_both_jaws():
                 "supports": [{"shape": _box([10, 5, 5.9], [20, 15, 6.5]), "push": "-z", "friction": 0.3}, low],
                 "loadCases": [{"name": "clamp", "loads": [], "_clamp": True}] +
                 [{"name": f"x{fx:g}", "loads": [{"shape": _box([29.9, 0, 0], [30.1, 20, 6]), "force": [fx, 0, 0]}]}
-                 for fx in (90.0, 130.0)],
+                 for fx in (50.0, 100.0)],
                 "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}}
 
     _, ps, seat, u0s = _seated(study(200.0), [30, 20, 6], [15, 10, 3])
     assert seat.e.min() < 0 and not seat.unpressed                # set into the part
     top, low = _resultants(ps, seat.push(seat.gaps(u0s[0]))[2])
-    assert abs(low[2] - 200.0) < 1.0 and abs(top[2] + 200.0) < 1.0, (top, low)
+    assert abs(low[2] - 200.0 * keep) < 1.0 and abs(top[2] + 200.0 * keep) < 1.0, (top, low)
     _, _, lam, lifts = seat.push(seat.gaps(u0s[1]))
     top, low = _resultants(ps, lam)
-    assert not lifts and abs(top[0] + low[0] + 90.0) < 0.1, (top, low)
+    assert not lifts and abs(top[0] + low[0] + 50.0) < 0.1, (top, low)
     assert abs(top[0] + low[0]) <= 0.3 * (low[2] - top[2]) * (1 + 1e-6)
     assert seat.push(seat.gaps(u0s[2]))[3]                          # past 2 mu N: it slides
     assert 0.5 < seat.held < 1.0                                    # ...part of the way there
@@ -125,10 +131,15 @@ def test_a_clamp_holds_by_its_preload_on_both_jaws():
 def test_a_screws_head_seat_takes_its_preload_when_the_seats_have_friction():
     """Fasteners whose bores hold the part across: the head seat each screw
     adds takes the screw's preload once the study's seats have friction
-    (the clamp is what the joint's friction holds by), and the preload case
-    is then the clamp alone (its pair of forces would count it twice).
-    Without friction the joint is as before."""
+    (the clamp is what the joint's friction holds by), as much of it as a
+    year of creep leaves; the preload case is then the fresh clamp: the
+    seat's relaxed share and a pair of forces for the rest. Without friction
+    the joint is as before."""
+    from loadpath.durability import clamp_retention
     from loadpath.fasteners import expand_fasteners
+    from loadpath.materials import material_from_spec
+
+    keep = clamp_retention(material_from_spec("petg"))
 
     def plate(mu):
         sup = {"shape": _box([-30, -10, -0.5], [30, 10, 0.3]), "push": "+z"}
@@ -143,14 +154,16 @@ def test_a_screws_head_seat_takes_its_preload_when_the_seats_have_friction():
 
     d = expand_fasteners(plate(0.3))
     heads = [s for s in d["supports"] if s.get("region", "").endswith("-seat")]
-    assert [s.get("preload") for s in heads] == [300.0, 300.0], heads
-    pre = [c for c in d["loadCases"] if c["name"] == "preload"][0]
-    assert pre["loads"] == [] and pre["_clamp"], pre
+    assert all(abs(s.get("preload") - 300.0 * keep) < 1e-9 for s in heads), heads
+    pre = next(c for c in d["loadCases"] if c["name"] == "preload")
+    assert pre["_clamp"] and len(pre["loads"]) == 4, pre
+    assert abs(abs(pre["loads"][0]["force"][2]) - 300.0 * (1 - keep)) < 1e-9, pre
     st = study_from_dict(d)
-    assert [s.preload for s in st.supports if s.push is not None] == [None, 300.0, 300.0]
+    pl = [s.preload for s in st.supports if s.push is not None]
+    assert pl[0] is None and all(abs(v - 300.0 * keep) < 1e-9 for v in pl[1:]), pl      # relaxed once
     d0 = expand_fasteners(plate(None))
     assert not [s for s in d0["supports"] if s.get("preload")]
-    pre0 = [c for c in d0["loadCases"] if c["name"] == "preload"][0]
+    pre0 = next(c for c in d0["loadCases"] if c["name"] == "preload")
     assert any(any(ld["force"]) for ld in pre0["loads"])
 
 
@@ -162,7 +175,9 @@ def test_friction_and_preload_are_a_seats_only():
             "loads": [{"shape": _box([58, 0, 3.9], [60, 10, 4.1]), "force": [0, 0, 50]}],
             "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}}
     s = study_from_dict(base).supports[1]
-    assert (s.friction, s.preload) == (0.4, 50.0)
+    assert s.friction == 0.4 and 25.0 < s.preload < 40.0, s.preload     # PETG keeps ~62% after a year
+    metal = study_from_dict({**base, "material": "316l"}).supports[1]
+    assert metal.preload > 49.0
     for key, v in (("friction", 0.3), ("preload", 10), ("friction", -1)):
         bad = {**base, "supports": [dict(base["supports"][0], **{key: v}), base["supports"][1]]}
         if key == "friction" and v < 0:

@@ -307,8 +307,9 @@ _SUPPORT = {
         "preload": {"type": "number", "minimum": 0,
                     "description": "N a seat is pressed on with before the loads (push only): a clamp's screw, a "
                                    "press fit. The loads change it as the part's stiffness has it; with friction "
-                                   "it is what a clamp holds by. A fastener's head seat takes its screw's preload "
-                                   "when the seats have friction"},
+                                   "it is what a clamp holds by. A plastic part relaxes under it: the seat keeps "
+                                   "what is left after durability.preloadHours (a year by default) of creep. A "
+                                   "fastener's head seat takes its screw's preload when the seats have friction"},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,

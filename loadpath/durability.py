@@ -250,6 +250,19 @@ def creep_ratio(data: DurabilityData, hours: float, retention: float = 1.0) -> f
     return float(data.creep_ratio * (hours / 1000.0) ** data.creep_exponent / max(retention, 0.02))
 
 
+def clamp_retention(material, spec=None) -> float:
+    """The share of a clamp's force a plastic part keeps after the
+    durability block's preloadHours (a year by default) at its temperature:
+    held at a fixed strain, the force relaxes with the relaxation modulus,
+    r(T) / (1 + phi(t, T)). `spec`: the study's durability block (dict) or
+    None (its defaults: room temperature, 8760 h). Metals keep it all."""
+    dur = durability_from_spec(spec) if isinstance(spec, dict) else (spec or Durability())
+    data = durability_data(material, dur.overrides)
+    r = strength_retention(material, dur.temperature)
+    r = 1.0 if r is None else float(r)
+    return float(min(1.0, r / (1.0 + creep_ratio(data, dur.preload_hours, r))))
+
+
 def rupture_strength(data: DurabilityData, strength: float, hours: float) -> float:
     """Stress held for `hours` before creep rupture, MPa (strength already at temperature)."""
     if hours <= RUPTURE_T0 or data.rupture_per_decade <= 0:

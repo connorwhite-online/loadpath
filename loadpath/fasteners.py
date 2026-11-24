@@ -150,6 +150,14 @@ def _screw_holds(d: dict, fs, preloads=None) -> list:
     named = {s.get("region") for s in supports if isinstance(s, dict) and s.get("push") is None}
     rough = any(isinstance(s, dict) and s.get("push") is not None and (s.get("friction") or 0) > 0
                 for s in supports)
+    keep = 1.0
+    if rough:
+        from .durability import clamp_retention
+        from .materials import material_from_spec
+
+        mat_in = d.get("material", "pla")
+        keep = clamp_retention(material_from_spec(mat_in[0] if isinstance(mat_in, list) else mat_in),
+                               d.get("durability"))
     out = []
     for i, f in enumerate(fs):
         fid = f.get("id") or f"fastener-{i}"
@@ -168,7 +176,10 @@ def _screw_holds(d: dict, fs, preloads=None) -> list:
             hold = {"region": f"{fid}-thread", "push": (-a).tolist()}
         if hold is not None:
             if rough and (preloads or {}).get(fid, 0.0) > 0:
-                hold["preload"] = float(preloads[fid])
+                # what the clamp keeps over the joint's life (durability.clamp_retention):
+                # the friction it holds by in every case is the relaxed one
+                hold["preload"] = float(preloads[fid]) * keep
+                hold["_relaxed"] = True
             out.append(hold)
     return out
 
@@ -279,12 +290,21 @@ def expand_fasteners(d: dict) -> dict:
     holds = _screw_holds(d, fs, {j["id"]: j["preload"] for j in joints})
     if holds:
         d["supports"] = list(d.get("supports") or []) + holds
-    # a screw whose head seat takes its preload clamps in every case (pushseat.py): the
-    # preload case is then the clamp alone, which a pair of forces would count twice
-    clamped = {h["region"][:-len("-seat")] if h["region"].endswith("-seat") else h["region"][:-len("-thread")]
-               for h in holds if h.get("preload")}
+    # a screw whose head seat takes its preload clamps in every case (pushseat.py), at what
+    # the clamp keeps over its life; the preload case is the fresh clamp: the seat's
+    # relaxed share plus a pair of forces for the share still to relax
+    clamped = {(h["region"][:-len("-seat")] if h["region"].endswith("-seat") else h["region"][:-len("-thread")]):
+               h["preload"] for h in holds if h.get("preload")}
     if preload_loads:
-        loads = [ld for fid, ld in preload_loads if fid not in clamped]
+        loads = []
+        for fid, ld in preload_loads:
+            if fid in clamped:
+                full = next(j["preload"] for j in joints if j["id"] == fid)
+                rest = 1.0 - clamped[fid] / full if full > 0 else 0.0
+                if rest <= 1e-6:
+                    continue
+                ld = {**ld, "force": [rest * v for v in ld["force"]]}
+            loads.append(ld)
         cases = list(d.get("loadCases") or [])
         cases.append({"name": "preload", "loads": loads, **({"_clamp": True} if clamped else {})})
         d["loadCases"] = cases
