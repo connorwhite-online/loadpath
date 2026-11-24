@@ -76,6 +76,9 @@ class ReconstructOptions:
         # within reach of the point (on top of `close`): sized from the
         # stress the junction carries (study._round_junctions)
         self.round_at = None   # [(point mm, radius mm or None: the member's thickness)] (study._round_hotspots)
+        # round keep-out rims in the field (SOFT_CUT); off for a cast or
+        # milled part, whose walls the draw or the cutter shapes
+        self.soft_cut = True
 
 
 def _smooth_max(a, b, k):
@@ -1410,7 +1413,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
                 through = ndimage.gaussian_filter(fine[tuple(idx)], 1.0)
                 w = (keep * (d > -3.0 * domain.pitch)).reshape(fine.shape) * band
                 fine = w * through + (1.0 - w) * fine
-        if SOFT_CUT and o.fillet:
+        if SOFT_CUT and o.fillet and getattr(o, "soft_cut", True):
             fine = _soft_cut(fine, d.reshape(fine.shape), keep.reshape(fine.shape) if preserve and o.blend > 0
                              else None, step, o.level, sdfs, bearing, domain.pitch, design,
                              env.reshape(fine.shape) if design else None)
@@ -2353,6 +2356,14 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
         import copy
         o = copy.copy(o)
         o.axial = False
+    if getattr(study, "access", None) is not None and getattr(o, "soft_cut", True):
+        # Nor are a keep-out's rims rounded in the field there: the round
+        # turns through the draw direction, a band of wall with no draft
+        # round every rim (the cast arm link: 1109 mm^2 under its 1.5 deg
+        # of draft, limit 300, with soft cuts on; 56 without)
+        import copy
+        o = copy.copy(o)
+        o.soft_cut = False
     # Upsampling refines a coarse grid's staircase; a fine grid has none to
     # speak of, and 3x on 845k cells meant a 23M-cell field and 330 s of
     # meshing for 2M triangles. Cap the refined field near FINE_CELLS (eval
