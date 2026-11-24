@@ -356,9 +356,14 @@ corner there exactly (`loadpath/subdcrease.py`, on by default,
   box cover) is fitted smooth. A feature-preserving remesh before Instant
   Meshes is the next step there.
 - A hole through a web thinner than the faces over it (the wrist link's
-  2.6 mm hole in a 1.1 mm web) stays bridged: the plain cut folds the
-  surface, and refining the two mouth faces and setting them on the
-  hole's rim before the cut still closes on refit
-  (project files `surface/thin-web-fitted-mouths-attempt.patch`).
+  2.6 mm hole in a 1.1 mm web) is cut or not depending on the cage
+  Instant Meshes lays: on one lay the two faces over its mouths are a
+  4.2 x 1.9 mm face against a 0.8 x 1.8 mm sliver and the cut folds the
+  surface; on another (run alone, 2026-11-24) both holes cut cleanly,
+  12.8 min, 1296 STEP faces, max 0.26 mm. Refining the two mouth faces
+  and setting them on the hole's rim before the cut did not open the bad
+  lay (project files `surface/thin-web-fitted-mouths-attempt.patch`).
+  The 46 min wrist link run was another job sharing the machine plus a
+  lost try with finer spots.
 - A coarse first cage can come out with holes round thin members; the
   density search then steps finer (2.5x) until it closes.
