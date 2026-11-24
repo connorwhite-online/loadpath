@@ -140,7 +140,13 @@ buckling, printability) you can report to the user.
    the face it sits on its own support with `"push": "+z"` (the way the
    wall or table pushes the part): it carries pressure only and lets go
    where the load lifts it, so the heel bears and the bolts pull, as they
-   do. A slab over the whole face with `fix` glues the part down, and a
+   do. What holds the part along each screw is the screw: when its bore
+   is a support held across it and nothing else fixes that axis, its head
+   (or, for a screw from the mating part, its thread) holds the part
+   toward the joint, one way, as a seat added for you. A load case that
+   still has nothing to hold it (supports drawn as shapes, a seat alone
+   against a pull) is refused by `check` with the case and the way it
+   goes. A slab over the whole face with `fix` glues the part down, and a
    load that lifts or tips it then reads far too strong (a stepper bracket:
    SF 3.5 glued, 0.98 bolted; a shelf bracket on two screws: 5.0 g glued,
    8.5 g on a seat, and no part at all on the screw pads alone).

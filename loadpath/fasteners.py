@@ -31,6 +31,18 @@ A screw driven from the mating part into this one is `"headOn": "mating"`,
 `"end": "thread"`: the seat is then where the mating part clamps down, and
 only the bore and the tap are kept clear.
 
+What holds a screw's part along the screw: a bore held across the screw
+only (as above) leaves the part free along it, and where nothing else in
+the supports holds that direction (the usual case beside a push support
+on the face the part sits on), the screw itself does, one way: its head
+bears on the seat and pulls the part toward the far end (`headOn: "this"`),
+or its thread pulls it toward the seat (`headOn: "mating"`, `end:
+"thread"`). That hold is added as a seat (a push support on the head's
+bearing face, or on the thread) for each screw whose bore is a support.
+A wall-mounted part pried off the wall then bears on its heads and its
+heel, as it does; before, nothing held it and the solve flew off
+(held-out batch 3: four of six studies written that way).
+
 Regions it adds, by id: `<id>-bore`, `<id>-head` (unless the head is on
 the other part; and `<id>-tap` for a thread) as keep-outs; `<id>-seat` and `<id>-face` or `<id>-thread` as
 preserves. Supports and loads can name any of them. Hold a bore across
@@ -109,6 +121,52 @@ def _exit_distance(d: dict, p, direction) -> float:
         elif u[k] < -1e-12:
             t = min(t, (lo[k] - p[k]) / u[k])
     return float(max(t, 0.0)) if np.isfinite(t) else 0.0
+
+
+def _held_axes(supports) -> np.ndarray:
+    """Which axes the study's fixed supports (not seats, not pins) hold."""
+    held = np.zeros(3, bool)
+    for s in supports or []:
+        if not isinstance(s, dict) or s.get("push") is not None:
+            continue
+        fix = s.get("fix", "all")
+        if fix == "all":
+            held[:] = True
+        elif isinstance(fix, str) and fix != "pin":
+            held |= np.array([a in fix for a in "xyz"])
+        elif isinstance(fix, (list, tuple)) and len(fix) == 3:
+            held |= np.array([bool(v) for v in fix])
+    return held
+
+
+def _screw_holds(d: dict, fs) -> list:
+    """Seats for the screws that hold the part along their axis (module
+    docstring): one per screw whose bore (or tap) is a support, when no
+    fixed support holds that axis."""
+    supports = d.get("supports") or []
+    loads = [ld for c in (d.get("loadCases") or []) for ld in (c.get("loads") or [])] + list(d.get("loads") or [])
+    if d.get("thermal") is not None and any(isinstance(ld, dict) and (ld.get("direction") is not None or
+                                                                     ld.get("cone") is not None) for ld in loads):
+        # a seat with a force of unknown direction and heat is not solved yet (domain.py)
+        return []
+    held = _held_axes(supports)
+    named = {s.get("region") for s in supports if isinstance(s, dict) and s.get("push") is None}
+    out = []
+    for i, f in enumerate(fs):
+        fid = f.get("id") or f"fastener-{i}"
+        if not ({f"{fid}-bore", f"{fid}-tap"} & named):
+            continue
+        a = _direction(f["direction"], f"fasteners[{i}]")
+        if (held & (np.abs(a) > 0.1)).any():
+            continue
+        head_on = str(f.get("headOn", "this"))
+        if head_on == "this":
+            # the head bears on the seat ring (a face one cell wide of
+            # annulus under the head finds no node on a coarse grid)
+            out.append({"region": f"{fid}-seat", "push": a.tolist()})
+        elif head_on == "mating" and str(f.get("end", "face")) == "thread":
+            out.append({"region": f"{fid}-thread", "push": (-a).tolist()})
+    return out
 
 
 def expand_fasteners(d: dict) -> dict:
@@ -214,6 +272,9 @@ def expand_fasteners(d: dict) -> dict:
                 preload_loads.append({"region": far, "force": (-a * p).tolist()})
     d["preserve"] = preserve
     d["keepOut"] = keep_out
+    holds = _screw_holds(d, fs)
+    if holds:
+        d["supports"] = list(d.get("supports") or []) + holds
     if preload_loads:
         cases = list(d.get("loadCases") or [])
         cases.append({"name": "preload", "loads": preload_loads})

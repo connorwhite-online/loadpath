@@ -743,3 +743,70 @@ def test_a_block_that_barely_passes_draws_the_search_up_to_it():
     assert _toward_block(nxt, 0.9, (0.3, 0.9), 12.0) == nxt
     assert _toward_block(nxt, 0.9, (0.3, 0.9), None) == nxt
     assert _toward_block(nxt, 0.9, (0.3, 0.9), 0.8) == nxt     # a failing block says nothing here
+
+
+def _wall_plate(fasteners=True, fix="xy"):
+    """A plate screwed to a wall (the plane z = 0) by two M4 screws, sitting
+    on the wall (a seat) and pulled straight off it: the held-out pillow
+    block and Pi mount, written the way SKILL.md says (bores held across
+    the screw, the face a push support)."""
+    d = {"designSpace": [_box([-30, -10, 0], [30, 10, 6])],
+         "supports": [{"shape": _box([-30, -10, -0.5], [30, 10, 0.3]), "push": "+z"}],
+         "loads": [{"shape": _box([-5, -5, 5.5], [5, 5, 6]), "force": [0, 0, 40]}],
+         "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}}
+    if fasteners:
+        d["fasteners"] = [{"id": i, "size": "M4", "seat": [x, 0, 6], "direction": "-z", "grip": 6, "end": "face"}
+                          for i, x in (("a", -22), ("b", 22))]
+        d["supports"] += [{"region": "a-bore", "fix": fix}, {"region": "b-bore", "fix": fix}]
+    else:
+        d["supports"] += [{"shape": _cyl([x, 0, 3], "z", 8, 2.6), "fix": fix} for x in (-22, 22)]
+    return d
+
+
+def test_a_screw_holds_its_part_by_the_head_and_an_unheld_case_is_refused_at_check():
+    """A screw whose bore is a support holds the part along the screw, one
+    way, by its head: the plate pulled off its wall bears on its heads and
+    check passes. Held only across the screws (inline shapes, no screw),
+    nothing holds it off the wall and check says so in a second, naming the
+    case and the way it goes, instead of a run that flies off and then calls
+    it a limit other than strength."""
+    from loadpath.fasteners import expand_fasteners
+
+    d = expand_fasteners(_wall_plate())
+    holds = [s for s in d["supports"] if s.get("region", "").endswith("-seat")]
+    assert len(holds) == 2 and all(s["push"] == [0, 0, -1] for s in holds), d["supports"]
+    c = check_study(_wall_plate())
+    assert c["ok"], c
+    # fixed along the screw too: nothing to add
+    assert not [s for s in expand_fasteners(_wall_plate(fix="all"))["supports"] if s.get("region", "").endswith("-seat")]
+    t0 = time.time()
+    c = check_study(_wall_plate(fasteners=False))
+    assert not c["ok"] and "lifts the part off its seat" in c["error"] and "along +z" in c["error"], c
+    assert time.time() - t0 < 30
+
+
+def test_a_holes_roof_across_the_layers_is_a_bridge_not_unreachable_drawn_geometry():
+    """A screw hole lying across the layers (a bracket printed on its side)
+    has a roof the 45-degree reach misses: a printer bridges it, so check
+    does not call the ring round it drawn geometry that needs support. A
+    peg drawn in mid-air still is."""
+    from loadpath.domain import _unprintable_preserve
+
+    dims = (20, 20, 20)
+    g = np.indices(dims).transpose(1, 2, 3, 0) + 0.5
+    active = np.ones(dims, bool)
+    # a 6-cell hole along x through the block, its axis at y = 10, z = 10
+    hole = (g[..., 1] - 10) ** 2 + (g[..., 2] - 10) ** 2 < 9
+    active &= ~hole
+    ring = ~hole & ((g[..., 1] - 10) ** 2 + (g[..., 2] - 10) ** 2 < 25)
+    args = ((2, 1), dims, active.reshape(-1), (ring & active).reshape(-1), 1.0, (0, 0, 0))
+    assert _unprintable_preserve(*args) != []                    # the 45-degree reach alone: the roof
+    assert _unprintable_preserve(*args, process="fdm") == []     # bridged
+    # a peg standing out over nothing (the bed is z = 0; the peg at z 12-14 from x 0-6, the block x 6-20)
+    active2 = np.zeros(dims, bool)
+    active2[6:, :, :] = True
+    peg = np.zeros(dims, bool)
+    peg[:6, 8:12, 12:14] = True
+    active2 |= peg
+    w = _unprintable_preserve((2, 1), dims, active2.reshape(-1), peg.reshape(-1), 1.0, (0, 0, 0), process="fdm")
+    assert w and "cannot be reached" in w[0]
