@@ -197,12 +197,31 @@ off its own edges and readers could not mesh it.
 
 ## Not yet
 
-- Adaptive density beyond repairs: flats still get as many cage faces
-  (and star points, and so patches) as the first cage that meets the
-  tolerance has everywhere. Edits in place (`subdedit.py`) now handle the
-  tight places and paired star points are cancelled; a sizing field for
-  the first cage (Instant Meshes has none) is the lever left on face
-  count.
+- Adaptive density for the first cage: measured, and not a lever on
+  patches (2026-11-24). Instant Meshes has no sizing field, so it was given
+  one by laying it on an as-similar-as-possible copy of the surface (each
+  edge scaled by the size wanted there, local rotations free; a constant
+  size reproduces the plain cage exactly) with the size from the last
+  cage's own per-face error (eroded, then diffused). Same tolerance, same
+  machine:
+
+  | | cage faces | star points | p99 mm |
+  |---|---|---|---|
+  | arm link, uniform | 6369 / 4749 | 267 / 254 | 0.098 / 0.158 |
+  | arm link, adaptive (15 mm smoothing) | 4231 | 275 | 0.111 |
+  | pebble, uniform | 3140 / 4641 | 82 / 85 | 0.118 / 0.071 |
+  | pebble, adaptive (6 / 12 mm) | 3093 / 4635 | 106 / 108 | 0.106 / 0.076 |
+
+  A third fewer cage faces on the arm link, none on the pebble, and never
+  fewer star points: a size that changes over the surface is a curved
+  metric, and the cross field pays for that curvature with singularities
+  (Gauss-Bonnet), about +25 on the pebble; a rougher size field doubled
+  them on the arm link (267 -> 496). Star points, not cage faces, set the
+  patch count (about 2.4 per star point), and on the arm link they sit
+  near the floor its genus sets (Euler -32: at least 128 five-valent
+  points) times two. What is left on patch count is laying out fewer
+  rectangles per star point and cancelling more pairs, not sizing.
+  Scripts: project files `surface/adaptive/`.
 - Slits and bridged holes more than one face deep or with outlines of
   different lengths on their two walls are joined one face pair at a time,
   or left to the old route.
