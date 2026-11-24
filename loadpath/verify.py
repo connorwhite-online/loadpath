@@ -965,15 +965,17 @@ def use_cut_cells(study, cut_cells=None) -> bool:
     return not any(ld.pressure for case in getattr(study, "load_cases", ()) for ld in case.loads)
 
 
-def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs):
+def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs, memo=None):
     """Solve the cut-cell model (cutcell.CutGrid) for each right-hand side:
     the shared-matrix cells as usual, the cut cells' own matrices added
     (assembled), or as the multigrid's extra operator, which its Galerkin
     coarsening carries down exactly. Returns (stiffness object with
-    .cutgrid, displacements)."""
+    .cutgrid, displacements). `memo`: as _solve_grid's."""
     from .simp import _use_mg
 
     hm = cg.mesh
+    if memo is not None and "stiff" in memo:
+        return memo["stiff"], _memo_solve(memo, rhs)
     if _use_mg(hm.n_elem):
         from .mg import GridElasticity
 
@@ -990,12 +992,46 @@ def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs):
         if springs is not None:
             k = (k + e_mat * springs).tocsr()
         stiff.cutgrid = cg
+        if memo is not None:
+            memo.update(stiff=stiff, k=k, hm=hm)
+            return stiff, _memo_solve(memo, rhs)
         us = direct.solve_many(k, rhs, hm.node_ijk)
         if us is None:
             us = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000).solve_many(k, rhs)
         return stiff, us
     stiff.cutgrid = cg
+    if memo is not None:
+        memo.update(stiff=stiff, k=None, hm=hm)
     return stiff, stiff.solve_many(rhs)
+
+
+def _memo_solve(memo, rhs):
+    """Right-hand sides on the matrix a memo holds (_solve_grid's `memo`):
+    one factorization kept for every call (a seated part's cases, then its
+    seat patches, then the patches cut finer: three factorizations of the
+    same matrix were most of a seated verify), or the multigrid's own
+    hierarchy, or a CG whose preconditioner is kept."""
+    from . import direct
+
+    stiff, k, hm = memo["stiff"], memo["k"], memo["hm"]
+    if k is None:
+        return stiff.solve_many(rhs)
+    if not rhs:
+        return []
+    if memo.get("direct", True) and 0 < k.shape[0] <= direct.large_dofs():
+        ds = memo.get("ds") or direct.DirectSolver(hm.node_ijk, refine=False)
+        try:
+            with direct._ONE_SHOT:
+                us = ds.solve_many(k, rhs)
+            memo["ds"] = ds
+            return us
+        except (RuntimeError, MemoryError):
+            ds.invalidate()
+            memo.pop("ds", None)
+            memo["direct"] = False
+    cg = memo.get("cg") or Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
+    memo["cg"] = cg
+    return cg.solve_many(k, rhs)
 
 
 # cells through a member below which it gets a submodel (cut cells)
@@ -1590,9 +1626,14 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
                            stress_mask=stress_mask, printed_solid=printed_solid)
 
 
-def _solve_grid(study: Study, g, nu, moduli, rhs):
+def _solve_grid(study: Study, g, nu, moduli, rhs, memo=None):
     """Solve the analysis grid `g` (_analysis_grid) with elasticity `nu` for
-    each right-hand side: (stiffness object for nodal_stress, displacements)."""
+    each right-hand side: (stiffness object for nodal_stress, displacements).
+
+    With `memo` (a dict, empty at first) the matrix and its factorization
+    are kept there, and a later call with the same memo solves its
+    right-hand sides on them (the grid, moduli and springs must be the
+    same)."""
     from .simp import _use_mg
 
     mat = study.material
@@ -1601,8 +1642,10 @@ def _solve_grid(study: Study, g, nu, moduli, rhs):
     if scale is not None:
         # a bought member's cells hold only their printed share of the modulus (stock.py)
         moduli = np.broadcast_to(moduli, (hm.n_elem,)) * scale
+    if memo is not None and "stiff" in memo:
+        return memo["stiff"], _memo_solve(memo, rhs)
     if g.cg is not None:
-        return _solve_cut(g.cg, nu, fixed, bc.springs, mat.E, moduli, rhs)
+        return _solve_cut(g.cg, nu, fixed, bc.springs, mat.E, moduli, rhs, memo)
     if g.fill is not None:
         # a part-filled cell is that share as stiff; its stress stays
         # the material's (nodal_stress at the full modulus)
@@ -1618,12 +1661,17 @@ def _solve_grid(study: Study, g, nu, moduli, rhs):
                                rtol=1e-6, maxiter=3000)
         stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
         stiff.stress_mask = getattr(g, "stress_mask", None)
+        if memo is not None:
+            memo.update(stiff=stiff, k=None, hm=hm)
         return stiff, stiff.solve_many(rhs)
     stiff = Stiffness(hm, nu, fixed)
     stiff.stress_mask = getattr(g, "stress_mask", None)
     k = stiff.assemble(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
     if bc.springs is not None:
         k = (k + mat.E * bc.springs).tocsr()
+    if memo is not None:
+        memo.update(stiff=stiff, k=k, hm=hm)
+        return stiff, _memo_solve(memo, rhs)
     # One factorization for every case where the grid is small enough for
     # it (direct.py). Past that, CG: 1e-6 is three-plus significant figures
     # of stress; 1e-7 cost a third more iterations. All cases share one
@@ -2145,8 +2193,10 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             ks, held = pushseat.hold(ps, hm.node_xyz, g.pitch)
             sprung = held if bc.springs is None else (bc.springs + held).tocsr()
             gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=sprung)})
+            # one matrix for the cases, the patches and the patches cut finer: factored once
+            memo = {}
             stiff, us, _, cases = pushseat.solve_cases(
-                lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r), rhs, ps, mat.E * ks,
+                lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r, memo), rhs, ps, mat.E * ks,
                 xyz=hm.node_xyz, layout=layout, spreads=spreads if layout is not None else None)
             if into is not None:
                 into.clear()
