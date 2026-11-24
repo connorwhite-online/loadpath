@@ -222,23 +222,10 @@ def _unformed(solid, thin, pitch, min_wall, reach, cells=False):
         hi = np.minimum(np.array([s.stop for s in sl]) + off + halo, solid.shape)
         crop = tuple(slice(a, b) for a, b in zip(lo, hi))
         sub = solid[crop]
-        # the ball's reading needs the solid a ball's diameter past the crop:
-        # cut at the crop's face, material running on through it read as a
-        # wall ending there, and a column of cells along the face came out
-        # unformed (the Touch-Mic body's rim, 2026-11-24). Past the grid's
-        # own edge it is void.
-        m = int(np.ceil(2.0 * r)) + 2
-        elo = np.maximum(lo - m, 0)
-        ehi = np.minimum(hi + m, solid.shape)
-        big = np.pad(solid[tuple(slice(a, b) for a, b in zip(elo, ehi))], 1, constant_values=False)
-        inner = tuple(slice(1 + a - e, 1 + a - e + (b - a)) for a, b, e in zip(lo, hi, elo))
-        din_big = ndimage.distance_transform_edt(big)
-        core_big = din_big > r
-        swept_big = ndimage.distance_transform_edt(~core_big) <= r if core_big.any() else np.zeros_like(big)
-        din = din_big[inner]
-        core = core_big[inner]
-        swept_big &= big
-        swept = swept_big[inner]
+        # A/B: the old crop (void past the crop's face)
+        din = ndimage.distance_transform_edt(np.pad(sub, 1, constant_values=False))[1:-1, 1:-1, 1:-1]
+        core = din > r
+        swept = (ndimage.distance_transform_edt(~core) <= r) & sub if core.any() else np.zeros_like(sub)
         lost = sub & ~swept
         mine = np.zeros_like(sub)
         cl = (lbl == k) & mark[box]
@@ -251,8 +238,7 @@ def _unformed(solid, thin, pitch, min_wall, reach, cells=False):
         keep = keep[keep > 0]
         if not len(keep):
             continue
-        far = (ndimage.distance_transform_edt(~swept_big)[inner] * pitch if swept_big.any()
-               else np.full(sub.shape, np.inf))
+        far = ndimage.distance_transform_edt(~swept) * pitch if swept.any() else np.full(sub.shape, np.inf)
         cell3 = pitch ** 3
         for j in keep:
             piece = ll == j
