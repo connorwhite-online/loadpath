@@ -948,6 +948,85 @@ def _stress_sized_k(dm, step, k0, sd=None):
     return k
 
 
+# Where a keep-out (a bore, a slot, a part's way in) crosses the generated
+# body, an exact cut leaves a knife edge all round its rim: sharp to the
+# hand, a feather edge wherever the body meets the keep-out at a shallow
+# angle (thinner than the process prints, so it chips or curls), and a rim
+# the slicer and the eye both read as broken. The field is cut first with a
+# G2 round instead (sdf_kit.soft_subtract's rule, in the pipeline), so the
+# exact cut afterwards only trims the fit. The round's size is physics:
+# - a free rim (nothing bears on it): FILLET_SHARE of the thickness of the
+#   member it ends, as at a drawn shape (Peterson: little gained past 0.25 t);
+# - a bearing rim (a load or support acts there: a pin's bore, a screw's
+#   clamp face): an edge break of RIM_BEARING_SHARE x t. A round there is
+#   lost contact: r off each end of a bore of length t shortens its bearing
+#   by 2r, and the bearing stress rises by 1 / (1 - 2r/t): +25% at 0.1 t;
+# - beside a drawn shape the drawn shape's own edge stands (the carry above
+#   runs the body flush to it), so the round fades to the edge break there.
+# Never under 2 fine cells (the field cannot hold a tighter one) and never
+# past the cut: it only removes material, and only within k of the rim.
+SOFT_CUT = os.environ.get("LOADPATH_SOFT_CUT", "1") != "0"
+RIM_BEARING_SHARE = float(os.environ.get("LOADPATH_RIM_BEARING_SHARE", "0.1"))
+
+
+def _bearing_shapes(study):
+    """The shapes loads and supports act on: their rims keep an edge break only."""
+    regions = {r.id: r.shape for r in list(study.keep_out) + list(study.preserve)}
+    out = []
+    things = list(study.supports) + [ld for lc in study.load_cases for ld in lc.loads]
+    for t in things:
+        sh = getattr(t, "shape", None)
+        if sh is None and getattr(t, "region", None) in regions:
+            sh = regions[t.region]
+        if sh is not None:
+            out.append(sh)
+    return out
+
+
+def _soft_cut(fine, dk, keep, step, level, sdfs, bearing, pitch, design=(), env=None):
+    """Cut the keep-outs (signed distance `dk`, negative inside) out of the
+    field with rounded rims (see SOFT_CUT). `keep` (0..1) marks where the
+    body is run flush into a drawn shape's face instead."""
+    near = dk < FILLET_KMAX
+    if not near.any():
+        return fine
+    dm = _field_distance(fine, step, level)
+    depth = np.clip(-dm, 0.0, None)
+    rad = int(np.ceil(4.0 / step))
+    # the thickness of the member ending at the rim, read just outside the cut
+    # (inside it the field is already thinned by smoothing across the face)
+    thick = 2.0 * ndimage.maximum_filter(np.where(dk > 0, depth, 0.0), size=2 * rad + 1, mode="constant")
+    kmin = 2.0 * step
+    share = np.full(fine.shape, FILLET_SHARE)
+    if bearing:
+        db = sdfs.min(bearing).reshape(fine.shape)
+        w = np.clip((db - pitch) / pitch, 0.0, 1.0)          # bearing within a cell, free two cells out
+        share = RIM_BEARING_SHARE + w * (FILLET_SHARE - RIM_BEARING_SHARE)
+    k = np.clip(share * thick / 0.2526, kmin, FILLET_KMAX)
+    # Only where the body's surface leaves the keep-out's at an angle (a
+    # rim): where the body lies along the keep-out's face (a floor under a
+    # board's room, a wall beside it) a smooth max of the two shaves the
+    # body by 0.2 k, a whole wall's worth at a wall-sized round (the wall
+    # box lost 6% of its mass so). There it keeps the least round.
+    ga, gb = np.gradient(dm, step), np.gradient(dk, step)
+    dot = sum(a * b for a, b in zip(ga, gb))
+    na = np.sqrt(sum(a * a for a in ga)) * np.sqrt(sum(b * b for b in gb))
+    cos = np.where(na > 1e-9, dot / np.maximum(na, 1e-9), 0.0)
+    w = ndimage.gaussian_filter(np.clip((cos + 0.95) / 0.45, 0.0, 1.0), 2.0)
+    k = kmin + w * (k - kmin)
+    if keep is not None:
+        k = kmin + (1.0 - keep) * (k - kmin)
+    k = ndimage.gaussian_filter(k, 2.0)
+    # smooth max of the body and the cut: -(G2 union of -dm and dk)
+    du = -_g2_union(-dm, dk, k)
+    width = 2.0 * step
+    cut = np.clip(level - du / (2.0 * width), 0.0, 1.0)
+    if keep is not None:
+        # flush into a drawn face: the carried field stands, the exact cut ends it
+        cut = keep * fine + (1.0 - keep) * cut
+    return np.where(near, np.minimum(fine, cut), fine)
+
+
 def _clear_free_faces(du, dm, preserve, pts, step, inset, level=0.5, design=()):
     """Keep a drawn shape's flat faces that no member stands on clear of the
     fillet: a boss's end face is a seat (a washer, a screw head, a mating
@@ -1032,7 +1111,7 @@ def _drawn_carried(grid, domain: Domain, preserve):
 
 
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
-                flush=(), preserve=(), design=(), draft=None, skin=()):
+                flush=(), preserve=(), design=(), draft=None, skin=(), bearing=()):
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -1264,6 +1343,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         clearance = 0.5 * domain.pitch
         d = sdfs.min(keep_out)
         fade = np.clip(d / clearance, 0.0, 1.0)
+        keep = None
         if preserve and o.fillet and o.blend > 0:
             # ...except beside preserved geometry: a pad that bears on a
             # keep-out (a motor face) ends exactly at it, and the faded
@@ -1292,7 +1372,12 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
                 through = ndimage.gaussian_filter(fine[tuple(idx)], 1.0)
                 w = (keep * (d > -3.0 * domain.pitch)).reshape(fine.shape) * band
                 fine = w * through + (1.0 - w) * fine
-        fine = fine * fade.reshape(fine.shape)
+        if SOFT_CUT and o.fillet:
+            fine = _soft_cut(fine, d.reshape(fine.shape), keep.reshape(fine.shape) if preserve and o.blend > 0
+                             else None, step, o.level, sdfs, bearing, domain.pitch, design,
+                             env.reshape(fine.shape) if design else None)
+        else:
+            fine = fine * fade.reshape(fine.shape)
         if design and min_member and 0.5 * float(min_member) >= step:
             room = _member_room(sdfs, design, preserve, keep_out, 0.5 * float(min_member), step)
             if room is not None:
@@ -2299,7 +2384,8 @@ def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstr
     try:
         iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
                           flush=flush, preserve=inner, design=list(study.design_space),
-                          draft=draft, skin=[r.shape for r in study.preserve if r.id == "skin"])
+                          draft=draft, skin=[r.shape for r in study.preserve if r.id == "skin"],
+                          bearing=_bearing_shapes(study))
     except ValueError as exc:
         # Nothing designed, but preserved geometry to deliver: a fixed
         # exterior whose bare skin already meets every target (a touch

@@ -141,13 +141,16 @@ def test_feather_edges_at_a_bore_are_cut_to_what_prints():
     import loadpath.reconstruct as rc
     s = study_from_dict(spec)
     d = build_domain(s)
-    # the cut itself, with the room for a member (below) not yet taken out
-    room = rc._member_room
+    # the cut itself, with the room for a member (below) and the rounded
+    # keep-out rim (reconstruct.SOFT_CUT, which ends the slant in a round
+    # before any feather forms) not yet taken out
+    room, soft = rc._member_room, rc.SOFT_CUT
     rc._member_room = lambda *a, **k: None
+    rc.SOFT_CUT = False
     try:
         mesh, info = reconstruct(s, d, np.ones(d.mesh.n_elem))
     finally:
-        rc._member_room = room
+        rc._member_room, rc.SOFT_CUT = room, soft
     assert info.get("unformedDropped"), info
     w = check_process(mesh, "mjf", build="+z", material="pa12")["walls"]
     assert w["ok"] is True and not w["unformed"], w

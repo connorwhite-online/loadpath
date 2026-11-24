@@ -343,6 +343,31 @@ def _round_union(a, b, r):
     return np.maximum(r, np.minimum(a, b)) - np.sqrt(u * u + v * v)
 
 
+def _round_cut(a, b, r):
+    """max(a, -b): `b` cut out of `a`, the rim where the cut leaves a's
+    surface rounded to radius r (an array, per point)."""
+    r = np.maximum(np.asarray(r, float), 1e-9)
+    na = -a
+    u = np.maximum(r - na, 0.0)
+    v = np.maximum(r - b, 0.0)
+    return -(np.maximum(r, np.minimum(na, b)) - np.sqrt(u * u + v * v))
+
+
+# Where a component's clearance runs through the body (a battery's pocket
+# through a rib, a board's slot in a wall), the exact cut alone leaves a
+# knife edge on the inside all round its rim. The body is cut first with a
+# round there (sdf_kit.soft_subtract's rule), an edge break of
+# RIM_BEARING_SHARE of the wall: the part holds the component there, and a
+# round is seat lost (r off each end of a seat of length t raises its
+# bearing pressure by 1 / (1 - 2r/t), +25% at 0.1 t). The exact cut after
+# trims only the fit. A drawn `cut` interface is not rounded: its faces are
+# the spec (a plug's guide, checked present to 98%), so a rim on one is
+# drawn with it (the pod's USB-C mouth), and the exterior's own rim is the
+# designer's.
+SOFT_CUT = os.environ.get("LOADPATH_SOFT_CUT", "1") != "0"
+RIM_BEARING_SHARE = 0.1
+
+
 def _smooth(x):
     x = np.clip(x, 0.0, 1.0)
     return x * x * (3 - 2 * x)
@@ -413,6 +438,10 @@ class BodyField:
             sol = _round_union(sol, sh.sdf(P) + inset, blend)
         for sh, wall, blend in self.walls:
             sol = _round_union(sol, sh.sdf(P) - wall, blend)
+        if SOFT_CUT:
+            t = self.thickness(P)
+            for sh, c in self.comps:
+                sol = _round_cut(sol, sh.sdf(P) - c, RIM_BEARING_SHARE * t)
         return sol, e
 
     def cavity(self, P):
@@ -457,6 +486,7 @@ class _Grid:
         self.zone_w = [_smooth(0.5 - z.shape.sdf(self.P) / max(z.blend, 1e-6)) for z in sp.zones]
         self.adds = [(sh.sdf(self.P), blend, proud) for sh, blend, proud in body.adds]
         self.walls = [(sh.sdf(self.P) - wall, blend) for sh, wall, blend in body.walls]
+        self.comp_d = [sh.sdf(self.P) - c for sh, c in body.comps]
         cut = np.full(len(self.P), np.inf)
         for sh in body.cuts:
             cut = np.minimum(cut, sh.sdf(self.P))
@@ -477,6 +507,9 @@ class _Grid:
             sol = _round_union(sol, a, blend)
         for a, blend in self.walls:
             sol = _round_union(sol, a, blend)
+        if SOFT_CUT:
+            for a in self.comp_d:
+                sol = _round_cut(sol, a, RIM_BEARING_SHARE * t)
         d = np.maximum(self.e, sol)
         for a, _, proud in self.adds:
             if proud:

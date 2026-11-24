@@ -99,3 +99,64 @@ def test_the_fillet_grows_with_the_member():
         k = _stress_sized_k(dm, step, 1.0)
         assert abs(0.2526 * k[n // 2, n // 2, n // 2] - 0.25 * t) < 0.1 * t
 
+
+
+PLATE = {"name": "plate", "material": "petg", "process": {"type": "fdm"}, "minMember": 2.4,
+         "designSpace": [{"type": "box", "min": [-30, -15, 0], "max": [30, 15, 6]}],
+         "keepOut": [
+             {"id": "bore", "shape": {"type": "cylinder", "center": [-18, 0, 3], "axis": "z", "length": 12, "r": 2.2}},
+             {"id": "slot", "shape": {"type": "box", "min": [5, -6, -2], "max": [15, 6, 8]}}],
+         "supports": [{"region": "bore"}],
+         "loadCases": [{"name": "pull", "loads": [{"shape": {"type": "box", "min": [26, -15, 0], "max": [30, 15, 6]},
+                                                  "force": [0, 0, -100]}]}],
+         "goal": {"volumeFraction": 0.5}, "resolution": {"pitch": 1.0}}
+
+
+def _sharp_rim(mesh, at, r, angle=50.0):
+    """mm of mesh edge within r of `at` that turns more than `angle` degrees."""
+    ang = mesh.face_adjacency_angles
+    e = mesh.vertices[mesh.face_adjacency_edges]
+    mid = e.mean(axis=1)
+    near = np.linalg.norm(mid - np.asarray(at, float), axis=1) < r
+    sharp = near & (np.degrees(ang) > angle)
+    return float(np.linalg.norm(e[sharp, 0] - e[sharp, 1], axis=1).sum())
+
+
+def test_keep_out_rims_are_rounded_to_the_member_and_bearing_rims_only_broken():
+    """A keep-out cut exactly after meshing leaves a knife edge round its
+    rim (2026-11-24, after the bike mount's phone side). Now it is cut in the
+    field first (reconstruct._soft_cut): a free opening's rim is a round of
+    about a quarter of the plate (Peterson's shoulder rule), a rim something
+    bears on (the supported bore) only an edge break, so the bore keeps its
+    bearing length."""
+    import loadpath.reconstruct as rc
+
+    st = study_from_dict(PLATE)
+    d = build_domain(st)
+    x = np.ones(d.mesh.n_elem)
+    soft = rc.SOFT_CUT
+    try:
+        rc.SOFT_CUT = False
+        hard, _ = reconstruct(st, d, x)
+    finally:
+        rc.SOFT_CUT = soft
+    mesh, _ = reconstruct(st, d, x)
+    def top(m, x):
+        loc, _, _ = m.ray.intersects_location([[x, 0.0, 20.0]], [[0.0, 0.0, -1.0]])
+        return float(loc[:, 2].max()) if len(loc) else 0.0
+
+    def bore(m, z):
+        loc, _, _ = m.ray.intersects_location([[-18.0, 0.0, z]], [[1.0, 0.0, 0.0]])
+        return float(loc[:, 0].min() + 18.0)
+
+    # The slot's rim (its face at x = 15, the plate's top at 5.8): exact, the
+    # top ran on flat to within 0.6 mm of the face and dropped (5.25 mm at
+    # 0.5 mm off it); now a round of about 1.5 mm, a quarter of the plate
+    assert top(hard, 15.7) > 5.1, top(hard, 15.7)
+    assert top(mesh, 15.7) < 5.0, top(mesh, 15.7)
+    assert top(mesh, 16.5) < top(hard, 16.5) - 0.1
+    assert abs(top(mesh, 20.0) - top(hard, 20.0)) < 0.05      # and nothing past it
+    # the supported bore keeps its bearing: the same wall over its depth
+    for z in (1.0, 2.0, 3.0, 4.0, 5.0):
+        assert abs(bore(mesh, z) - bore(hard, z)) < 0.1, (z, bore(mesh, z), bore(hard, z))
+    assert 0.0 < hard.volume - mesh.volume < 0.02 * hard.volume

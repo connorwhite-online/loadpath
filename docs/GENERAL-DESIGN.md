@@ -479,6 +479,36 @@ on development parts (a rod holder, a shelf bracket, a reducer duct):
    pins bearing on the bosses only, a load placement, not a geometry change. `LOADPATH_DRAWN_CARRY=0` and `LOADPATH_DRAWN_BEARS=0`
    turn the meshing and domain halves off.
 
+12. **Knife edges where a keep-out crosses the body.** (2026-11-24, after
+   the bike phone mount's phone side came out with sharp, broken edges at
+   its slots and the phone's way in.) A keep-out was cut exactly after
+   meshing: wherever a slot, an opening or a way in crossed the generated
+   surface the rim was a knife edge, and where it crossed at a slant a
+   feather edge thinner than the process prints (then cut off by
+   `_drop_unformed`, which left a ragged edge of its own). The field is
+   now cut first with a G2 round (`reconstruct._soft_cut`, the pipeline's
+   form of `sdf_kit.soft_subtract`), and the exact cut afterwards only
+   trims the fit. The round's size is physics, not taste:
+   - a free rim (nothing bears on it): a quarter of the member it ends, as
+     at any shoulder (Peterson: little gained past r/t 0.25);
+   - a rim a load or support acts on (a pin's bore, a screw's seat): an
+     edge break of 0.1 t, since a round there is bearing lost: r off each
+     end of a bore of length t raises its bearing stress by 1 / (1 - 2r/t);
+   - where the body lies along the keep-out's face (a floor under a
+     board's room) no round, or the smooth max would shave the wall (the
+     wall box lost 6% of its mass so before this was weighted by angle);
+   - beside a drawn shape its own edge stands.
+   A plate with a free slot and a supported bore
+   (`tests/test_drawn_transitions.py`): the slot's rim is a 1.5 mm round
+   (was flat to within 0.6 mm of the face, then a drop), the bore's wall
+   unchanged over its depth, 1.2% of the volume. The slanted bore of
+   `test_feather_edges_at_a_bore_are_cut_to_what_prints` now has no feather
+   to drop. `build` gives a component's pocket the same edge break where it
+   runs through the body; a drawn `cut` interface stays exact, its faces
+   being the spec (the pod's port is checked present to 98%; a round on it
+   is drawn with it, as the pod's USB-C mouth is). `LOADPATH_SOFT_CUT=0`
+   turns both off.
+
 ### Fixed: parts left heavier than they need to be
 
 Read from the search logs of the 2026-11-21 re-run: the search's time, not
