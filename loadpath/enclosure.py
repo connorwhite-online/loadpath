@@ -661,23 +661,9 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         # load ran through the open interior, the domain pinned every cell
         # under a loaded node solid (a force acts on material), and the desk
         # hub, the remote and the tool grip had nothing left to design
-        # ("every cell is preserved").
-        skin_mass = None
-        if shell_slices:
-            try:
-                # PLY, not STL: the speaker's and the tool grip's skins
-                # touch themselves where openings meet, closed as written
-                # with those corners kept apart; STL loses that and welding
-                # on reading opened them (a mesh shape must be closed)
-                p = _write_mesh(trimesh_from_manifold(skin_shape.to_manifold()), os.path.join(cad, "skin-mass.ply"))
-                shape_from_spec({"type": "mesh", "path": os.path.abspath(p)})
-                skin_mass = {"type": "mesh", "path": os.path.abspath(p)}
-            except Exception:  # noqa: BLE001 - the box stands in
-                warnings.append("loads.drop: the skin could not be meshed closed; the shell's mass loads its "
-                                "slices' boxes")
-
-        def _on_skin(box):
-            return box if skin_mass is None else {"type": "intersect", "shapes": [box, skin_mass]}
+        # ("every cell is preserved"). (A skin mesh intersected with the box
+        # did it too, but a fine skin's mesh is a million faces, and the
+        # speaker's runner died reading it.)
         faces = drop.get("faces") or _FACES
         massed = {k: v for k, v in mounts.items() if v["mass"] > 0}
         if not massed:
@@ -699,7 +685,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
                 pts.append((k, float(v["mass"]), np.asarray(at, float), {"region": f"mount-{k}"}))
             # the shell's own mass lands too: its weight goes into the
             # floor's push and its inertia into the spin, slice by slice
-            pts += [(f"shell-{j}", sm, sc, {"shape": _on_skin(box)}) for j, (sm, sc, box) in enumerate(shell_slices)]
+            pts += [(f"shell-{j}", sm, sc, {"region": "skin", "shape": box}) for j, (sm, sc, box) in enumerate(shell_slices)]
             slab = face_slab(f, t_skin + crush)
             slab = _landing_patch(exterior, slab, pts, d)
             at_floor = _contact_centre(exterior, slab)
@@ -709,7 +695,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
             ge = g * _landing_share(pts, at_floor, d)
             ls, total = [], 0.0
             for k, mi, at, tgt in pts:
-                if "region" in tgt:
+                if "region" in tgt and "shape" not in tgt:
                     ls.append({**tgt, "mass": round(mi, 6), "dynamic": round(ge, 4), "gravity": f, "at": _r(at, 3)})
                 else:
                     ls.append({**tgt, "force": _r(mi * 9.81 * ge * d, 3)})

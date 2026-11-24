@@ -343,3 +343,67 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print("ok", name)
+
+
+def _pocket_plate():
+    # a 40 x 30 x 6 slab, a 4 mm hole through it and a 2 mm deep pocket
+    # in its top: CAD-like (a few long triangles per face)
+    slab = trimesh.creation.box([40.0, 30.0, 6.0])
+    hole = trimesh.creation.cylinder(radius=2.0, height=10.0, sections=64)
+    hole.apply_translation([-13.0, -8.0, 0.0])
+    pocket = trimesh.creation.box([16.0, 10.0, 4.0])
+    pocket.apply_translation([4.0, 2.0, 3.0])
+    return slab.difference(hole).difference(pocket)
+
+
+def test_feature_remesh_keeps_the_lines_and_evens_the_triangles():
+    from loadpath import subdcrease
+
+    m = _pocket_plate()
+    assert float(m.edges_unique_length.max()) > 30          # long CAD triangles
+    lines, _ = subdcrease.feature_lines(m, 0.1, 1.5)
+    r = subdcrease.feature_remesh(m, 0.5, 8 * 0.1 / 1.5, lines)
+    assert r.is_watertight and r.euler_number == m.euler_number
+    assert float(r.edges_unique_length.max()) < 1.5         # even, about the step
+    # every feature line is still a chain of the remesh's own sharp edges
+    # (a hole's 64-gon rim to within the sagitta of a remesh edge on it,
+    # about 0.8^2 / (8 * 2) mm)
+    E = r.face_adjacency_edges[r.face_adjacency_angles > 8 * 0.1 / 1.5]
+    t = np.linspace(0, 1, 9)[:, None, None]
+    S = (r.vertices[E[:, 0]][None] * (1 - t) + r.vertices[E[:, 1]][None] * t).reshape(-1, 3)
+    from scipy.spatial import cKDTree
+    D = np.vstack([subdcrease._dense(P, c, 0.05) for P, c, _ in lines])
+    assert cKDTree(S).query(D)[0].max() < 0.05
+
+
+def test_feature_gap_is_the_narrowest_flat_between_creases():
+    from loadpath import subdcrease
+
+    box = trimesh.creation.box([40.0, 30.0, 6.0])
+    lines, _ = subdcrease.feature_lines(box, 0.1, 2.0)
+    assert abs(subdcrease.feature_gap(box, lines, 0.2, 9.0) - 6.0) < 1e-6    # the sides
+    m = _pocket_plate()
+    lines, _ = subdcrease.feature_lines(m, 0.1, 1.5)
+    assert abs(subdcrease.feature_gap(m, lines, 0.15, 9.0) - 2.0) < 1e-6      # the pocket wall
+    # a skin's two faces through its thickness are not a flat between them
+    shell = trimesh.creation.box([40.0, 30.0, 10.0]).difference(
+        trimesh.creation.box([36.0, 26.0, 10.0]).apply_translation([0, 0, -2.0]))
+    lines, _ = subdcrease.feature_lines(shell, 0.1, 1.5)
+    assert subdcrease.feature_gap(shell, lines, 0.15, 3.0) >= 2.0 - 1e-6       # the rim band, 2 mm
+
+
+def test_creases_laid_on_a_cad_part_with_a_hole_and_a_pocket():
+    # the long-triangle CAD mesh remeshed evenly along its lines, the hole's
+    # rims traced as rings: every network laid whole
+    from loadpath import subdcrease
+
+    m = _pocket_plate()
+    tol = 0.1
+    lines, _ = subdcrease.feature_lines(m, tol, 2.0)
+    h = (2.0 / 3.0) * subdcrease.feature_gap(m, lines, 0.2, 3.0)
+    n = int(m.area / h ** 2)
+    c = subd.quad_cage(m, n, crease=np.degrees(8 * tol / h))
+    c, rep = subdcrease.lay_creases(c, m, tol, h=h)
+    assert rep["takenLength"] >= 0.95 * rep["length"], rep["refusedAt"]
+    closed = [P for P, cl, _ in subdcrease.feature_lines(m, tol, h)[0] if cl]
+    assert len(closed) == 2 and not any(r["closed"] for r in rep["refusedAt"])   # both rims of the hole

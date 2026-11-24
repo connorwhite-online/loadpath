@@ -86,15 +86,14 @@ def basis(br, t, d=3, der=False):
     return N, D
 
 
-def _halves(n, toward_start, toward_end, depth=DEPTH):
-    """Breakpoints 0..n, halved `depth` times into the first span when it
-    ends at a star point (`toward_start`), and into the last."""
+def _halves(n, start, end):
+    """Breakpoints 0..n, halved `start` times into the first span (toward
+    a star point there) and `end` times into the last."""
     br = list(range(n + 1))
-    for j in range(1, depth + 1):
-        if toward_start:
-            br.append(2.0 ** -j)
-        if toward_end:
-            br.append(n - 2.0 ** -j)
+    for j in range(1, start + 1):
+        br.append(2.0 ** -j)
+    for j in range(1, end + 1):
+        br.append(n - 2.0 ** -j)
     return np.unique(np.asarray(br, float))
 
 
@@ -293,6 +292,24 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         pieces = find_pieces()
 
     # ---- lines: maximal straight runs of drawn edges
+    # A line that meets a crease stops there: the surface turns a corner
+    # at the crease, and one C2 curve laid on through it misses the turn
+    # (0.21-0.27 mm a face off an L-bracket's edges); a line along a crease
+    # goes on along it
+    shp = cage.sharpness
+    crs = cage.crease
+
+    def stops(v, e1, e2):
+        # a crease's free end (one crease edge, a dart) is smooth across:
+        # the line, and the rectangle side along it, run on through
+        return bool(evv[v] or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
+    def halvings(v):
+        # knots halved toward each star point; one fewer at a star point on
+        # a crease, whose sectors are one-sided fans of a face or two: four
+        # halvings there swing (a 1.3 deg kink between rectangles at a
+        # plate's pocket corner). Per point: the lines and every rectangle
+        # round it agree
+        return 0 if not evv[v] else depth - 1 if shp[v] >= 2 else depth
     line_of = {}                              # edge -> (line, index, same direction as the line)
     lines = []
     for q0 in range(m):
@@ -307,7 +324,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                 if evv[v]:
                     break
                 b = twin(*cont(*twin(*h)))
-                if not cut[QE[b]]:
+                if not cut[QE[b]] or stops(v, QE[h], QE[b]):
                     break
                 h = b
                 if h == (q0, k0):
@@ -318,7 +335,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                 if evv[v]:
                     break
                 n = cont(*hs[-1])
-                if not cut[QE[n]]:
+                if not cut[QE[n]] or stops(v, QE[hs[-1]], QE[n]):
                     break
                 if n == hs[0]:
                     return None, {"layout": "a line closes on itself"}
@@ -334,7 +351,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         n = len(hs)
         v0 = start(*hs[0])
         v1 = int(Q[hs[-1][0], (hs[-1][1] + 1) % 4])
-        br = _halves(n, evv[v0], evv[v1], depth)
+        br = _halves(n, halvings(v0), halvings(v1))
         # a span beside a face with a star point corner is two cubics: a knot at its middle
         mids = [i + 0.5 for i, (q, k) in enumerate(hs) if evf[q] or evf[int(tq[q, k])]]
         br = np.unique(np.r_[br, mids])
@@ -369,6 +386,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     out = []
     band = np.zeros(m, bool)
     worst = exact = 0.0
+    worst_at = None
     side_normals = {}
     angles = []
     for comp in pieces:
@@ -412,10 +430,10 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         for key, hs in sides.items():
             if any(line_of.get(int(QE[hh]), (-1,))[0] != info[key][0] for hh in hs):
                 return None, {"layout": "a rectangle's side leaves its line"}
-        corner_ev = {"00": evv[_vert(Q, R[0][0], 0)],
-                     "a0": evv[_vert(Q, R[0][-1], 1)],
-                     "ab": evv[_vert(Q, R[-1][-1], 2)],
-                     "0b": evv[_vert(Q, R[-1][0], 3)]}
+        cv = {"00": _vert(Q, R[0][0], 0), "a0": _vert(Q, R[0][-1], 1),
+              "ab": _vert(Q, R[-1][-1], 2), "0b": _vert(Q, R[-1][0], 3)}
+        corner_ev = {k: evv[v] for k, v in cv.items()}
+        dep = {k: halvings(v) for k, v in cv.items()}
 
         def mapped(key, n):
             L, t0, dt = info[key]
@@ -424,8 +442,8 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
             inside = br[(br > lo + 1e-12) & (br < hi - 1e-12)]
             return (inside - t0) / dt
 
-        bu = _halves(a, corner_ev["00"] or corner_ev["0b"], corner_ev["a0"] or corner_ev["ab"], depth)
-        bv = _halves(b, corner_ev["00"] or corner_ev["a0"], corner_ev["0b"] or corner_ev["ab"], depth)
+        bu = _halves(a, max(dep["00"], dep["0b"]), max(dep["a0"], dep["ab"]))
+        bv = _halves(b, max(dep["00"], dep["a0"]), max(dep["0b"], dep["ab"]))
         bu = np.unique(np.r_[bu, mapped("v0", a), mapped("v1", a)])
         bv = np.unique(np.r_[bv, mapped("u0", b), mapped("u1", b)])
         nu, nv = len(bu) + 2, len(bv) + 2
@@ -492,6 +510,8 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         S = np.einsum("ia,abk,jb->ijk", Bu, poles, Bv, optimize=True)
         dev = np.linalg.norm(S - X, axis=2)
         err = float(dev.max())
+        if err > worst:
+            worst_at = X.reshape(-1, 3)[int(dev.argmax())]
         worst = max(worst, err)
         if Rg.any():
             exact = max(exact, float(dev[Rg].max()))
@@ -514,12 +534,14 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
             progress(f"lines: {len(out)} rectangles")
     rep = {"layout": "lines", "lines": len(lines), "rectangles": len(out), "merged": merged,
            "bandFaces": int(band.sum()),
-           "patchToLimit": {"max": round(worst, 5), "regularMax": exact},
+           "patchToLimit": {"max": round(worst, 5), "regularMax": exact,
+                            "at": np.round(worst_at, 3).tolist() if worst > 0 else None},
            "packedSurfaces": len(out),
            "edgeAngle": {"max": round(float(max(angles)) if angles else 0.0, 4),
                          "p99": round(float(np.percentile(angles, 99)) if angles else 0.0, 4)}}
     if worst > tolerance / 3:
-        rep["layout"] = f"a rectangle misses the limit surface by {worst:.4f} mm"
+        rep["layout"] = (f"a rectangle misses the limit surface by {worst:.4f} mm"
+                         f" at {np.round(worst_at, 2).tolist()}")
         return None, rep
     if band.any():
         out += [("band", np.flatnonzero(band))]

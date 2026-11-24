@@ -653,6 +653,11 @@ class SimpOptions:
     # (40 iterations) and 1.42 run to the stall (64); its search, which
     # passed at 45.8 g before the schedule, ended at 61 g with it.
     stiffness_bound: bool = False
+    # The part is one piece (onepiece.py): the minimum member (mm) the
+    # handled state's bound is read with, or None (off). Held as a penalty
+    # on the compliance of the part held at one support group and pushed at
+    # the others, over that of the minimum-member bars between them.
+    one_piece: float | None = None
     eta: float = 0.5
     # Stiffness is credited to the ERODED design (projected at eta + this),
     # while volume is counted on the blueprint (eta) we deliver. A member
@@ -1072,6 +1077,42 @@ def _held_pieces(fe, domain, xp) -> int:
     return len(np.unique(lbl[ijk][fe.anchor]))
 
 
+def _one_piece_state(domain, nu, opts):
+    """The handled state (onepiece.handled) and its solver, or None when
+    opts.one_piece is off or the part stands on one support group."""
+    if not opts.one_piece:
+        return None
+    from .onepiece import handled
+
+    hp = handled(domain, float(opts.one_piece))
+    if hp is None:
+        return None
+    return {"case": hp, "fe": _Analysis(hp.domain, nu, opts.solve_rtol), "us": [None] * 3, "w": 0.0}
+
+
+def _one_piece_step(piece, e, xe, rtol, cref):
+    """Solve the handled state on moduli e and return (record, the
+    penalty's gradient on the eroded design or None). The penalty is
+    cref * w * log(C_h / bound) while C_h is over the bound: the gradient
+    of a logarithm is the compliance's own relative sensitivity, so its
+    pull is as large in a part in pieces (C_h a million times the bound)
+    as in one just over. w is raised while over (onepiece.START, RAISE,
+    CAP) and kept once under."""
+    from . import onepiece as op
+
+    hp, fe_h = piece["case"], piece["fe"]
+    piece["us"] = fe_h.solve(e, xe, piece["us"], rtol=rtol, loads=hp.domain.loads)
+    c_h = float(sum(f @ u for f, u in zip(hp.domain.loads, piece["us"])))
+    r = c_h / hp.bound
+    if r > 1.0:
+        piece["w"] = min(max(piece["w"] * op.RAISE, op.START), op.CAP)
+    rec = {"onePiece": round(r, 4), "onePieceWeight": round(piece["w"], 3)}
+    if r <= 1.0 or piece["w"] <= 0.0 or not np.isfinite(c_h) or c_h <= 0.0:
+        return rec, None
+    ce = sum(fe_h.strain_energy(u) for u in piece["us"])
+    return rec, -(cref * piece["w"] / c_h) * PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN) * ce
+
+
 def _seated_reference(fe, state):
     """Under heat, the worst direction thermal.sensitivities found for each
     uncertain case on seats, and its pushes: the next solve's reference push
@@ -1376,6 +1417,7 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
 
     heat = domain.thermal
     heat_state = {}
+    piece = _one_piece_state(domain, nu, opts)
     mma_s = None
     warp_state = {}
     buck = None
@@ -1647,6 +1689,14 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
                 extra += lam["lift"] * c0w * warp_v["lift"] / ws.max_lift
             dc_xp = dc_xp + dd
             comp = comp + extra
+        piece_rec = None
+        if piece is not None:
+            # the part held at one support group, located by itself at the
+            # others (onepiece.py): a penalty on log(C_h / bound) past 1,
+            # weighed against the cases' own compliance
+            piece_rec, g_piece = _one_piece_step(piece, e, xe, rtol, c0 if c0 is not None else comp)
+            if g_piece is not None:
+                dc_xp = dc_xp + g_piece
         if c0 is None:
             c0 = comp
         dproj_e = _dproject(xt, beta, eta_e)
@@ -2069,6 +2119,8 @@ def _optimize_run(domain: Domain, nu: float, opts: SimpOptions, on_iter, should_
         if excess is not None:
             rec["maxMemberExcess"] = excess
             rec["maxMemberWeight"] = mu
+        if piece_rec is not None:
+            rec.update(piece_rec)
         history.append(rec)
         if on_iter is not None:
             on_iter(rec, xp)

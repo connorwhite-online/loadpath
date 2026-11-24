@@ -274,7 +274,7 @@ _KEEP_OUT = {
 }
 
 _TARGET = ("A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') "
-           "or an inline 'shape'.")
+           "or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).")
 
 _SUPPORT = {
     "type": "object",
@@ -2131,6 +2131,13 @@ STUDY_SCHEMA = {
                                                          "searches up to 30k cells with no pitch given, else 1."}},
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
+        "onePiece": {"type": "boolean",
+                     "description": "Hold the part in one piece from the first run: held at one support and "
+                                    "free at the others, it must locate them at least as stiffly as a bar of "
+                                    "the minimum member between them (the part handled and installed). Without "
+                                    "it the requirement comes on by itself once a run comes out in pieces that "
+                                    "each stand on their own supports (two halves on their own screws), and "
+                                    "that run is made again; true saves that first run."},
         "gravity": {**_VEC3, "description": "[x, y, z] in m/s² (down at 1 g is [0, 0, -9.81]): the part's own weight in every load case"},
         "vibration": _VIBRATION,
         "inertiaRelief": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {

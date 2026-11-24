@@ -492,6 +492,10 @@
       "type": "integer",
       "minimum": 1
     },
+    "onePiece": {
+      "type": "boolean",
+      "description": "Hold the part in one piece from the first run: held at one support and free at the others, it must locate them at least as stiffly as a bar of the minimum member between them (the part handled and installed). Without it the requirement comes on by itself once a run comes out in pieces that each stand on their own supports (two halves on their own screws), and that run is made again; true saves that first run."
+    },
     "gravity": {
       "type": "array",
       "items": {
@@ -545,7 +549,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "description": "A carried mass (a motor, a gripper, a battery) on A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+            "description": "A carried mass (a motor, a gripper, a battery) on A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).",
             "properties": {
               "region": {
                 "type": "string"
@@ -606,7 +610,7 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "description": "What the free part carries (a motor, a battery, a camera) on A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.: its inertia takes its share of every load",
+                "description": "What the free part carries (a motor, a battery, a camera) on A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).: its inertia takes its share of every load",
                 "properties": {
                   "region": {
                     "type": "string"
@@ -902,7 +906,7 @@
         },
         "temperatures": {
           "type": "array",
-          "description": "Surfaces held at a temperature: a motor face, a heated bed, a cold plate. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+          "description": "Surfaces held at a temperature: a motor face, a heated bed, a cold plate. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).",
           "items": {
             "type": "object",
             "properties": {
@@ -933,7 +937,7 @@
         },
         "heat": {
           "type": "array",
-          "description": "Heat flowing in. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+          "description": "Heat flowing in. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).",
           "items": {
             "type": "object",
             "properties": {
@@ -5539,7 +5543,7 @@
     },
     "support": {
       "type": "object",
-      "description": "Where the part is held. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+      "description": "Where the part is held. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).",
       "properties": {
         "region": {
           "type": "string"
@@ -5659,7 +5663,7 @@
     },
     "load": {
       "type": "object",
-      "description": "A force (N) and/or a moment (N\u00b7mm, about the region's centroid), or a pressure (MPa) in a keepOut. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+      "description": "A force (N) and/or a moment (N\u00b7mm, about the region's centroid), or a pressure (MPa) in a keepOut. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).",
       "properties": {
         "region": {
           "type": "string"
@@ -6110,7 +6114,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "description": "A travel limit away from the loads: no node of the target moves more than maxTravel (keep this face within d of where it is). Held by the search with the safety factor and deflection; each case reports its travel (cases[].clearances). A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+            "description": "A travel limit away from the loads: no node of the target moves more than maxTravel (keep this face within d of where it is). Held by the search with the safety factor and deflection; each case reports its travel (cases[].clearances). A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).",
             "properties": {
               "region": {
                 "type": "string"

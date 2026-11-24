@@ -71,7 +71,7 @@ jobs:
               tests/test_reconstruct_fragments.py tests/test_pinch_memory.py tests/test_study_limits.py tests/test_passes_but_wrong.py tests/test_rotor_blockage.py
               tests/test_face_bridge.py tests/test_reconstruct_slits.py tests/test_bundle.py
               tests/test_stress_read.py tests/test_checkpoint.py tests/test_stresslimit.py tests/test_submodel_size.py
-              tests/test_clean_parts.py tests/test_drawn_transitions.py
+              tests/test_clean_parts.py tests/test_drawn_transitions.py tests/test_one_piece.py
           # the groups below (2026-11-12) hold files that were in no group,
           # so CI never ran them; tests/test_ci_groups.py now fails on any
           # tests/ file left out. Times from a 4-core cloud box, 3 at once.
@@ -92,7 +92,7 @@ jobs:
               tests/test_multimat_fixes.py tests/test_coopt.py tests/test_assembly.py tests/test_benchmarks.py
             pytest: >-
               tests/test_tune.py tests/test_brief_kinds_heatx.py tests/test_sizing.py tests/test_tetsizing.py
-              tests/test_dfm_reference.py tests/test_seats.py tests/test_joints.py
+              tests/test_dfm_reference.py tests/test_seats.py tests/test_joints.py tests/test_unheld.py
           - group: making          # ~17 min there
             files: >-
               tests/test_flowtopo.py tests/test_conjugate.py tests/test_heatx_fixes.py tests/test_buildsim.py

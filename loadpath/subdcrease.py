@@ -218,22 +218,271 @@ def _project(P, closed, X):
     return C[np.arange(len(X)), j], d[np.arange(len(X)), j]
 
 
+def _arc(D, X):
+    """Arc length along the closed dense loop D of the closest point of
+    each of X."""
+    from scipy.spatial import cKDTree
+
+    s = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(D, axis=0), axis=1))]
+    return s[cKDTree(D).query(X)[1]], float(s[-1])
+
+
+class _Straight:
+    """Paths of cage edges that go straight through every vertex they pass:
+    in and out by edges that share no face. A crease that turns at a
+    vertex, into the edge beside the one it came by, leaves that vertex
+    one face on one side and three on the other: the limit surface there
+    is a dart, not the flank of a straight crease, and no rectangle of
+    patches follows it (an L-bracket's traced lines stepped from row to row
+    at regular vertices and its patches missed by 0.27 mm). Dijkstra runs
+    on half-edges, a step allowed from (u, v) to (v, w) only straight on."""
+
+    def __init__(self, cage):
+        E, Q, QE = cage.E, cage.Q, cage.QE
+        self.E, self.ne = E, len(E)
+        side = set()
+        for q in range(len(Q)):
+            for k in range(4):
+                e1, e2 = int(QE[q, k]), int(QE[q, (k + 1) % 4])
+                side.add((min(e1, e2), max(e1, e2)))
+        inc = [[] for _ in range(cage.n)]
+        turn, at = [], []
+        for k, (u, v) in enumerate(E.tolist()):
+            inc[u].append(k)
+            inc[v].append(k)
+        rows, cols = [], []
+        for v, es in enumerate(inc):
+            for e1 in es:
+                h1 = 2 * e1 + (0 if E[e1, 1] == v else 1)        # arriving at v
+                for e2 in es:
+                    if e2 == e1:
+                        continue
+                    rows.append(h1)
+                    cols.append(2 * e2 + (0 if E[e2, 0] == v else 1))  # leaving v
+                    turn.append((min(e1, e2), max(e1, e2)) in side)
+                    at.append(v)
+        self.all_rows, self.all_cols = np.asarray(rows, np.int64), np.asarray(cols, np.int64)
+        self.turn, self.at = np.asarray(turn, bool), np.asarray(at, np.int64)
+        self.tail = np.c_[E[:, 0], E[:, 1]].ravel()       # half-edge 2k: E[k,0] -> E[k,1]
+        self.head = np.c_[E[:, 1], E[:, 0]].ravel()
+        self.free(None)
+
+    def free(self, near, cost=0.0):
+        """Vertices where the path may turn (`near`: bool per vertex, or
+        None for nowhere), each turn costing `cost` more (mm of path)."""
+        ok = ~self.turn if near is None else (~self.turn | near[self.at])
+        self.rows, self.cols = self.all_rows[ok], self.all_cols[ok]
+        self.pen = np.where(self.turn[ok], float(cost), 0.0)
+
+    def _graph(self, w, extra=0, drop=None):
+        from scipy.sparse import csr_matrix
+
+        wh = np.repeat(w, 2)
+        if drop is not None:
+            wh = wh.copy()
+            wh[drop] = np.inf
+        ok = np.isfinite(wh[self.cols]) & np.isfinite(wh[self.rows])
+        r, c = self.rows[ok], self.cols[ok]
+        m = 2 * self.ne + extra
+        return csr_matrix((wh[c] + self.pen[ok], (r, c)), shape=(m, m)), wh
+
+    def _walk(self, pred, h, stop):
+        hs = [h]
+        while hs[-1] not in stop:
+            p = int(pred[hs[-1]])
+            if p < 0 or p >= 2 * self.ne:
+                break
+            hs.append(p)
+        hs = hs[::-1]
+        return [int(self.tail[hs[0]])] + [int(self.head[x]) for x in hs]
+
+    def path(self, a, b, w):
+        """Vertices of the least-weight straight path from a to b, or None."""
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.csgraph import dijkstra
+
+        G, wh = self._graph(w, extra=1)
+        S = 2 * self.ne
+        out = np.flatnonzero((self.tail == a) & np.isfinite(wh))
+        if not len(out):
+            return None
+        G = (G + csr_matrix((wh[out], (np.full(len(out), S), out)), shape=G.shape)).tocsr()
+        dist, pred = dijkstra(G, indices=S, return_predecessors=True)
+        into = np.flatnonzero(self.head == b)
+        if not len(into) or not np.isfinite(dist[into]).any():
+            return None
+        h = int(into[np.argmin(dist[into])])
+        return self._walk(pred, h, set(out.tolist()))
+
+    def ring(self, D, V, w):
+        """The least-weight straight closed path round the loop D (dense,
+        closed): the band cut at the loop's start, and the shortest way
+        round from each edge that crosses the cut back to it. Its
+        vertices, first repeated last; None if there is none."""
+        from scipy.sparse.csgraph import dijkstra
+
+        s, L = _arc(D, V)
+        st, sh = s[self.tail], s[self.head]
+        fwd = (st - sh > 0.5 * L) & np.isfinite(np.repeat(w, 2))    # crosses the cut going on round
+        cross = np.abs(st - sh) > 0.5 * L
+        src = np.flatnonzero(fwd)
+        if not len(src):
+            return None
+        G, wh = self._graph(w, drop=np.flatnonzero(cross))
+        wh[src] = np.repeat(w, 2)[src]            # their own weight, kept
+        # the crossing half-edges are sources: their own steps on
+        from scipy.sparse import csr_matrix
+        ok = np.isin(self.rows, src) & np.isfinite(wh[self.cols]) & ~cross[self.cols]
+        G = (G + csr_matrix((wh[self.cols[ok]] + self.pen[ok], (self.rows[ok], self.cols[ok])),
+                            shape=G.shape)).tocsr()
+        dist, pred = dijkstra(G, indices=src, return_predecessors=True)
+        best, pick = np.inf, None
+        for i, c in enumerate(src.tolist()):
+            # back to c: a half-edge into c's tail that may step straight on to c
+            ins = self.rows[self.cols == c]
+            if not len(ins):
+                continue
+            d = dist[i, ins]
+            j = int(np.argmin(d))
+            if d[j] + wh[c] < best:
+                best, pick = d[j] + wh[c], (i, int(ins[j]), c)
+        if pick is None or not np.isfinite(best):
+            return None
+        i, h, c = pick
+        hs = [h]
+        while hs[-1] != c:
+            p = int(pred[i, hs[-1]])
+            if p < 0:
+                return None
+            hs.append(p)
+        hs = hs[::-1]                       # c ... h
+        path = [int(self.tail[hs[0]])] + [int(self.head[x]) for x in hs]
+        if path[0] != path[-1] or len(set(path[:-1])) != len(path) - 1:
+            return None
+        a = s[path[:-1]]
+        step = np.diff(np.r_[a, a[0]])
+        step = (step + 0.5 * L) % L - 0.5 * L
+        if abs(abs(step.sum()) - L) > 0.25 * L or (step * np.sign(step.sum()) < -0.01 * L).any():
+            return None
+        return path
+
+
+def _check(path, closed, P, D, L, V, da, h, used_e, pinned, near_v):
+    """Why a traced path cannot be the line's crease (None if it can), and
+    if it can: (vertices, edge pairs, [(vertex, its place on the line)])."""
+    if path is None or len(path) < 2:
+        return "no path", None
+    pv = np.asarray(path)
+    if len(set(pv[:-1].tolist())) != len(pv) - 1:
+        return "path crosses itself", None
+    if float(np.linalg.norm(np.diff(V[pv], axis=0), axis=1).sum()) > (4.0 / 3.0) * L + h:
+        return "path wanders", None
+    # a vertex within two faces of a corner may come from two faces away
+    # (the cage's star points sit near corners, not on them)
+    if (da[pv] > np.where(near_v[pv], 2.0, 1.5) * h).any():
+        return "path off the line", None
+    pairs = [tuple(sorted((int(a), int(b)))) for a, b in zip(pv[:-1], pv[1:])]
+    if any(p in used_e for p in pairs):
+        return "edge on two lines", None
+    X = _spread(D, closed, V[pv])
+    mv = [(v, x) for v, x in zip(pv.tolist(), X) if v not in pinned]   # a corner stays where the first line put it
+    return None, (pv, pairs, mv)
+
+
+def _spread(D, closed, X):
+    """Places on the dense line D for the path's vertices X: spread along
+    it in proportion to the path's own edge lengths (an open path's ends
+    on the line's ends, a ring from where its first vertex lands, the way
+    it runs). The closest point would put two vertices of a jog in the
+    path (a step across the rows near a corner) on one place: a crease
+    edge of no length, the surface pinched there."""
+    s = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(D, axis=0), axis=1))]
+    L = float(s[-1])
+    t = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(X, axis=0), axis=1))]
+    t = t / max(float(t[-1]), 1e-300)
+    if closed:
+        a, _ = _arc(D, X)
+        step = (np.diff(a) + 0.5 * L) % L - 0.5 * L
+        sgn = 1.0 if step.sum() >= 0 else -1.0
+        q = (a[0] + sgn * t * L) % L
+    else:
+        q = t * L
+    out = np.empty((len(q), 3))
+    for c in range(3):
+        out[:, c] = np.interp(q, s, D[:, c])
+    return out
+
+
+def _drag(V, mv, pinned, h, mesh, tree):
+    """Free vertices near the moved ones `mv` [(vertex, new position)]
+    moved along: by the nearest moved vertex's shift times
+    exp(-(d / h)^2), d their distance from it, then onto the surface.
+    Returns [(vertex, new position)] for them."""
+    import igl
+
+    if not mv:
+        return []
+    ids = np.array([v for v, _ in mv])
+    shift = np.array([x for _, x in mv]) - V[ids]
+    near = set()
+    for js in tree.query_ball_point(V[ids], 2.0 * h):
+        near.update(js)
+    near -= set(ids.tolist())
+    near -= set(pinned)
+    if not near:
+        return []
+    nb = np.array(sorted(near))
+    from scipy.spatial import cKDTree
+
+    d, j = cKDTree(V[ids]).query(V[nb])
+    P = V[nb] + shift[j] * np.exp(-(d / h) ** 2)[:, None]
+    _, _, C = igl.point_mesh_squared_distance(P, np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64))
+    return list(zip(nb.tolist(), C))
+
+
+def _folds(V, Q, vq, vs, X):
+    """Whether moving vertices `vs` to `X` turns a face of the cage over:
+    a face round them whose triangles turn by more than a right angle
+    whichever diagonal splits it."""
+    qs = sorted({q for v in vs for q in vq[v]})
+    if not qs:
+        return False
+    W = V.copy()
+    W[vs] = X
+    F = Q[qs]
+    T = np.concatenate([F[:, [0, 1, 2]], F[:, [0, 2, 3]], F[:, [0, 1, 3]], F[:, [1, 2, 3]]])
+
+    def nrm(P):
+        return np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
+    flip = (np.einsum("ij,ij->i", nrm(V), nrm(W)) < 0.0).reshape(4, -1)
+    # a dart (one corner pushed in past its diagonal) still has one split
+    # whose triangles both face as before; a face turned over has none
+    return bool(((flip[0] | flip[1]) & (flip[2] | flip[3])).any())
+
+
 def lay_creases(cage, mesh, tol, h=None, progress=None):
     """The cage with its edges on the mesh's feature lines made creases:
     returns (cage, report). The cage's vertices on each taken line are
     moved onto it."""
-    from scipy.sparse import csr_matrix
-    from scipy.sparse.csgraph import dijkstra
     from scipy.spatial import cKDTree
 
     from .subd import Cage
 
     h = float(h) if h else float(np.sqrt(mesh.area / len(cage.Q)))
     lines, nodes = feature_lines(mesh, tol, h)
-    rep = {"lines": len(lines), "taken": 0, "creaseEdges": 0, "refused": {}, "length": 0.0, "takenLength": 0.0}
+    rep = {"lines": len(lines), "taken": 0, "creaseEdges": 0, "refused": {}, "refusedAt": [], "length": 0.0,
+           "takenLength": 0.0}
+
+    laid = {}
 
     def refuse(why):
+        refuse_at(li, why)
+
+    def refuse_at(li, why):
         rep["refused"][why] = rep["refused"].get(why, 0) + 1
+        P_, closed_, _ = lines[li]
+        rep["refusedAt"].append({"why": why, "at": np.round(P_.mean(0), 3).tolist(), "closed": bool(closed_),
+                                 "length": round(float(np.linalg.norm(np.diff(dense[li], axis=0), axis=1).sum()), 3)})
     if not lines:
         return cage, rep
     V = cage.V.copy()
@@ -256,6 +505,12 @@ def lay_creases(cage, mesh, tol, h=None, progress=None):
     sharp = []
     used_e = set()
     pinned = {}
+    straight = _Straight(cage)
+    vtree = cKDTree(V)
+    vq = [[] for _ in range(n)]          # the faces round each vertex
+    for q, f in enumerate(cage.Q.tolist()):
+        for v in f:
+            vq[v].append(q)
     lines = sorted(lines, key=lambda x: -len(x[0]))
     dense = [_dense(P, closed, 0.1 * h) for P, closed, _ in lines]
     rep["length"] = float(sum(np.linalg.norm(np.diff(D, axis=0), axis=1).sum() for D in dense))
@@ -274,78 +529,84 @@ def lay_creases(cage, mesh, tol, h=None, progress=None):
             ue = np.array(sorted(used_e))
             key = E[:, 0] * n + E[:, 1]
             w[np.isin(key, ue[:, 0] * n + ue[:, 1])] = np.inf
-        ok = np.isfinite(w)
-        G = csr_matrix((np.r_[w[ok], w[ok]], (np.r_[E[ok, 0], E[ok, 1]], np.r_[E[ok, 1], E[ok, 0]])), shape=(n, n))
-        if closed:
-            k = len(D)
-            marks = [int(tree.query(D[i])[1]) for i in (0, k // 3, 2 * k // 3)]
-            legs = [(marks[0], marks[1]), (marks[1], marks[2]), (marks[2], marks[0])]
-        else:
-            legs = [(node_v[ends[0]], node_v[ends[1]])]
-        path = []
-        good = True
-        for a, b in legs:
-            if a == b:
-                good = False
-                break
-            if path:
-                # a loop's later legs keep off the vertices it has taken
-                # (else the way back runs over the way out)
-                bar = np.zeros(n, bool)
-                bar[path] = True
-                bar[[a, b]] = False
-                wl = w[ok] * 1.0
-                wl[bar[E[ok, 0]] | bar[E[ok, 1]]] = np.inf
-                fin = np.isfinite(wl)
-                Ek = E[ok][fin]
-                Gl = csr_matrix((np.r_[wl[fin], wl[fin]], (np.r_[Ek[:, 0], Ek[:, 1]], np.r_[Ek[:, 1], Ek[:, 0]])),
-                                shape=(n, n))
-            else:
-                Gl = G
-            dist, pred = dijkstra(Gl, indices=a, return_predecessors=True)
-            if not np.isfinite(dist[b]):
-                good = False
-                break
-            seg = [b]
-            while seg[-1] != a:
-                seg.append(int(pred[seg[-1]]))
-            seg = seg[::-1]
-            path += seg if not path else seg[1:]
-        if not good or len(path) < 2:
-            refuse("no path")
-            continue
-        pv = np.asarray(path)
-        if len(set(pv[:-1].tolist())) != len(pv) - 1:
-            refuse("path crosses itself")
-            continue
         L = float(np.linalg.norm(np.diff(D, axis=0), axis=1).sum())
-        Lp = float(np.linalg.norm(np.diff(V[pv], axis=0), axis=1).sum())
-        if Lp > (4.0 / 3.0) * L + h:
-            refuse("path wanders")
-            continue
-        # within two faces of a corner the rows turn round it (the cage's
-        # star points sit near corners, not on them): a vertex there may
-        # come from a face and a half away
         if closed:
-            near_end = np.zeros(len(pv), bool)
+            near_v = np.zeros(n, bool)
         else:
-            near_end = np.minimum(np.linalg.norm(V[pv] - P[0], axis=1), np.linalg.norm(V[pv] - P[-1], axis=1)) < 2 * h
-        if (da[pv] > np.where(near_end, 2.0, 0.75) * h).any():
-            refuse("path off the line")
+            near_v = np.minimum(np.linalg.norm(V - P[0], axis=1), np.linalg.norm(V - P[-1], axis=1)) < 2 * h
+        # first a path straight through every vertex (turning only within
+        # two faces of a corner, where the rows turn round it), then, if
+        # that has none or it folds, one that may turn anywhere
+        why = None
+        for turns in (near_v, np.ones(n, bool)):
+            straight.free(turns, 2.0 * h)          # a turn costs two faces of path
+            if closed:
+                # a loop is one ring round it: the band of edges along it
+                # cut open at a seam, the shortest way round from one side
+                # of the seam to the other
+                path = straight.ring(D, V, w)
+            else:
+                a, b = node_v[ends[0]], node_v[ends[1]]
+                path = straight.path(a, b, w) if a != b else None
+            why, got = _check(path, closed, P, D, L, V, da, h, used_e, pinned, near_v)
+            if why is None:
+                pv, pairs, mv = got
+                # how far a vertex may come to the line is not a distance:
+                # it may come as far as it can without turning a face of
+                # the cage over. Should the plain move fold one, the rows
+                # beside it come along, as a row of a net pulled sideways
+                # drags its neighbours (`_drag`; not first: near a crease
+                # already laid the drag can carry a vertex over the corner)
+                if _folds(V, cage.Q, vq, [v for v, _ in mv], np.array([x for _, x in mv])) if mv else False:
+                    mv = mv + _drag(V, mv, pinned, h, mesh, vtree)
+                    if _folds(V, cage.Q, vq, [v for v, _ in mv], np.array([x for _, x in mv])):
+                        why = "path would fold the cage"
+            if why is None:
+                break
+        if why is not None:
+            refuse(why)
             continue
-        pairs = [tuple(sorted((int(a), int(b)))) for a, b in zip(pv[:-1], pv[1:])]
-        if any(p in used_e for p in pairs):
-            refuse("edge on two lines")
-            continue
-        X, _ = _project(P, closed, V[pv])
-        for v, x in zip(pv.tolist(), X):
-            if v not in pinned:         # a corner stays where the first line put it
-                V[v] = x
-                pinned[v] = x
+        for v, x in mv:
+            V[v] = x
+        for v in pv.tolist():
+            pinned.setdefault(v, V[v].copy())
         used_e.update(pairs)
-        sharp += pairs
-        rep["taken"] += 1
-        rep["takenLength"] += L
+        laid[li] = (pairs, L)
+    # a network of lines is laid whole or not at all: a crease that stops
+    # where its neighbour was not laid tears the patch layout round its end
+    # and fits worse than the rounded corner (the box cover with 5 of its
+    # 31 lines: p99 0.36 mm against 0.18 smooth); a whole network laid and
+    # another left rounded has no such end
+    parent = list(range(len(lines)))
+
+    def root(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    by_node = {}
+    for li, (P, closed, ends) in enumerate(lines):
+        for e in ends:
+            if e is not None:
+                if e in by_node:
+                    parent[root(li)] = root(by_node[e])
+                by_node[e] = li
+    comps = {}
+    for li in range(len(lines)):
+        comps.setdefault(root(li), []).append(li)
+    rep["networks"] = len(comps)
+    rep["networksLaid"] = 0
+    for members in comps.values():
+        if all(li in laid for li in members):
+            rep["networksLaid"] += 1
+            for li in members:
+                sharp += laid[li][0]
+                rep["taken"] += 1
+                rep["takenLength"] += laid[li][1]
+        else:
+            for li in members:
+                if li in laid:
+                    refuse_at(li, "its network not laid whole")
     if not sharp:
         return cage, rep
     c2 = Cage(V, cage.Q, sharp=np.asarray(sharp))
@@ -366,3 +627,148 @@ def carry(old_V, old_sharp, new_V, tol=1e-9):
     m = dict(zip(np.unique(old_sharp).tolist(), np.where(d <= tol, j, -1).tolist()))
     pairs = np.array([[m[a], m[b]] for a, b in np.asarray(old_sharp).tolist()], np.int64)
     return pairs[(pairs >= 0).all(1)]
+
+
+def feature_remesh(mesh, step, theta, lines=None):
+    """`mesh` remeshed with even triangles about `step` mm whose edges run
+    along its feature lines (`feature_lines` at turn `theta`, radians): the
+    input Instant Meshes lays its crease-aligned field over.
+
+    Instant Meshes solves its fields on the input's own vertex graph and
+    finds creases there by dihedral angle. A CAD mesh is a few long
+    triangles per flat face; split fine, its triangles stay slivers fanned
+    from the corners, the field smoothed over them does not settle along
+    the creases and the extraction tears or its rows miss the lines (the
+    box cover: 5 of 31 lines). An even resampling by marching cubes
+    (`subd._even`) has no slivers but rounds every crease off. Isotropic
+    remeshing (Botsch & Kobbelt 2004: split, collapse, flip to valence 6,
+    tangential relaxation, projection) gives both: even triangles, and the
+    feature lines' edges kept as constrained edges (split along the line,
+    never flipped, collapsed only along it). The long triangles are split
+    first (to `step`): from a few huge triangles the remesher's own splits
+    do not converge before its iterations end.
+
+    `lines`: the feature lines as `feature_lines` returns them (computed at
+    `theta` if not given). Returns a trimesh, cached on `mesh`."""
+    import trimesh
+
+    cache = mesh.__dict__.setdefault("_lp_feature_remesh", {})
+    if lines is None:
+        h = 4.0 * float(step)
+        lines, _ = feature_lines(mesh, theta * h / 8.0, h, min_turn=theta)
+    skey = round(float(step), 4)
+    if skey not in cache:
+        v, f = trimesh.remesh.subdivide_to_size(np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64),
+                                                max_edge=float(step))
+        cache[skey] = trimesh.Trimesh(v, f, process=True)
+    sub = cache[skey]
+    fe = _edges_on(sub, lines, theta)
+    # the same lines at a nearby density are the same remesh
+    key = (skey, np.unique(np.sort(fe, 1), axis=0).tobytes())
+    if key in cache:
+        return cache[key]
+    try:
+        import gpytoolbox
+    except ImportError:          # the old route: the split mesh as it is
+        cache[key] = sub
+        return sub
+    U, G = gpytoolbox.remesh_botsch(np.asarray(sub.vertices, float).copy(), np.asarray(sub.faces, np.int32),
+                                    i=10, h=float(step), feature_edges=fe.astype(np.int64))
+    out = trimesh.Trimesh(U, G, process=False)
+    if not (out.is_watertight and out.euler_number == mesh.euler_number):
+        out = sub                # a remesh that changed the shape's topology is not the shape
+    cache[key] = out
+    return out
+
+
+def _edges_on(mesh, lines, theta):
+    """The edges of `mesh` that lie along the feature `lines` (both ends
+    and middle on one line, the surface turned there): (k, 2)."""
+    if not lines:
+        return np.zeros((0, 2), np.int64)
+    V = np.asarray(mesh.vertices, float)
+    E = np.asarray(mesh.face_adjacency_edges)[np.asarray(mesh.face_adjacency_angles) > 0.5 * theta]
+    if not len(E):
+        return np.zeros((0, 2), np.int64)
+    eps = 1e-6 * float(np.linalg.norm(mesh.bounds[1] - mesh.bounds[0]))
+    from scipy.spatial import cKDTree
+
+    mid = 0.5 * (V[E[:, 0]] + V[E[:, 1]])
+    on = np.zeros(len(E), bool)
+    for P, closed, _ in lines:
+        lo, hi = P.min(0) - eps, P.max(0) + eps
+        cand = np.flatnonzero(~on & (mid >= lo).all(1) & (mid <= hi).all(1))
+        if not len(cand):
+            continue
+        # each segment of the line checked against the edges near it
+        Q = np.vstack([P, P[:1]]) if closed else P
+        seg_mid = 0.5 * (Q[:-1] + Q[1:])
+        seg_len = np.linalg.norm(Q[1:] - Q[:-1], axis=1)
+        tree = cKDTree(seg_mid)
+        for c in np.array_split(cand, max(1, len(cand) // 4096)):
+            near = tree.query_ball_point(mid[c], 0.5 * float(seg_len.max()) + eps)
+            for i, js in zip(c.tolist(), near):
+                if not js:
+                    continue
+                js = np.asarray(js)
+                A, B = Q[js], Q[js + 1]
+                ok = True
+                for x in (V[E[i, 0]], V[E[i, 1]], mid[i]):
+                    D = B - A
+                    t = np.clip(((x - A) * D).sum(1) / np.maximum((D * D).sum(1), 1e-300), 0, 1)
+                    if np.linalg.norm(A + t[:, None] * D - x, axis=1).min() > eps:
+                        ok = False
+                        break
+                on[i] = ok
+    return E[on]
+
+
+def feature_gap(mesh, lines, step, reach):
+    """The narrowest face between two feature lines: for each line, the
+    median distance across the surface to another line running beside it
+    (both turned less than 60 degrees off square to the way across, and
+    the way across on the surface: a 2 mm pocket wall between its two
+    rims, not a skin's two faces through its thickness); the least of
+    these, looked for out to `reach` mm. inf if no lines run beside each
+    other that close. `step`: the sampling along the lines."""
+    import igl
+    from scipy.spatial import cKDTree
+
+    if len(lines) < 2:
+        return np.inf
+    S, T, L = [], [], []
+    for i, (P, closed, _) in enumerate(lines):
+        D = _dense(P, closed, step)
+        t = np.gradient(D, axis=0)
+        t /= np.maximum(np.linalg.norm(t, axis=1), 1e-300)[:, None]
+        S.append(D)
+        T.append(t)
+        L.append(np.full(len(D), i))
+    S, T, L = np.vstack(S), np.vstack(T), np.concatenate(L)
+    pr = cKDTree(S).query_pairs(float(reach), output_type="ndarray")
+    if not len(pr):
+        return np.inf
+    a, b = pr[:, 0], pr[:, 1]
+    d = S[b] - S[a]
+    dd = np.linalg.norm(d, axis=1)
+    u = d / np.maximum(dd, 1e-300)[:, None]
+    ok = (dd > 0.5 * step) & (L[a] != L[b]) & (np.abs((u * T[a]).sum(1)) < 0.5) & (np.abs((u * T[b]).sum(1)) < 0.5)
+    a, b, d, dd = a[ok], b[ok], d[ok], dd[ok]
+    if not len(a):
+        return np.inf
+    # across the surface: the straight way over lies on it (a flat or a
+    # ruled wall between two rims)
+    V, F = np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64)
+    sq, _, _ = igl.point_mesh_squared_distance(S[a] + 0.5 * d, V, F)
+    on = np.sqrt(sq) < 0.02 * dd + 1e-6 * float(np.linalg.norm(mesh.bounds[1] - mesh.bounds[0]))
+    a, b, dd = a[on], b[on], dd[on]
+    best = np.full(len(S), np.inf)
+    np.minimum.at(best, a, dd)
+    np.minimum.at(best, b, dd)
+    gaps = []
+    for i in range(len(lines)):
+        g = best[L == i]
+        f = g[np.isfinite(g)]
+        if len(f) >= 0.25 * len(g) and len(f):
+            gaps.append(float(np.median(f)))
+    return min(gaps) if gaps else np.inf

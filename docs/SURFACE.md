@@ -309,14 +309,42 @@ corner there exactly (`loadpath/subdcrease.py`, on by default,
   its rectangles along them and fits each side with its own normals.
 - **Box (40 x 30 x 6 mm, tol 0.1):** 18 faces, p99 0.094 mm, max 0.3 mm
   smooth -> 6 faces, p99 0.012 mm, max 0.019 mm creased.
-- **All or nothing.** A part creased in places fits worse than one rounded
-  everywhere (the box cover with 5 of its 31 lines laid: p99 0.36 mm
-  against 0.18 smooth at the same density, and the layout tears round a
-  crease that stops). Creases are laid only when 95% of the lines' length
-  lands on cage edges; otherwise the cage is laid again without them.
-  The cover is such a part today: its long flat triangles, split fine,
-  tear Instant Meshes' crease-aligned extraction, and the plain field's
-  rows miss its lines.
+- **CAD parts (2026-11-24).** A CAD export's long thin triangles tear
+  Instant Meshes' crease-aligned extraction, so the mesh is first remeshed
+  to even triangles a quarter of the face size with the feature lines kept
+  as edges (Botsch-Kobbelt, gpytoolbox `remesh_botsch`, after splitting
+  every edge down to that size). The face size is at most 2/3 of the
+  narrowest flat between two creases (a 2 mm pocket wall needs rows on
+  both of its edges and one between). Each line is traced as a path of
+  cage edges that turns only near its ends, then anywhere at a cost of two
+  faces a turn; a closed rim as a ring round the hole. A move that would
+  fold a face drags its neighbours along and is refused if it still folds.
+  Lines that meet are laid as a network, whole or not at all (a crease
+  that stops tears the layout round it); up to three densities are tried
+  and the best whole networks kept, smooth only when none lands.
+- **What keeps them true.** A crease's limit points are pulled onto the
+  part's edge itself, not just onto one face's plane. The bending term has
+  no crease rows, outside or inside (a smooth point's bending reads its
+  crease neighbour's Laplacian, and bending a closed crease toward straight
+  shrinks it like a pulled string: a 4 mm hole's rim drew in 0.6-1.7 mm);
+  the fairing also stops before it closes a hole the process prints. In
+  the rectangles, a line stops where it crosses a crease, and the knots
+  toward a star point on a crease are halved three times, not four
+  (four swung there: a 1.3 deg kink beside a pocket corner).
+- **Own test parts (tol 0.1, not the held-out set):**
+
+  | | smooth STEP faces | p99 / max mm | creased STEP faces | p99 / max mm |
+  |---|---|---|---|---|
+  | box 40 x 30 x 6 | 18 | 0.094 / 0.30 | 6 | 0.012 / 0.038 |
+  | plate 60 x 40 x 8, 4 holes, pocket | 176 | 0.091 / 0.26 | 116 | 0.056 / 0.24 |
+  | L-bracket 50 x 30 x 40, 2 holes | 112 | 0.081 / 0.26 | 82 | 0.055 / 0.20 |
+
+  All valid solids. Organic parts (arm link, pebble) find no feature
+  lines and fit as before.
+
+![plate: input, smooth STEP, creased STEP](images/surface/plate-creases.png)
+
+![L-bracket: input, smooth STEP, creased STEP](images/surface/lbracket-creases.png)
 
 ## Not yet
 
@@ -351,10 +379,9 @@ corner there exactly (`loadpath/subdcrease.py`, on by default,
 - Zebra stripes still wobble on large flats of field parts: the fit follows
   the marching-cubes mesh's small ripples within the tolerance.
 - Sharp creases on an organic body (a generated mesh's hard rim) are
-  rounded to within the tolerance, not kept as creases; and a CAD-like
-  part whose remesh cannot lay a row of edges on every feature line (the
-  box cover) is fitted smooth. A feature-preserving remesh before Instant
-  Meshes is the next step there.
+  rounded to within the tolerance, not kept as creases. The held-out box
+  cover has not been re-measured with the feature-preserving remesh (its
+  run did not finish here).
 - A hole through a web thinner than the faces over it (the wrist link's
   2.6 mm hole in a 1.1 mm web) is cut or not depending on the cage
   Instant Meshes lays: on one lay the two faces over its mouths are a
