@@ -751,9 +751,71 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         loads = _inertia_relief(study, mesh, loads, fixed, tol_floor)
     if seats and check_loads and not pinned and not study.inertia_relief:
         _seated_statics(study, xyz, fixed, seats, loads, spreads)
+    elif check_loads and not seats and springs is None and study.supports and not study.self_equilibrated \
+            and not study.inertia_relief:
+        _held_statics(xyz, fixed)
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
                               case_wet, imbalance, spreads, raw, pinned=pinned, seats=seats,
                               pin_springs=pin_springs)
+
+
+def _free_motions(xyz, fixed):
+    """The rigid motions the fixed dofs leave free: (6 x k orthonormal
+    basis of the free wrench space, in force and moment-over-size units,
+    or None when they hold every one; the projector onto it; the scale)."""
+    c = xyz.mean(axis=0)
+    r = xyz - c
+    size = max(float(np.ptp(xyz, axis=0).max()), 1e-9)
+    sc = np.array([1, 1, 1, 1 / size, 1 / size, 1 / size])
+    cols = []
+    for a in range(3):
+        nodes = np.nonzero(fixed[a::3])[0]
+        if len(nodes):
+            e = np.zeros((len(nodes), 3))
+            e[:, a] = 1.0
+            cols.append(np.concatenate([e, np.cross(r[nodes], e)], axis=1))
+    q = np.zeros((6, 0))
+    if cols:
+        w = np.concatenate(cols, axis=0)
+        u, sv, _ = np.linalg.svd((w * sc).T, full_matrices=False)
+        q = u[:, sv > 1e-9 * max(sv.max(), 1e-300)]
+    proj = np.eye(6) - q @ q.T
+    return proj, sc, r
+
+
+def _motion_words(v) -> str:
+    """A free rigid motion (6-vector: force part, moment part) in words."""
+    fpart, mpart = v[:3], v[3:]
+    if np.linalg.norm(fpart) >= np.linalg.norm(mpart):
+        d = fpart / np.linalg.norm(fpart)
+        ax = int(np.argmax(np.abs(d)))
+        return f"slide along {'xyz'[ax]}" if abs(d[ax]) > 0.9 else \
+            f"slide along [{', '.join(f'{x:.2f}' for x in d)}]"
+    d = mpart / np.linalg.norm(mpart)
+    ax = int(np.argmax(np.abs(d)))
+    return f"turn about {'xyz'[ax]}" if abs(d[ax]) > 0.9 else \
+        f"turn about [{', '.join(f'{x:.2f}' for x in d)}]"
+
+
+def _held_statics(xyz, fixed) -> None:
+    """Refuse supports that leave the part a rigid motion. With fixed
+    supports alone (no seats, pins or springs) the stiffness is singular
+    when the held dofs span fewer than the six rigid motions: three
+    supports fixed along z alone leave it free to slide in x and y and turn
+    about z, every node of a line fixed leaves it free to turn about that
+    line. Solves of it either fail or wander off, and the run stalls on a
+    deflection of 1e13 mm instead of saying why; read on the rigid part it
+    is one 6x6 projector, so `check` says it in well under a second."""
+    proj, _, _ = _free_motions(xyz, fixed)
+    if np.abs(proj).max() < 1e-9:
+        return
+    w, v = np.linalg.eigh(proj)
+    free = [v[:, i] for i in range(6) if w[i] > 0.5]
+    raise ValueError(
+        "the supports leave the part free to " + " and ".join(_motion_words(m) for m in free) +
+        ": nothing holds it that way, so its stiffness is singular and no load case can be solved. Hold "
+        "it where it is really held that way (supports[].fix on a face or bore that stops it, a seat with "
+        "supports[].push, or fasteners with their bores as supports)")
 
 
 def _seated_statics(study, xyz, fixed, seats, loads, spreads=None) -> None:
@@ -768,31 +830,11 @@ def _seated_statics(study, xyz, fixed, seats, loads, spreads=None) -> None:
     wall, both held by screws fixed across their axis only)."""
     from scipy.optimize import nnls
 
-    c = xyz.mean(axis=0)
-    r = xyz - c
+    proj, sc, r = _free_motions(xyz, fixed)
 
     def wrench(nodes, dirs):
         return np.concatenate([dirs, np.cross(r[nodes], dirs)], axis=1)
 
-    cols = []
-    for a in range(3):
-        nodes = np.nonzero(fixed[a::3])[0]
-        if len(nodes):
-            e = np.zeros((len(nodes), 3))
-            e[:, a] = 1.0
-            cols.append(wrench(nodes, e))
-    q = np.zeros((6, 0))
-    if cols:
-        w = np.concatenate(cols, axis=0)
-        # scale moments to forces by the part's size, so both count alike
-        size = max(float(np.ptp(xyz, axis=0).max()), 1e-9)
-        sc = np.array([1, 1, 1, 1 / size, 1 / size, 1 / size])
-        u, sv, _ = np.linalg.svd((w * sc).T, full_matrices=False)
-        q = u[:, sv > 1e-9 * max(sv.max(), 1e-300)]
-    else:
-        size = max(float(np.ptp(xyz, axis=0).max()), 1e-9)
-        sc = np.array([1, 1, 1, 1 / size, 1 / size, 1 / size])
-    proj = np.eye(6) - q @ q.T
     if np.abs(proj).max() < 1e-9:
         return                                        # the fixed supports hold every rigid motion
     seat_cols, fric_cols, fric_mu = [], [], []

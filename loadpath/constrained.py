@@ -86,6 +86,21 @@ BUCKLING_CRISP = os.environ.get("LOADPATH_BUCKLING_CRISP", "1") != "0"
 BUCKLING_CRISP_BETA = 4.0
 BUCKLING_CRISP_EVERY = 12
 BUCKLING_CRISP_MAX = 8.0
+# A linear reading of a held part moves its loads a fraction of its own size;
+# more than this many sizes is a part nothing holds against the case (a
+# rigid-body motion its supports leave free, a load on material joined to
+# the rest only through void), and every later step would chase it.
+HELD_SIZES = 1e3
+
+
+def _unheld_message(name: str, defl: float, size: float) -> str:
+    return (f"load case {name!r} moves its loads {defl:.3g} mm on a part {size:.3g} mm across: the stiffness is "
+            "singular for it, so the part is not held against this case. A support leaves it free to slide or "
+            "turn that way, or the loaded region joins the rest of the part only through removed material. Hold "
+            "the part where it is really held against these loads (supports[].fix, or fasteners with their "
+            "bores as supports), and load a region the part is drawn through (preserve)")
+
+
 STRESS_POINTS = "corners"     # where cell stress is sampled: "corners" or "center"
 # the node (fem.CORNERS order: x, then y, then z) each corner sample sits on, in the order they are taken (x outermost)
 _CORNER_OF = (0, 4, 2, 6, 1, 5, 3, 7)
@@ -294,10 +309,21 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
 
     blk = getattr(domain, "blockage", None)
     cases = len(domain.loads)
-    force_mag = [float(np.linalg.norm(f.reshape(-1, 3).sum(axis=0))) for f in domain.loads]
+    # The deflection at the loads is the work they do per unit of force:
+    # C / sum_n |f_n|, the force-weighted mean of how far each loaded node
+    # moves along its own force. For forces that all point one way (a push,
+    # a weight) that is C / |F|, the net force, as it was read until
+    # 2026-11-24; for loads that cancel it is not. A fastener's preload case
+    # is a pair of equal and opposite rings, a torque is a couple: their net
+    # force is rounding (1.8e-15 N on the held-out junction-box cover), and
+    # C / |F| read the clamp's squeeze as a 3e13 mm deflection, so the
+    # deflection limit could never be met and the run stalled in its
+    # optimize stage. The work per unit force stays the squeeze itself.
+    load_size = [float(np.linalg.norm(f.reshape(-1, 3), axis=1).sum()) for f in domain.loads]
+    size = max(float(np.ptp(mesh.node_xyz, axis=0).max()), 1e-9)
     # the vibration block's inertial cases only steer stiffness (domain._inertial_cases)
     real = [c for c in range(cases) if c not in set(getattr(domain, "inertial_cases", ()))]
-    defl_cases = [c for c in real if limits.deflection is not None and force_mag[c] > 0]
+    defl_cases = [c for c in real if limits.deflection is not None and load_size[c] > 0]
     stress_cases = list(real) if limits.stress is not None else []
     buck_cases = [c for c in real if limits.buckling is not None and np.any(domain.loads[c])]
     m = len(defl_cases) + len(stress_cases) + len(buck_cases)
@@ -480,9 +506,11 @@ def _constrained_run(domain: Domain, nu: float, opts: SimpOptions, limits: Limit
         cons, grads, record = [], [], {}
         for c in defl_cases:
             comp = float(domain.loads[c] @ us[c])
-            defl = comp / (force_mag[c] * limits.modulus)
+            defl = comp / (load_size[c] * limits.modulus)
+            if not np.isfinite(defl) or defl > HELD_SIZES * size:
+                raise ValueError(_unheld_message(domain.case_names[c], defl, size))
             ce = fe.strain_energy(us[c])
-            g_xe = -de * ce / (force_mag[c] * limits.modulus)
+            g_xe = -de * ce / (load_size[c] * limits.modulus)
             cons.append(defl / limits.deflection - 1.0)
             grads.append(to_x(g_xe) / limits.deflection)
             record[f"deflection.{domain.case_names[c]}"] = defl
