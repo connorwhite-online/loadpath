@@ -4,7 +4,9 @@ Common parts nobody has tuned loadpath on: a corner bracket, a hinge leaf, a
 drawer pull, a VESA plate, a caster fork, a pipe clamp, a crank lever, a
 tablet stand, a C-clamp, an action-camera mount; and a second batch
 (`"batch": 2`): a tool clip, a latch hook, a hose elbow, a fan duct, a
-junction-box cover, a wall box. Each study was written once,
+junction-box cover, a wall box; and a third (`"batch": 3`): a 608 pillow
+block, a pegboard hammer holder, a 20 mm tube tee, an under-desk laptop
+bracket, a Raspberry Pi wall mount, a spool arm. Each study was written once,
 cold, from SKILL.md alone, the way an agent meeting loadpath for the first
 time would write it, and run without looking at loadpath's code.
 
@@ -54,6 +56,8 @@ python -m loadpath.evals.heldout table runs/NAME
 | 2026-11-21 | main cb5d90e (thin walls as cut cells, a2f7c72): fan duct -c re-run | 12 of 12 | 12 of 12 | 12 of 12 | Fan duct 9.6 g at SF 17 in 15 min (was 14.9 g with a dimpled skin and no report): the drawn wall comes out smooth at its drawn thickness. The other eleven carried from the row above |
 | 2026-11-21 | main 9144e49: box cover re-run | 12 of 12 | 12 of 12 | 12 of 12 | Box cover 25.6 g at SF 2.11 (was 26.1 g): the skin's underside is flat, without the creases of the whole-cell wall. Search still bracketing at the 40 min limit |
 | 2026-11-21 | main 2423249-5fceed6: search on the clock (deadline in every stage, constrained limit stepped by its response, solid block brackets the search): the four parts left heavy re-run, one at a time | | | | Tool clip 4.0 g (was 4.5), corner bracket 7.8 g (12.3), caster fork 21.0 g in 32 min (22.2 g, 55 min), tablet stand 32.4 g (35.7); all four first try. Fixed on development parts (docs/GENERAL-DESIGN.md, "Fixed: parts left heavier") |
+| 2026-11-24 | third batch of six (mounts screwed to a wall, a bearing block, a tube joint), cold on main 2cfb875 | 1 of 6 | 2 of 6 | 3 of 6 | Tube tee first try, 16.6 g, but a false pass (its rail bore glued all round); spool arm passes 19.9 g; pillow block, laptop bracket, Pi mount read "0% of the goal" (screws held across only, nothing held them off the wall); pegboard holder killed at 37 min |
+| 2026-11-24 | screws hold by the head, hole roofs bridge, radial seats, seated checks factored once (main ebfc654-cf41c04), one at a time | 2 of 6 | 4 of 6 | 4 of 6 | Laptop bracket first try 6.4 g; spool arm 13.9 g (was 19.9); pegboard holder 12.6 g; twin `tube-tee-20mm-petg-b` (rail as a radial seat) first try 59.0 g, SF 2.56, 67 min. Pillow block fails honestly (block reads 2.33 for 2.5); Pi mount comes out in two pieces (gap 6). The spool arm's and pegboard holder's check warnings are true (supports under drawn features in their build direction) |
 
 The scorer leaves a warning about this machine's free memory out of the
 "clean check" count: it is about the machine, not the study. A diagnosis
