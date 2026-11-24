@@ -272,12 +272,15 @@ class _Level:
             fe = np.matmul(self.patch_k.astype(u.dtype, copy=False), ue[:, :, None])[:, :, 0]
             self._patch_scatter(fe, out)
         if self.extra is not None:
-            pre = self.__dict__.get("_extra_rows")
-            if pre is None or pre[0] is not self.extra:
-                pre = self._extra_rows = (self.extra, _mgops.csr_rows(self.extra))
-            if not _mgops.add_csr(pre[1], u, out):
-                out += (self.extra @ u.reshape(-1).astype(np.float64)).astype(u.dtype).reshape(out.shape)
+            self._add_extra(u, out)
         return out
+
+    def _add_extra(self, u, out):
+        pre = self.__dict__.get("_extra_rows")
+        if pre is None or pre[0] is not self.extra:
+            pre = self._extra_rows = (self.extra, _mgops.csr_rows(self.extra))
+        if not _mgops.add_csr(pre[1], u, out):
+            out += (self.extra @ u.reshape(-1).astype(np.float64)).astype(u.dtype).reshape(out.shape)
 
     def _patch_index(self):
         if getattr(self, "_pidx", None) is None:
@@ -302,9 +305,26 @@ class _Level:
         """The level's operator: identity on masked-out dofs."""
         m = self.mask.astype(u.dtype, copy=False)
         if _mgops.available() and u.flags.c_contiguous and m.flags.c_contiguous:
-            um = np.empty_like(u)
-            _mgops._mul(u.reshape(-1), m.reshape(-1), um.reshape(-1))
-            out = self.apply_k(um)
+            # u * m is read in the product's gather, not made as a field, and
+            # the scatter starts each node from zero in an unset array; a
+            # level with no patch or extra terms finishes there too. The same
+            # operations on each value as before, so the same numbers.
+            cells, (a, b) = self._compiled(u.dtype)
+            out = np.empty(self.node_shape, u.dtype)
+            patch = self.patch_ijk is not None and len(self.patch_ijk)
+            plain = not patch and self.extra is None
+            _mgops.apply_masked(self.kind, u, a, b, cells, m, out, plain)
+            if plain:
+                return out
+            if patch:
+                idx = self._patch_index()
+                ue = u.reshape(-1)[idx] * m.reshape(-1)[idx]
+                fe = np.matmul(self.patch_k.astype(u.dtype, copy=False), ue[:, :, None])[:, :, 0]
+                self._patch_scatter(fe, out)
+            if self.extra is not None:
+                um = np.empty_like(u)
+                _mgops._mul(u.reshape(-1), m.reshape(-1), um.reshape(-1))
+                self._add_extra(um, out)
             _mgops._finish(out.reshape(-1), m.reshape(-1), u.reshape(-1))
             return out
         out = self.apply_k(u * m)
@@ -745,10 +765,9 @@ class GridElasticity:
             r = np.empty_like(b)
             d = np.empty_like(b)
             if x is None:
-                x = np.zeros_like(b)
-                r[...] = b
-                _mgops._mul(dinv, b.reshape(-1), d.reshape(-1))
-                d *= 1.0 / theta
+                x = np.empty_like(b)
+                _mgops._cheb_start(b.reshape(-1), dinv, b.dtype.type(1.0 / theta), x.reshape(-1),
+                                   r.reshape(-1), d.reshape(-1))
             else:
                 _mgops._residual_scaled(b.reshape(-1), lv.apply(x).reshape(-1), dinv, 1.0 / theta,
                                         r.reshape(-1), d.reshape(-1))
@@ -782,21 +801,26 @@ class GridElasticity:
             x = self._smooth(lv, b, None)
             return self._smooth(lv, b, x)
         x = self._smooth(lv, b, None)
-        r = b - lv.apply(x)
+        ax = lv.apply(x)
         cs = self._op(i + 1).node_shape
-        rf = np.zeros((3,) + tuple(2 * n - 1 for n in cs[1:]), r.dtype)
-        sx, sy, sz = lv.node_shape[1:]
-        rf[:, :sx, :sy, :sz] = r * lv.mask
         # the coarse level's masked dofs are identity rows: kept out of the
         # residual it solves and of the correction it sends back
         cm = self._op(i + 1).mask
-        xc = self._vcycle(i + 1, (restrict(rf) * cm).astype(self.dtype, copy=False))
-        x += prolong(xc * cm)[:, :sx, :sy, :sz] * lv.mask
+        sx, sy, sz = lv.node_shape[1:]
+        rc = _mgops.coarse_residual(b, ax, lv.mask, cm, cs)
+        if rc is None:
+            r = b - ax
+            rf = np.zeros((3,) + tuple(2 * n - 1 for n in cs[1:]), r.dtype)
+            rf[:, :sx, :sy, :sz] = r * lv.mask
+            rc = restrict(rf) * cm
+        xc = self._vcycle(i + 1, rc.astype(self.dtype, copy=False))
+        if not _mgops.add_correction(xc, cm, lv.mask, x):
+            x += prolong(xc * cm)[:, :sx, :sy, :sz] * lv.mask
         return self._smooth(lv, b, x)
 
     def precondition(self, r):
-        z = self._vcycle(0, r.astype(self.dtype))
-        return z.astype(np.float64)
+        z = self._vcycle(0, _mgops.cast(r, self.dtype))
+        return _mgops.cast(z, np.float64)
 
     # --- solve -------------------------------------------------------------
 

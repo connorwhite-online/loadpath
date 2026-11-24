@@ -697,6 +697,52 @@ the run, and each PARDISO call timed by its caller).
   run cannot start beside the search on 15 GB (`_Speculative.wanted`: its grid is fitted to the
   memory there is), and the wait on each tet confirm is serial by design.
 
+## The elasticity solve against two new GPU codes (2026-11-24)
+
+Two open topology-optimization codes appeared on arXiv in November 2026:
+TOF3D (arXiv 2611.12027, MIT, Taichi on an RTX 3060, single precision) and
+topax (arXiv 2611.29021, github.com/pedrozudo/topax, Apache-2.0, JAX on a
+GH200, double precision). Both solve the voxel hex8 problem with
+multigrid-preconditioned CG, Galerkin coarse levels and a matrix-free fine
+operator, like `mg.GridElasticity`. Each of their ideas was tried on
+loadpath's own solver (4-core cloud box, Python + numba), on the same
+problems at the same tolerance (relative residual 1e-6):
+
+| Idea | Result | Kept |
+|---|---|---|
+| Damped Jacobi smoother, omega 0.6, two sweeps (both codes) | solid bar 11 -> 21 CG its; a thin-sheet gyroid part never converged (2000 its) | no: Chebyshev-Jacobi stays |
+| Nodal 3x3 block Jacobi (TOF3D) inside the Chebyshev smoother | 41 -> 37 its on the gyroid part, each sweep dearer | no |
+| Coarse levels from an operator with removed cells at E_min (TOF3D: 214 -> 26 its) | already true here: Galerkin products of the masked operator give the same coarse matrices | n/a |
+| Float32 operator in "difference form", sum_j K_ij (u_j - u_i) (TOF3D) | chunky parts: cell strain energy within 5e-6 of float64 (plain float32: 9e-3). A 400 x 4 x 4 cantilever: 5e-3, 0.3% in stress, from float32 displacements on a part that rotates far more than it strains | no for the outer CG (verify reads stresses on slender parts); in the float32 V-cycle it saved 1 of 20 its |
+| Every vector step fused into the kernels (both codes run one GPU kernel per step) | see below | yes |
+
+The fused steps: the masked operator reads `u * mask` in the product's
+gather and the scatter writes `K u * m + (1 - m) u` once (two passes and
+two temporaries gone); the residual, its zero padding, restriction and the
+coarse mask are one pass; prolongation, masking and the add are one pass;
+the smoother's start and the CG's float32/float64 casts run on all cores.
+Every value goes through the same operations, rounded at the same points,
+so each level's operator and the whole V-cycle give the same numbers to the
+bit (`test_fused_vcycle_steps_are_the_passes_bit_for_bit`).
+
+| Problem (CG its) | before | after |
+|---|---|---|
+| solid cantilever 128 x 64 x 64, 524k cells (11) | 1.57 s | 1.46 s |
+| gyroid-sheet cantilever, 147k cells in a 128 x 64 x 64 box (41) | 3.06 s | 2.69 s |
+| gyroid-sheet cantilever, 481k cells in a 192 x 96 x 96 box (52) | 14.3 s | 9.4 s |
+
+The gain grows with the empty part of the box, where the vector passes ran
+over nodes no cell touches. The arm-link field run (cut-cell grid, its
+extra CSR terms still a pass of their own) moved 46.8 -> 45.3 s, safety
+factor the same to 3e-10, which is the solve's run-to-run spread.
+
+For scale: TOF3D reports 0.46 s per design iteration at 0.5M elements on
+the RTX 3060 at a looser tolerance (1e-5); this CPU solve of the 524k solid
+cantilever takes 1.46 s at 1e-6. What is left on the operator is the
+24 x 24 product per cell (70-80% of an apply, already about BLAS's speed on
+these cores); a GPU, through the optional torch backend (`gpu.py`), is the
+way past it.
+
 ## Wall time against nTop and Fusion 360
 
 There is no like-for-like benchmark: neither vendor publishes solver timings
