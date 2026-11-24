@@ -98,6 +98,38 @@ def _halves(n, toward_start, toward_end, depth=DEPTH):
     return np.unique(np.asarray(br, float))
 
 
+def _one_sided(H, XG, NG):
+    """Normals on the grids of faces beside a crease taken from the face's
+    own side: across a crease the limit surface turns a corner, and the
+    two-sided masks give the mean of the two sides' normals there."""
+    cage = H.cage
+    Q, QE = cage.Q, cage.QE
+    sh = cage.sharpness
+    on = cage.crease[QE].any(axis=1) | (sh[Q] > 0).any(axis=1)
+    s = XG.shape[1] - 1
+    NG = NG.copy()
+    for q in np.flatnonzero(on):
+        X = XG[q]
+        # second-order differences inside the face, one-sided at its sides
+        Xu = np.gradient(X, axis=0, edge_order=2)
+        Xv = np.gradient(X, axis=1, edge_order=2)
+        N = np.cross(Xu, Xv)
+        N /= np.maximum(np.linalg.norm(N, axis=2, keepdims=True), 1e-300)
+        # oriented as the face's own normals
+        if np.einsum("ijk,ijk->", N, NG[q]) < 0:
+            N = -N
+        mask = np.zeros((s + 1, s + 1), bool)
+        for k in range(4):
+            if cage.crease[QE[q, k]]:
+                side = [(slice(None), 0), (s, slice(None)), (slice(None), s), (0, slice(None))][k]
+                mask[side] = True
+        for k, (i, j) in enumerate(((0, 0), (s, 0), (s, s), (0, s))):
+            if sh[Q[q, k]] > 0:
+                mask[i, j] = True
+        NG[q][mask] = N[mask]
+    return NG
+
+
 def motorcycles(cage):
     """Every edge line leaving a star point, drawn on one edge at a time
     (all at once, so none takes more than its share) until it meets a
@@ -114,6 +146,18 @@ def motorcycles(cage):
     hit = hit.copy()
     ev = np.argwhere(cage.valence[Q] != 4)
     run = deque((int(q), int(k)) for q, k in ev)
+    cr = getattr(cage, "crease", None)
+    if cr is not None and cr.any():
+        # creases are lines already drawn (a patch boundary: the surface
+        # turns a corner there); where one ends or turns at a regular vertex
+        # a line goes on straight from it, as from a star point
+        cut |= cr
+        hit |= cage.sharpness > 0
+        for q, k in np.argwhere(cr[QE]):
+            w = int(Q[q, (k + 1) % 4])
+            if cage.valence[w] == 4:
+                q2, k2 = int(tq[q, (k + 1) % 4]), int(tk[q, (k + 1) % 4])
+                run.append((q2, (k2 + 1) % 4))
     while run:
         q, k = run.popleft()
         e = QE[q, k]
@@ -143,6 +187,10 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     s = G.shape[1] - 1
     XG = (H.M @ C)[G]
     NG = grid_normals(H, C)
+    crease_fine = set()
+    if cage.crease.any():
+        NG = _one_sided(H, XG, NG)
+        crease_fine = set(np.unique(H.fine.sharp).tolist())
     tq, tk = _twins(cage)
     tq, tk = tq.reshape(-1, 4), tk.reshape(-1, 4)
     evv = cage.valence != 4
@@ -454,6 +502,8 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         Nr /= np.maximum(np.linalg.norm(Nr, axis=2, keepdims=True), 1e-300)
         for sl in ((slice(1, -1), 0), (slice(1, -1), -1), (0, slice(1, -1)), (-1, slice(1, -1))):
             for vid, nn in zip(Gr[sl].ravel(), Nr[sl].reshape(-1, 3)):
+                if int(vid) in crease_fine:
+                    continue            # a crease: the surfaces meet at its corner, not smoothly
                 o = side_normals.get(int(vid))
                 if o is None:
                     side_normals[int(vid)] = nn
@@ -487,7 +537,7 @@ def _merge(cage, cut, find_pieces, rect, evv):
     opposite sides meet (wrapped round a member) is not taken. Returns the
     number of merges."""
     Q, QE = cage.Q, cage.QE
-    star_edge = evv[cage.E].any(axis=1)
+    star_edge = evv[cage.E].any(axis=1) | getattr(cage, "crease", np.zeros(len(cage.E), bool))
     merges = 0
     for _ in range(64):
         pieces = find_pieces()

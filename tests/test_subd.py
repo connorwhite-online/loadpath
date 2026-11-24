@@ -294,6 +294,50 @@ def test_long_triangles_laid_out_on_even_resampling():
     assert seen[0] <= step and len(c.Q) > 300
 
 
+def test_creased_cube_cage_is_the_cube():
+    # every edge of a cube cage a crease: the limit surface is the cube
+    V = np.array([[x, y, z] for x in (0, 1) for y in (0, 1) for z in (0, 1)], float)
+    Q = np.array([[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]])
+    c = subd.Cage(V, Q)
+    P = subd.Hierarchy(subd.Cage(V, Q, sharp=c.E), 3).limit()
+    assert np.minimum(np.abs(P), np.abs(P - 1)).min(axis=1).max() < 1e-12
+    P0 = subd.Hierarchy(c, 3).limit()
+    assert np.minimum(np.abs(P0), np.abs(P0 - 1)).min(axis=1).max() > 0.1      # smooth: rounded
+
+
+def test_box_edges_laid_as_creases():
+    from loadpath import subdcrease
+
+    m = trimesh.creation.box([40.0, 30.0, 6.0])
+    tol, n = 0.1, 736
+    h = float(np.sqrt(m.area / n))
+    lines, _ = subdcrease.feature_lines(m, tol, h)
+    assert len(lines) == 12                     # the 6 mm sides too: corner to corner
+    c = subd.quad_cage(m, n, crease=np.degrees(8 * tol / h))
+    c, rep = subdcrease.lay_creases(c, m, tol, h=h)
+    assert rep["taken"] == 12
+    c, H = subd.fit_cage(c, m, settle=tol / 50)
+    dev, _ = subd.deviation(H, c.V, m)
+    assert dev["max"] < tol                    # sharp edges, not rounded (smooth: 0.3 mm and more)
+
+
+def test_ragged_rims_are_not_feature_lines():
+    # a hole cut on a voxel grid: its rim turns sharply but zigzags at the
+    # grid, branching at every step; no crease is laid on it
+    from loadpath import subdcrease
+
+    box = trimesh.creation.box([30.0, 30.0, 4.0])
+    hole = trimesh.creation.cylinder(radius=5.0, height=10.0, sections=48)
+    vox = box.difference(hole).voxelized(0.5).fill()
+    m = vox.marching_cubes
+    m.apply_transform(vox.transform)
+    lines, _ = subdcrease.feature_lines(m, 0.1, 2.0)
+    for P, closed, _ in lines:
+        assert subdcrease._jag(P, closed, 2.0) <= 0.1
+    rim = [P for P, c, _ in lines if np.linalg.norm(P[:, :2], axis=1).max() < 7.0]
+    assert not rim
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

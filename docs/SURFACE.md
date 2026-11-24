@@ -278,6 +278,46 @@ mm near that bridged hole and is undone.
 ![Spool arm](images/surface/unseen-spool-arm.png)
 ![Box cover](images/surface/unseen-box-cover.png)
 
+## Sharp creases (2026-11-24)
+
+A box's edges are not rounded: the feature lines of the mesh become
+infinitely sharp crease edges of the cage, and the limit surface turns the
+corner there exactly (`loadpath/subdcrease.py`, on by default,
+`surface_mesh(creases=False)` to switch off).
+
+![40 x 30 x 6 mm box: rounded before, creased after](images/surface/box-creases.png)
+
+- **Which edges.** A smooth surface rounds a corner of turn theta over
+  about one face h and misses it by the sagitta, h theta / 8; so an edge
+  is a feature once theta > 8 tol / h. The turn must also hold half a face
+  away on both flanks (a marching-cubes ripple turns sharply between two
+  triangles and is level again a millimetre on), the line must not zigzag
+  more than the tolerance about itself averaged over a face (a field's rim
+  cut on the voxel grid), a network with a corner every face or so is a
+  staircase, not lines, and an open line must end at a corner (a fragment
+  of a rim whose rest is ragged). The arm link body has sharp rims round
+  its holes, all ragged: it gets no creases and fits as before. The box
+  cover gets 31 clean lines, its outline and the four bolt holes' rims.
+- **Laying them.** Instant Meshes' field is turned along the creases
+  (extrinsic, so the rows lie on both sides of a narrow face), each line
+  is traced through the cage's edges (shortest path, weighted by distance
+  from the line) and its vertices moved onto it.
+- **The rules.** A crease edge's new point is its midpoint, a crease
+  vertex goes (1/8, 6/8, 1/8) along its two crease edges, a corner of
+  three stays put; the limit is (a + 4v + b) / 6 on a crease. Fairing,
+  star-point moves and edits all carry the creases; the patch layout cuts
+  its rectangles along them and fits each side with its own normals.
+- **Box (40 x 30 x 6 mm, tol 0.1):** 18 faces, p99 0.094 mm, max 0.3 mm
+  smooth -> 6 faces, p99 0.012 mm, max 0.019 mm creased.
+- **All or nothing.** A part creased in places fits worse than one rounded
+  everywhere (the box cover with 5 of its 31 lines laid: p99 0.36 mm
+  against 0.18 smooth at the same density, and the layout tears round a
+  crease that stops). Creases are laid only when 95% of the lines' length
+  lands on cage edges; otherwise the cage is laid again without them.
+  The cover is such a part today: its long flat triangles, split fine,
+  tear Instant Meshes' crease-aligned extraction, and the plain field's
+  rows miss its lines.
+
 ## Not yet
 
 - Adaptive density for the first cage: measured, and not a lever on
@@ -311,6 +351,14 @@ mm near that bridged hole and is undone.
 - Zebra stripes still wobble on large flats of field parts: the fit follows
   the marching-cubes mesh's small ripples within the tolerance.
 - Sharp creases on an organic body (a generated mesh's hard rim) are
-  rounded to within the tolerance, not kept as creases.
+  rounded to within the tolerance, not kept as creases; and a CAD-like
+  part whose remesh cannot lay a row of edges on every feature line (the
+  box cover) is fitted smooth. A feature-preserving remesh before Instant
+  Meshes is the next step there.
+- A hole through a web thinner than the faces over it (the wrist link's
+  2.6 mm hole in a 1.1 mm web) stays bridged: the plain cut folds the
+  surface, and refining the two mouth faces and setting them on the
+  hole's rim before the cut still closes on refit
+  (project files `surface/thin-web-fitted-mouths-attempt.patch`).
 - A coarse first cage can come out with holes round thin members; the
   density search then steps finer (2.5x) until it closes.

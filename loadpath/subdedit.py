@@ -420,8 +420,7 @@ def refit(cage, H, mesh, touched, data, rings=RINGS, iterations=None, smooth=Non
     Xs, NXs = X[sel], NX[sel]
     wP, wX = (np.ones(len(rows)), np.ones(len(Xs))) if weights is None else (weights[0][rows], weights[1][sel])
     E = cage.E
-    W = sp.csr_matrix((np.ones(2 * len(E)), (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n))
-    Lap = sp.identity(n) - sp.diags(1.0 / cage.valence) @ W
+    Lap = subd.cage_laplacian(cage)
     w2 = 0.5 * M.shape[0] / len(X)
     Qf = H.fine.Q
     # normals of the rows from the fine quads that hold them: only the limit
@@ -617,7 +616,7 @@ def repair(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, d1, d2,
             entry["facesInset"] = int(len(cf))
         try:
             V, Q, tch = _compact(V, Q, np.concatenate(touched))
-            c2 = subd.Cage(V, Q)
+            c2 = subd.Cage(V, Q, sharp=subd.carry(cage.V, cage.sharp, V))
             if (np.bincount(c2.Q.ravel(), minlength=c2.n) < 3).any():
                 raise ValueError("a vertex with two faces")
             H2 = H if (len(Q) == len(cage.Q) and (Q == cage.Q).all()) else subd.Hierarchy(c2, level)

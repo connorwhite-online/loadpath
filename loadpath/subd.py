@@ -50,9 +50,12 @@ SEW = 1e-4           # mm: sewing tolerance; shared edges are identical, so this
 # ------------------------------------------------------------------ cage
 
 class Cage:
-    """A closed, consistently oriented all-quad mesh: V (n, 3), Q (m, 4)."""
+    """A closed, consistently oriented all-quad mesh: V (n, 3), Q (m, 4).
+    `sharp`: (k, 2) vertex pairs, the cage edges that are creases (the
+    surface turns a corner across them: Catmull-Clark's infinitely sharp
+    rules); pairs that are not edges of this cage are dropped."""
 
-    def __init__(self, V, Q):
+    def __init__(self, V, Q, sharp=None):
         self.V = np.asarray(V, float)
         self.Q = np.asarray(Q, np.int64)
         Q = self.Q
@@ -82,6 +85,25 @@ class Cage:
         d = np.sort(a * n + b)
         if (d[1:] == d[:-1]).any():
             raise ValueError("cage faces are not consistently oriented")
+        self.crease = np.zeros(len(E), bool)
+        if sharp is not None and len(sharp):
+            sh = np.asarray(sharp, np.int64).reshape(-1, 2)
+            ok = (sh >= 0).all(1) & (sh < nv).all(1)
+            sk = np.minimum(sh[ok, 0], sh[ok, 1]) * nv + np.maximum(sh[ok, 0], sh[ok, 1])
+            i = np.searchsorted(u, sk)
+            hit = (i < len(u)) & (u[np.minimum(i, len(u) - 1)] == sk)
+            self.crease[i[hit]] = True
+
+    @property
+    def sharp(self):
+        """The crease edges as vertex pairs."""
+        return self.E[self.crease]
+
+    @property
+    def sharpness(self):
+        """Crease edges at each vertex: 0 or 1 smooth, 2 on a crease, 3 or
+        more a corner."""
+        return np.bincount(self.E[self.crease].ravel(), minlength=len(self.V))
 
     @property
     def n(self):
@@ -89,6 +111,30 @@ class Cage:
 
     def irregular_faces(self):
         return (self.valence[self.Q] != 4).any(axis=1)
+
+
+def carry(old_V, old_sharp, new_V):
+    """Crease pairs carried onto an edited cage by position (subdcrease.carry)."""
+    from .subdcrease import carry as c
+    return c(old_V, old_sharp, new_V)
+
+
+def cage_laplacian(cage):
+    """Each control point less the mean of its neighbours (the membrane and
+    bending terms of the fit). A crease point's neighbours are the two along
+    its crease and a corner has none: the fairing smooths along a crease
+    and never across it."""
+    sp = _sp()
+    E, n = cage.E, cage.n
+    W = sp.csr_matrix((np.ones(2 * len(E)), (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n))
+    if cage.crease.any():
+        sh = cage.sharpness
+        ce = E[cage.crease]
+        Wc = sp.csr_matrix((np.ones(2 * len(ce)), (np.r_[ce[:, 0], ce[:, 1]], np.r_[ce[:, 1], ce[:, 0]])), shape=(n, n))
+        keep = sp.diags((sh < 2).astype(float))
+        W = (keep @ W + sp.diags((sh == 2).astype(float)) @ Wc).tocsr()
+    deg = np.asarray(W.sum(axis=1)).ravel()
+    return (sp.diags((deg > 0).astype(float)) - sp.diags(1.0 / np.maximum(deg, 1.0)) @ W).tocsr()
 
 
 def _sp():
@@ -114,6 +160,27 @@ def subdivision_matrix(cage):
     VF = sp.csr_matrix((np.ones(4 * m), (Q.ravel(), np.repeat(np.arange(m), 4))), shape=(n, m))
     D = sp.diags(1.0 / val ** 2)
     Av = sp.diags((val - 2.0) / val) + D @ VV + D @ (VF @ Af)
+    cr = cage.crease
+    if cr.any():
+        # infinitely sharp creases (Hoppe et al. 1994, DeRose et al. 1998):
+        # a crease edge's point is its midpoint; a vertex on two crease
+        # edges follows the cubic B-spline of the crease (1/8, 6/8, 1/8), on
+        # three or more (a corner) it stays put; each crease edge's two
+        # halves are creases
+        Ae = Ae.tolil()
+        Av = Av.tolil()
+        for i in np.flatnonzero(cr):
+            Ae.rows[i], Ae.data[i] = sorted(E[i].tolist()), [0.5, 0.5]
+        sh = cage.sharpness
+        ce = E[cr]
+        for v in np.flatnonzero(sh >= 2):
+            if sh[v] == 2:
+                nb = np.r_[ce[ce[:, 0] == v, 1], ce[ce[:, 1] == v, 0]]
+                cols = sorted([int(v)] + nb.tolist())
+                Av.rows[v], Av.data[v] = cols, [0.75 if c == v else 0.125 for c in cols]
+            else:
+                Av.rows[v], Av.data[v] = [int(v)], [1.0]
+        Ae, Av = Ae.tocsr(), Av.tocsr()
     S = sp.vstack([Av, Ae, Af]).tocsr()
     k = np.arange(4)
     vk = Q
@@ -122,7 +189,10 @@ def subdivision_matrix(cage):
     f = (n + e + np.arange(m))[:, None].repeat(4, 1)
     Q2 = np.stack([vk, ek, f, ekm], axis=2).reshape(4 * m, 4)
     del k
-    return S, Q2
+    ci = np.flatnonzero(cage.crease)
+    sharp2 = np.concatenate([np.stack([E[ci, 0], n + ci], 1), np.stack([n + ci, E[ci, 1]], 1)]) if len(ci) \
+        else np.zeros((0, 2), np.int64)
+    return S, Q2, sharp2
 
 
 def limit_matrix(cage):
@@ -142,7 +212,22 @@ def limit_matrix(cage):
     w.append(np.ones(Q.size))
     r, c, ww = np.concatenate(rows), np.concatenate(cols), np.concatenate(w)
     L = sp.csr_matrix((ww, (r, c)), shape=(n, n))
-    return sp.diags(1.0 / (val * (val + 5.0))) @ L
+    Lm = (sp.diags(1.0 / (val * (val + 5.0))) @ L).tocsr()
+    if cage.crease.any():
+        # on a crease the limit is the crease curve's (a + 4 v + b) / 6; a
+        # corner is where it stands
+        Lm = Lm.tolil()
+        sh = cage.sharpness
+        ce = E[cage.crease]
+        for v in np.flatnonzero(sh >= 2):
+            if sh[v] == 2:
+                nb = np.r_[ce[ce[:, 0] == v, 1], ce[ce[:, 1] == v, 0]]
+                cols = sorted([int(v)] + nb.tolist())
+                Lm.rows[v], Lm.data[v] = cols, [4.0 / 6.0 if c == v else 1.0 / 6.0 for c in cols]
+            else:
+                Lm.rows[v], Lm.data[v] = [int(v)], [1.0]
+        Lm = Lm.tocsr()
+    return Lm
 
 
 class Hierarchy:
@@ -162,7 +247,7 @@ class Hierarchy:
         au = np.tile([1.0, 0.0], (m, 1))
         av = np.tile([0.0, 1.0], (m, 1))
         for _ in range(level):
-            S, Q2 = subdivision_matrix(c)
+            S, Q2, sharp2 = subdivision_matrix(c)
             P = (S @ P).tocsr()
             corners = np.stack([o, o + au, o + au + av, o + av], axis=1)       # (m, 4, 2)
             nk = np.roll(corners, -1, axis=1)
@@ -172,7 +257,7 @@ class Hierarchy:
             av2 = ((pk - corners) / 2).reshape(-1, 2)
             root = np.repeat(root, 4)
             o, au, av = o2, au2, av2
-            c = Cage(S @ c.V, Q2)
+            c = Cage(S @ c.V, Q2, sharp=sharp2)
         self.fine = c
         self.M = (limit_matrix(c) @ P).tocsr()
         self.Pm = P                 # fine control points from the cage's
@@ -236,9 +321,22 @@ def _quads(mesh, faces, crease):
     # Instant Meshes' pure-quad mode subdivides its quad-dominant mesh once,
     # so ask for a quarter of the faces; the in-memory call hands back
     # triangles, so the quads come through an OBJ
+    # with creases, the extrinsic field: the intrinsic one turns its quads
+    # 45 degrees on a narrow side between two creases (a 6 mm box side at
+    # 2.3 mm faces: no row of edges along either crease to lay it on)
     kw = dict(target_face_count=max(8, int(faces) // 4), pure_quad=True, deterministic=True,
-              smooth_iterations=2, crease_angle=-1.0 if crease is None else float(crease))
+              smooth_iterations=2, crease_angle=-1.0 if crease is None else float(crease), extrinsic=crease is not None)
     step = float(np.sqrt(mesh.area / max(int(faces), 1)))
+    if crease is not None and float(mesh.edges_unique_length.max()) > step:
+        # the sharp edges kept (an even resampling rounds them, and the field
+        # then has no crease to turn along): long edges split instead
+        import trimesh
+
+        sub = trimesh.Trimesh(*trimesh.remesh.subdivide_to_size(mesh.vertices, mesh.faces, max_edge=step / 3),
+                              process=False)
+        v, f = _instant_quads(sub, kw)
+        if len(f):
+            return v, f
     # Instant Meshes lays its field over the input's own vertex graph: an
     # edge longer than the quads it is to lay (a flat face exported as a few
     # long triangles, 48 mm on a 1.6 mm-walled box cover) leaves its field
@@ -576,8 +674,7 @@ def fit_cage(cage, mesh, level=LEVEL, iterations=ITERATIONS, smooth=SMOOTH, edge
     wP, wX = weights if weights is not None else (np.ones(M.shape[0]), np.ones(len(X)))
     # membrane: each control point near the mean of its neighbours
     E = cage.E
-    W = sp.csr_matrix((np.ones(2 * len(E)), (np.r_[E[:, 0], E[:, 1]], np.r_[E[:, 1], E[:, 0]])), shape=(n, n))
-    Lap = sp.identity(n) - sp.diags(1.0 / cage.valence) @ W
+    Lap = cage_laplacian(cage)
     C = cage.V.copy()
     lam = smooth * M.shape[0] / n
     stiff = np.ones(n)                      # local membrane factor, raised where the surface folds
@@ -832,6 +929,7 @@ def noise(mesh, n=20000, rings=2):
     return float(np.median(r)) if r else 0.0
 
 
+CREASES_LAID = 0.95  # creases are laid only when nearly all of the feature lines' length lies on cage edges
 NEARLY = 1.15       # a cage whose 99th percentile is within this of the tolerance is fitted on, not laid again
 ACCURACY = 0.3      # mm: FDM's typical +- (dfm_reference: PLA/PETG/ABS/nylon), loadpath's first process
 MIN_HOLE = 2.0      # mm: FDM's smallest hole that prints open (spec.PROCESSES)
@@ -888,10 +986,11 @@ def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, p
     frozen = np.zeros(0, np.int64)
     rep = {"moves": 0, "starPoints": [stars, stars]}
     for attempt in range(attempts):
-        Vn, Qn, touched, taken = simplify(cage.V, cage.Q, frozen=frozen)
+        # a crease stays as it was laid: its vertices are not moved or rotated
+        Vn, Qn, touched, taken = simplify(cage.V, cage.Q, frozen=np.union1d(frozen, np.unique(cage.sharp)))
         if not taken:
             break
-        c2 = Cage(Vn, Qn)
+        c2 = Cage(Vn, Qn, sharp=carry(cage.V, cage.sharp, Vn))
         H2 = Hierarchy(c2, level)
         refit(c2, H2, mesh, touched, data, fair=fair, settle=tol / 50)
         d2v, (e1, e2, X2) = deviation(H2, c2.V, mesh, data=check)
@@ -913,7 +1012,7 @@ def _fewer_stars(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, p
 
 
 def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, level=LEVEL, progress=None,
-                 crease=None, accuracy=None, source=None, min_hole=None):
+                 crease=None, accuracy=None, source=None, min_hole=None, creases=True):
     """Fit a Catmull-Clark surface to a closed mesh. The cage gets denser
     until the two-way deviation's 99th percentile is within `tolerance` mm
     (default `pick_tolerance`: from the process `accuracy` and the noise
@@ -925,6 +1024,8 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     pulls harder until it is within (`misses`). Holes under `min_hole`
     the cage closed are reported, not chased: the printer would not have
     left them open. Returns (cage, hierarchy, report)."""
+    from .subdcrease import feature_lines, lay_creases
+
     t0 = time.time()
     ext = float(np.linalg.norm(mesh.bounds[1] - mesh.bounds[0]))
     nz = noise(source if source is not None else mesh)
@@ -949,13 +1050,47 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     tries = []
     best = None
     spots = []          # where the cage is laid finer (quad_cage `finer`)
+    lay_ok = creases    # feature lines still to be laid as creases
     for r in range(rounds):
         cage = None
         while cage is None:
             for k, f in enumerate((1.0, 1.08, 0.93, 1.17, 1.3, 1.5, 1.8, 2.2)):
                 # an odd or pinched hole, a fold at this density: nudge it
                 try:
-                    cage = quad_cage(mesh, int(n * f), crease=crease, finer=spots)
+                    nf = int(n * f)
+                    hf = float(np.sqrt(area / nf))
+                    # the mesh's sharp edges (subdcrease): the quads' field
+                    # turned along them, the cage's edges then laid on them
+                    sharp_lines = lay_ok and bool(feature_lines(mesh, tol, hf)[0])
+                    ca = crease if crease is not None else (np.degrees(8.0 * tol / hf) if sharp_lines else None)
+                    try:
+                        cage = quad_cage(mesh, nf, crease=ca, finer=spots)
+                    except ValueError as err:
+                        if not sharp_lines:
+                            raise
+                        # the crease field's extraction tore (the box
+                        # cover's long flat triangles split fine: holes at
+                        # every density); smooth from here on
+                        if progress:
+                            progress(f"creases: quad cage along them failed ({err}); the part is fitted smooth")
+                        lay_ok = sharp_lines = False
+                        cage = quad_cage(mesh, nf, crease=crease, finer=spots)
+                    if sharp_lines:
+                        c2, crep = lay_creases(cage, mesh, tol, h=hf, progress=progress)
+                        if crep["takenLength"] >= CREASES_LAID * crep["length"]:
+                            cage = c2
+                        else:
+                            # some lines could not be laid on this cage's
+                            # edges: a part creased in places fits worse than
+                            # one rounded everywhere (the box cover: 5 of 31
+                            # lines, p99 0.36 mm against 0.18 smooth, and the
+                            # patch layout tears round a crease that stops);
+                            # the cage is laid again without the crease field
+                            if progress:
+                                progress(f"creases: {crep['takenLength']:.0f} of {crep['length']:.0f} mm of "
+                                         "feature line laid; the part is fitted smooth")
+                            lay_ok = False
+                            cage = quad_cage(mesh, nf, crease=crease, finer=spots)
                     break
                 except ValueError as err:
                     if progress:
@@ -1087,7 +1222,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
         V0 = cage.V.copy()
         f = 4e-3
         while f < 1e3:
-            c2 = Cage(V0.copy(), cage.Q)
+            c2 = Cage(V0.copy(), cage.Q, sharp=cage.sharp)
             c2, _ = fit_cage(c2, mesh, level=level, data=data, fair=f, iterations=6, H=H, settle=tol / 50)
             d2, _ = deviation(H, c2.V, mesh, data=check)
             fairs.append({"bending": f, "p99": d2["p99"], "max": d2["max"]})
@@ -1128,7 +1263,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
                 # only the control points round the places that miss are fitted
                 # again (subdedit.refit): the rest of the surface is where the
                 # fairing left it, and a pull costs seconds, not a whole fit
-                c2 = Cage(cage.V.copy(), cage.Q)
+                c2 = Cage(cage.V.copy(), cage.Q, sharp=cage.sharp)
                 refit(c2, H, mesh, np.unique(cage.Q[H.root[(kind == 1)[H.fine.Q].any(axis=1)]]), data, fair=fair,
                       iterations=8, settle=tol / 50, weights=(wP, wX))
                 d2v, (e1, e2, Xc) = deviation(H, c2.V, mesh, data=check)
@@ -1154,7 +1289,7 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
             if res is None:
                 break
             try:
-                c2 = Cage(res[0], res[1])
+                c2 = Cage(res[0], res[1], sharp=carry(cage.V, cage.sharp, res[0]))
                 H2 = Hierarchy(c2, level)
                 refit(c2, H2, mesh, res[2], data, fair=fair, settle=tol / 50)
             except (ValueError, RuntimeError):
@@ -1844,7 +1979,7 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
         # still there to look at
         write_cage_obj(cage, cage_path)
         rep["cage"] = str(cage_path)
-    Hp = Hierarchy(Cage(cage.V, cage.Q), LEVEL + 1)
+    Hp = Hierarchy(Cage(cage.V, cage.Q, sharp=cage.sharp), LEVEL + 1)
     b = None
     if layout == "lines":
         # rectangles along the cage's own lines, star points at their corners
