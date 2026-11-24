@@ -274,7 +274,7 @@ _KEEP_OUT = {
 }
 
 _TARGET = ("A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') "
-           "or an inline 'shape'.")
+           "or an inline 'shape'; both: the region's material inside the shape (the skin in a slice).")
 
 _SUPPORT = {
     "type": "object",
