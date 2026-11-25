@@ -55,6 +55,8 @@ SECTORS = 12
 BANDS = 2
 # the part counts as soft against a steel ring (200 GPa) below this modulus, MPa
 RIGID_BELOW = 20e3
+# patch pushes solved at once
+_BATCH = 8
 
 
 @dataclass
@@ -188,26 +190,46 @@ def redistribute(inner, rhs: list, inserts: list, case_rhs, n_dof: int, xyz) -> 
     case's one right-hand side, or None (a force of unknown direction: it
     keeps the fixed pressure). One solve per patch, on the same matrix."""
     rhs = list(rhs)
+    # the same bore in several cases (down, up, sideways) is one set of
+    # patches, solved once: the pushes do not depend on the load
+    solved = {}
     for ins in inserts:
         i = case_rhs(ins.case)
         if i is None:
             continue
-        pats, wrench = _patches(ins, xyz[ins.nodes])
-        if len(pats) < 3:
+        key = (ins.nodes.tobytes(), ins.center.tobytes(), ins.axis.tobytes())
+        if key not in solved:
+            pats, wrench = _patches(ins, xyz[ins.nodes])
+            if len(pats) < 3:
+                solved[key] = None
+            else:
+                # each push kept as its dofs and values (a few hundred of each);
+                # dense only while solved, a few at a time: on a fine grid 24
+                # dense pushes and their answers were gigabytes
+                ps = []
+                for rows, f in pats:
+                    ps.append(((3 * ins.nodes[rows][:, None] + np.arange(3)).ravel(), f.ravel()))
+                c = np.zeros((len(ps), len(ps)))
+                for b0 in range(0, len(ps), _BATCH):
+                    dense = []
+                    for dof, val in ps[b0:b0 + _BATCH]:
+                        v = np.zeros(n_dof)
+                        v[dof] = val
+                        dense.append(v)
+                    for j, w in enumerate(inner(dense)):
+                        w = np.asarray(w).ravel()
+                        c[:, b0 + j] = [float(val @ w[dof]) for dof, val in ps]
+                    del dense
+                solved[key] = (ps, wrench, c)
+        if solved[key] is None:
             continue
-        ps = []
-        for rows, f in pats:
-            p = np.zeros(n_dof)
-            for k in range(3):
-                p[3 * ins.nodes[rows] + k] = f[:, k]
-            ps.append(p)
-        ws = inner(ps)
-        c = np.array([[float(pi @ wj) for wj in ws] for pi in ps])
+        ps, wrench, c = solved[key]
         load = np.concatenate([ins.force, np.zeros(3)])
         lam = contact(c, wrench, load, _rigid_basis(ins.axis))
         out = np.array(rhs[i], float, copy=True)
         for k in range(3):
             out[3 * ins.at + k] -= ins.fixed[:, k]
-        out += sum(l_ * p for l_, p in zip(lam, ps))
+        for l_, (dof, val) in zip(lam, ps):
+            out[dof] += l_ * val
         rhs[i] = out
     return rhs
