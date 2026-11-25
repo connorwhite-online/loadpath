@@ -552,3 +552,36 @@ def test_lines_layout_fits_round_a_crease_that_ends():
     assert rep["patchToLimit"]["max"] < 0.1 / 3 and rep["edgeAngle"]["max"] < 0.5, rep
     shape, free = subd.to_brep(b)
     assert free == 0 and BRepCheck_Analyzer(shape).IsValid()
+
+
+def test_topology_fills_holes_the_printer_closes_and_says_so():
+    # a 1 mm hole through a slab is under FDM's 2 mm: a cage that spans it
+    # (genus 1 in, 0 out) has filled it, as the printer would, and says so;
+    # a printable hole closed, a handle lost unaccounted, or a handle the
+    # mesh has not are never kept
+    slab = trimesh.creation.box([20.0, 20.0, 4.0])
+    m = slab.difference(trimesh.creation.cylinder(radius=0.5, height=10.0, sections=16))
+    plain = subd.quad_cage(slab, 300)
+    small = [{"at": [0, 0, 0], "miss": 0.5, "kind": "hole", "diameter": 1.0, "printable": False}]
+    t = subd.topology(m, plain, small, 2.0)
+    assert (t["meshGenus"], t["cageGenus"], t["filledCount"], t["kept"]) == (1, 0, 1, True), t
+    assert "printer closes it" in t["holesFilled"][0]["decision"]
+    big = [dict(small[0], diameter=3.0, printable=True)]
+    assert not subd.topology(m, plain, big, 2.0)["kept"]
+    assert not subd.topology(m, plain, [], 2.0)["kept"]                # lost, none found, no bound
+    t = subd.topology(m, plain, [], 2.0, bound=0.27)                    # no place misses by 0.27: under 0.54
+    assert t["kept"] and t["filledUnseen"] == 1 and t["filledUnseenUnder"] == 0.54, t
+    assert not subd.topology(m, plain, [], 2.0, bound=1.0)["kept"]
+    t = subd.topology(slab, _frame_cage(), [], 2.0)                     # a handle made up
+    assert t["cageGenus"] == 1 and not t["kept"] and "handle" in t["why"]
+
+
+def _frame_cage():
+    corners = np.array([[-2, -1], [2, -1], [2, 1], [-2, 1]], float)
+    sec = np.array([corners[i] + (corners[(i + 1) % 4] - corners[i]) * j / 3 for i in range(4) for j in range(3)])
+    ns, nv = len(sec), 24
+    t = 2 * np.pi * np.arange(nv) / nv
+    V = np.array([[(10 + x) * np.cos(a), (10 + x) * np.sin(a), z] for a in t for x, z in sec])
+    Q = np.array([[j * ns + i, ((j + 1) % nv) * ns + i, ((j + 1) % nv) * ns + (i + 1) % ns, j * ns + (i + 1) % ns]
+                  for j in range(nv) for i in range(ns)])
+    return subd.Cage(V, Q)

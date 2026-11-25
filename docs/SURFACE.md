@@ -384,8 +384,20 @@ causes, each fixed where it starts:
 | wrist link (dev) | 10,012 face patches, 18 free edges | 1,400 faces, valid, p99 0.075 mm, 8.5 min, 7.6 GB |
 | box cover (held out, measured once) | out of memory; capped: 12,910 faces, 39 free edges, p99 0.17, 18/27 lines | 858 faces, valid, p99 0.070 mm, max 1.14 mm, 26/27 lines, 16.5 min, 8.4 GB |
 
-The box cover's cage closes four holes smaller than the FDM minimum (Euler
--44 mesh, -36 cage; no printable hole closed).
+**Holes the printer closes.** Instant Meshes drops a handle narrower than
+its faces and the fit spans it. Whether that is right is the process's
+call: a hole under the smallest the process prints open (FDM 2 mm) closes
+on the printer anyway, so the printed part has it filled, and filling only
+adds material, which never makes a linear-elastic part more compliant (the
+check still holds); opening it to the minimum would take material out of
+the members round it that the check never saw. So such holes are filled,
+and the report says so: `worst.topology` gives the genus in and out, each
+hole filled with its diameter and the reason, and handles lost where no
+place misses (a membrane within the bound all round: narrower than twice
+it). A printable hole closed, a handle the cage made up, or a loss it
+cannot account for fails the run's `within`. Fastened lid: genus 15 in,
+12 out, a 0.71 mm hole and two under 0.54 mm filled. The box cover's cage
+filled four (genus 23 in, 19 out).
 
 ![box cover: input, STEP, bolt seat and web openings](images/surface/box-cover-many-holes.png)
 
