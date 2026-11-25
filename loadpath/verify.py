@@ -729,6 +729,16 @@ def _submodel_gate():
 # budget, the box shrinks toward the eight global cells (no smaller): the
 # same hotspots, the same 2.5x finer cells, a smaller neighbourhood.
 _SUB_MAX_DOFS = 250_000
+# Global cells per radius of the material-length ball (crosscheck.
+# reading_radius) from which a stress hotspot gets no submodel box: the
+# averaged reading is then resolved on the grid itself. On the held-out
+# caster fork (ball 0.86 mm on 0.70 mm cells, 1.2 per radius) the governing
+# box read 9.47-10.01 MPa as its half-width went 3 -> 8 mm and 9.8-10.9 as
+# its cells went 2.5x -> 1.25x finer, against 9.90 on the grid alone: the
+# box moved the reading by less than its own scatter (and the allowance,
+# STRESS_ALLOWANCE, covers +-12%), and its nine boxes were 42% of the run.
+# Members too thin to bend in on the grid (_thin_spots) keep theirs.
+_RESOLVED_BALL = 1.0
 # The most a submodel box has raised a hotspot's stress over the global
 # grid's reading of it: 2.24 at the pegboard hammer holder's peg root (a
 # re-entrant corner, 105 boxes over the held-out runs; the rest under 1.5).
@@ -2432,7 +2442,11 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
         futs = []
         if refine and body.any():
             half = max(8.0 * pitch, 6.0)
-            spots = list(_hotspots(hm.node_xyz, vm, body, peak, half, count=refine))
+            # A box re-reads the stress the material answers to, averaged
+            # over its own length (radius): where that ball already spans a
+            # cell of this grid, the box reads it no better (_RESOLVED_BALL)
+            resolved = radius is not None and radius >= _RESOLVED_BALL * pitch
+            spots = [] if resolved else list(_hotspots(hm.node_xyz, vm, body, peak, half, count=refine))
             if cg is not None:
                 # members under 3 cells thick read up to ~15% low even cut
                 # (two cells across a diagonal strip are too few to bend
