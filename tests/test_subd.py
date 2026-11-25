@@ -401,6 +401,34 @@ def test_feature_remesh_presplit_grows_with_area_not_sliver_length_squared(monke
     assert float(r.edges_unique_length.max()) < 0.75
 
 
+def test_lines_layout_opens_a_crease_ring_with_no_star_point():
+    # a hole's rim creased right round with every vertex regular (a square
+    # frame: a torus of quads, its four section corners creases) used to
+    # fail the whole layout ("a line closes on itself") and send a
+    # many-hole part to thousands of face-by-face patches; each ring is now
+    # opened at a seam with a line drawn out from it
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    from loadpath.subdlines import lay_out
+
+    corners = np.array([[-2, -1], [2, -1], [2, 1], [-2, 1]], float)
+    sec = np.array([corners[i] + (corners[(i + 1) % 4] - corners[i]) * j / 3 for i in range(4) for j in range(3)])
+    ns, nv = len(sec), 24
+    t = 2 * np.pi * np.arange(nv) / nv
+    V = np.array([[(10 + x) * np.cos(a), (10 + x) * np.sin(a), z] for a in t for x, z in sec])
+    Q = np.array([[j * ns + i, ((j + 1) % nv) * ns + i, ((j + 1) % nv) * ns + (i + 1) % ns, j * ns + (i + 1) % ns]
+                  for j in range(nv) for i in range(ns)])
+    S = np.array([[j * ns + i, ((j + 1) % nv) * ns + i] for i in range(0, ns, 3) for j in range(nv)])
+    cage = subd.Cage(V, Q, sharp=S)
+    H = subd.Hierarchy(cage, subd.LEVEL + 1)
+    b, rep = lay_out(H, cage.V, 0.1)
+    assert b is not None, rep
+    assert len(b) <= 16                                     # a few rectangles, not one a face
+    shape, free = subd.to_brep(b)
+    assert free == 0 and BRepCheck_Analyzer(shape).IsValid()
+    assert rep["patchToLimit"]["max"] < 1e-3 and rep["edgeAngle"]["max"] < 0.1
+
+
 def test_feature_gap_is_the_narrowest_flat_between_creases():
     from loadpath import subdcrease
 

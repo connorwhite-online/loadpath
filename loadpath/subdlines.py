@@ -260,91 +260,116 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         return None
 
 
-    # a rectangle that wraps round a member (two opposite sides share a
-    # cage vertex: the motorcycles closed a band round it with one line) is
-    # one face whose opposite edges meet; a reader rebuilding its 2-D curves
-    # by projection puts an edge on the wrong side of the seam and the face
-    # comes back invalid. Cut it across the middle (the new line ends on
-    # the two lines it runs between) and look again.
-    for _ in range(64):
-        pieces = find_pieces()
-        wrapped = 0
-        for comp in pieces:
-            R = rect(comp)
-            if R is None:
-                continue
-            b, a = len(R), len(R[0])
-            vs = lambda hs: {int(Q[q, k]) for q, k in hs} | {int(Q[q, (k + 1) % 4]) for q, k in hs}
-            v0 = vs([(q, r % 4) for q, r in R[0]])
-            v1 = vs([(q, (r + 2) % 4) for q, r in R[-1]])
-            u0 = vs([(q, (r + 3) % 4) for q, r in (row[0] for row in R)])
-            u1 = vs([(q, (r + 1) % 4) for q, r in (row[-1] for row in R)])
-            if v0 & v1 and b >= 2:
-                cut[[QE[q, (r + 2) % 4] for q, r in R[b // 2 - 1]]] = True
-                wrapped += 1
-            elif u0 & u1 and a >= 2:
-                cut[[QE[q, (r + 1) % 4] for q, r in (row[a // 2 - 1] for row in R)]] = True
-                wrapped += 1
-        if not wrapped:
+    # A line closes on itself where a crease runs right round a hole's
+    # rim with no star point on it (Instant Meshes keeps the rim's rows
+    # regular): one cubic curve cannot start and end there, and a whole
+    # many-hole part used to go to face-by-face patches for it (thousands
+    # of faces, sewn with free edges). The ring is cut open at a seam: the
+    # vertex where most lines already meet it, the seam a stop, and a line
+    # drawn straight out from it on each side until it meets another (as a
+    # motorcycle from a star point), so every rectangle beside the ring has
+    # a corner there and none runs across the seam.
+    seams = set()
+    for _seam_round in range(4 * m + 1):
+        ring = None
+        # a rectangle that wraps round a member (two opposite sides share a
+        # cage vertex: the motorcycles closed a band round it with one line) is
+        # one face whose opposite edges meet; a reader rebuilding its 2-D curves
+        # by projection puts an edge on the wrong side of the seam and the face
+        # comes back invalid. Cut it across the middle (the new line ends on
+        # the two lines it runs between) and look again.
+        for _ in range(64):
+            pieces = find_pieces()
+            wrapped = 0
+            for comp in pieces:
+                R = rect(comp)
+                if R is None:
+                    continue
+                b, a = len(R), len(R[0])
+                vs = lambda hs: {int(Q[q, k]) for q, k in hs} | {int(Q[q, (k + 1) % 4]) for q, k in hs}
+                v0 = vs([(q, r % 4) for q, r in R[0]])
+                v1 = vs([(q, (r + 2) % 4) for q, r in R[-1]])
+                u0 = vs([(q, (r + 3) % 4) for q, r in (row[0] for row in R)])
+                u1 = vs([(q, (r + 1) % 4) for q, r in (row[-1] for row in R)])
+                if v0 & v1 and b >= 2:
+                    cut[[QE[q, (r + 2) % 4] for q, r in R[b // 2 - 1]]] = True
+                    wrapped += 1
+                elif u0 & u1 and a >= 2:
+                    cut[[QE[q, (r + 1) % 4] for q, r in (row[a // 2 - 1] for row in R)]] = True
+                    wrapped += 1
+            if not wrapped:
+                break
+        merged = _merge(cage, cut, find_pieces, rect, evv) if merge else 0
+        if merged:
+            pieces = find_pieces()
+
+        # ---- lines: maximal straight runs of drawn edges
+        # A line that meets a crease stops there: the surface turns a corner
+        # at the crease, and one C2 curve laid on through it misses the turn
+        # (0.21-0.27 mm a face off an L-bracket's edges); a line along a crease
+        # goes on along it
+        shp = cage.sharpness
+        crs = cage.crease
+
+        def stops(v, e1, e2):
+            # a crease's free end (one crease edge, a dart) is smooth across:
+            # the line, and the rectangle side along it, run on through
+            return bool(evv[v] or v in seams or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
+        def halvings(v):
+            # knots halved toward each star point; one fewer at a star point on
+            # a crease, whose sectors are one-sided fans of a face or two: four
+            # halvings there swing (a 1.3 deg kink between rectangles at a
+            # plate's pocket corner). Per point: the lines and every rectangle
+            # round it agree
+            return 0 if not evv[v] else depth - 1 if shp[v] >= 2 else depth
+        line_of = {}                              # edge -> (line, index, same direction as the line)
+        lines = []
+        for q0 in range(m):
+            for k0 in range(4):
+                e0 = QE[q0, k0]
+                if not cut[e0] or e0 in line_of:
+                    continue
+                # back up to the line's start
+                h = (q0, k0)
+                for _ in range(len(cut) + 1):
+                    v = start(*h)
+                    if evv[v]:
+                        break
+                    b = twin(*cont(*twin(*h)))
+                    if not cut[QE[b]] or stops(v, QE[h], QE[b]):
+                        break
+                    h = b
+                    if h == (q0, k0):
+                        ring = (q0, k0)
+                        break
+                if ring is not None:
+                    break
+                hs = [h]
+                while True:
+                    v = int(Q[hs[-1][0], (hs[-1][1] + 1) % 4])
+                    if evv[v]:
+                        break
+                    n = cont(*hs[-1])
+                    if not cut[QE[n]] or stops(v, QE[hs[-1]], QE[n]):
+                        break
+                    if n == hs[0]:
+                        ring = hs[0]
+                        break
+                    hs.append(n)
+                L = len(lines)
+                for i, hh in enumerate(hs):
+                    line_of[int(QE[hh])] = (L, i, start(*hh))
+                lines.append(hs)
+                if ring is not None:
+                    break
+            if ring is not None:
+                break
+
+        if ring is None:
             break
-    merged = _merge(cage, cut, find_pieces, rect, evv) if merge else 0
-    if merged:
-        pieces = find_pieces()
-
-    # ---- lines: maximal straight runs of drawn edges
-    # A line that meets a crease stops there: the surface turns a corner
-    # at the crease, and one C2 curve laid on through it misses the turn
-    # (0.21-0.27 mm a face off an L-bracket's edges); a line along a crease
-    # goes on along it
-    shp = cage.sharpness
-    crs = cage.crease
-
-    def stops(v, e1, e2):
-        # a crease's free end (one crease edge, a dart) is smooth across:
-        # the line, and the rectangle side along it, run on through
-        return bool(evv[v] or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
-    def halvings(v):
-        # knots halved toward each star point; one fewer at a star point on
-        # a crease, whose sectors are one-sided fans of a face or two: four
-        # halvings there swing (a 1.3 deg kink between rectangles at a
-        # plate's pocket corner). Per point: the lines and every rectangle
-        # round it agree
-        return 0 if not evv[v] else depth - 1 if shp[v] >= 2 else depth
-    line_of = {}                              # edge -> (line, index, same direction as the line)
-    lines = []
-    for q0 in range(m):
-        for k0 in range(4):
-            e0 = QE[q0, k0]
-            if not cut[e0] or e0 in line_of:
-                continue
-            # back up to the line's start
-            h = (q0, k0)
-            for _ in range(len(cut) + 1):
-                v = start(*h)
-                if evv[v]:
-                    break
-                b = twin(*cont(*twin(*h)))
-                if not cut[QE[b]] or stops(v, QE[h], QE[b]):
-                    break
-                h = b
-                if h == (q0, k0):
-                    return None, {"layout": "a line closes on itself"}
-            hs = [h]
-            while True:
-                v = int(Q[hs[-1][0], (hs[-1][1] + 1) % 4])
-                if evv[v]:
-                    break
-                n = cont(*hs[-1])
-                if not cut[QE[n]] or stops(v, QE[hs[-1]], QE[n]):
-                    break
-                if n == hs[0]:
-                    return None, {"layout": "a line closes on itself"}
-                hs.append(n)
-            L = len(lines)
-            for i, hh in enumerate(hs):
-                line_of[int(QE[hh])] = (L, i, start(*hh))
-            lines.append(hs)
-
+        if not _cut_seam(ring, cut, seams, cage, evv, cont):
+            return None, {"layout": "a line closes on itself"}
+        line_of, lines = {}, []
     # ---- fit every line once
     curves = []
     for hs in lines:
@@ -599,6 +624,41 @@ def _merge(cage, cut, find_pieces, rect, evv):
         if merges == n0:
             break
     return merges
+
+
+def _cut_seam(ring, cut, seams, cage, evv, cont):
+    """Open a ring of drawn edges with no stop on it (`lay_out`): pick the
+    vertex on it where most other lines meet it, make it a stop, and draw
+    a line straight out from it on each side until it meets another line
+    or a star point. False if the ring has no vertex to open it at."""
+    Q, QE, E = cage.Q, cage.QE, cage.E
+    hs, h = [ring], cont(*ring)
+    while h != ring and len(hs) <= len(Q) * 4:
+        hs.append(h)
+        h = cont(*h)
+    ring_e = {int(QE[q, k]) for q, k in hs}
+    deg = np.bincount(E[cut].ravel(), minlength=cage.n)
+    verts = [int(Q[q, k]) for q, k in hs]
+    cand = [v for v in verts if v not in seams and not evv[v] and cage.valence[v] == 4]
+    if not cand:
+        return False
+    v = max(cand, key=lambda x: deg[x])
+    seams.add(v)
+    qs, ks = np.nonzero(Q == v)
+    for q, k in zip(qs.tolist(), ks.tolist()):
+        h = (q, k)                                      # a half-edge leaving v
+        if int(QE[q, k]) in ring_e or cut[QE[q, k]]:
+            continue
+        for _ in range(len(Q) * 4):
+            e = int(QE[h])
+            w = int(Q[h[0], (h[1] + 1) % 4])
+            on_line = deg[w] > 0
+            cut[e] = True
+            deg[E[e]] += 1
+            if on_line or evv[w] or cut[QE[cont(*h)]]:
+                break
+            h = cont(*h)
+    return True
 
 
 def _wraps(Q, R):
