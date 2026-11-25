@@ -194,6 +194,17 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     tq, tk = tq.reshape(-1, 4), tk.reshape(-1, 4)
     evv = cage.valence != 4
     evf = evv[Q].any(axis=1)
+    # a vertex where a crease turns, or where three or more creases meet
+    # (the corner rule): the limit round it is no bicubic either (up to
+    # 0.034 mm a face off on an optimized lid's boss seats, where star
+    # points' faces were 0.11), so the curves and rectangles treat it as a
+    # star point: knots halved toward it, every sample row in its faces
+    ce_at = np.bincount(cage.E[cage.crease].ravel(), minlength=cage.n)
+    cq = cage.crease[QE]
+    turn = np.zeros(cage.n, bool)
+    turn[Q[cq & np.roll(cq, 1, axis=1)]] = True
+    irr = evv | (ce_at >= 3) | ((ce_at == 2) & turn)
+    irf = irr[Q].any(axis=1)
     cut = motorcycles(cage)
 
     def cont(q, k):
@@ -270,6 +281,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     # motorcycle from a star point), so every rectangle beside the ring has
     # a corner there and none runs across the seam.
     seams = set()
+    keep = np.zeros(len(cut), bool)                # lines drawn from stops
     # ---- lines: maximal straight runs of drawn edges
     # A line that meets a crease stops there: the surface turns a corner
     # at the crease, and one C2 curve laid on through it misses the turn
@@ -283,12 +295,14 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         # the line, and the rectangle side along it, run on through
         return bool(evv[v] or v in seams or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
     def halvings(v):
-        # knots halved toward each star point; one fewer at a star point on
-        # a crease, whose sectors are one-sided fans of a face or two: four
-        # halvings there swing (a 1.3 deg kink between rectangles at a
-        # plate's pocket corner). Per point: the lines and every rectangle
-        # round it agree
-        return 0 if not evv[v] else depth - 1 if shp[v] >= 2 else depth
+        # knots halved toward each star point (and each irregular crease
+        # vertex), the same number on a crease: one fewer there once kept a
+        # plate's pocket corner within a degree, but on a many-hole lid's
+        # boss seats it left rectangles folded beside star points on
+        # creases (50 deg between neighbours; 1.5 deg with all four, and the
+        # plate still 60 faces, valid). Per point: the lines and every
+        # rectangle round it agree
+        return depth if irr[v] else 0
     for _seam_round in range(4 * m + 1):
         ring = None
         # a rectangle that wraps round a member (two opposite sides share a
@@ -318,7 +332,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                     wrapped += 1
             if not wrapped:
                 break
-        merged = _merge(cage, cut, find_pieces, rect, evv) if merge else 0
+        merged = _merge(cage, cut, find_pieces, rect, evv, keep) if merge else 0
         if merged:
             pieces = find_pieces()
 
@@ -366,8 +380,13 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                 break
 
         if ring is None:
-            break
-        if not _cut_seam(ring, cut, seams, cage, evv, cont):
+            ends = {(start(*hs[0]), int(QE[hs[0]])) for hs in lines} | \
+                {(int(Q[hs[-1][0], (hs[-1][1] + 1) % 4]), int(QE[hs[-1]])) for hs in lines}
+            if not _open_stops([ve for ve in ends if not evv[ve[0]]], cut, cage, twin, cont, keep):
+                break
+            line_of, lines = {}, []
+            continue
+        if not _cut_seam(ring, cut, seams, cage, evv, cont, keep):
             return None, {"layout": "a line closes on itself"}
         line_of, lines = {}, []
     # ---- fit every line once
@@ -378,7 +397,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         v1 = int(Q[hs[-1][0], (hs[-1][1] + 1) % 4])
         br = _halves(n, halvings(v0), halvings(v1))
         # a span beside a face with a star point corner is two cubics: a knot at its middle
-        mids = [i + 0.5 for i, (q, k) in enumerate(hs) if evf[q] or evf[int(tq[q, k])]]
+        mids = [i + 0.5 for i, (q, k) in enumerate(hs) if irf[q] or irf[int(tq[q, k])]]
         br = np.unique(np.r_[br, mids])
         t, P, N, near = [], [], [], []
         for i, (q, k) in enumerate(hs):
@@ -432,7 +451,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                 X[i * s:i * s + s + 1, j * s:j * s + s + 1] = np.rot90(XG[q], k)
                 NX[i * s:i * s + s + 1, j * s:j * s + s + 1] = np.rot90(NG[q], k)
                 Gr[i * s:i * s + s + 1, j * s:j * s + s + 1] = np.rot90(G[q], k)
-                if not evf[q]:
+                if not irf[q]:
                     Rg[i * s:i * s + s + 1, j * s:j * s + s + 1] = True
         # the four sides: (half-edges in order along +u / +v, the rectangle's parameter)
         sides = {
@@ -457,7 +476,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                 return None, {"layout": "a rectangle's side leaves its line"}
         cv = {"00": _vert(Q, R[0][0], 0), "a0": _vert(Q, R[0][-1], 1),
               "ab": _vert(Q, R[-1][-1], 2), "0b": _vert(Q, R[-1][0], 3)}
-        corner_ev = {k: evv[v] for k, v in cv.items()}
+        corner_ev = {k: irr[v] for k, v in cv.items()}
         dep = {k: halvings(v) for k, v in cv.items()}
 
         def mapped(key, n):
@@ -573,7 +592,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     return out, rep
 
 
-def _merge(cage, cut, find_pieces, rect, evv):
+def _merge(cage, cut, find_pieces, rect, evv, keep=None):
     """Rectangles side by side that together make one rectangle become one:
     the stretch of line between them is taken out (`cut` changed in place).
     The motorcycle graph runs every line on until it meets another, so a
@@ -582,9 +601,13 @@ def _merge(cage, cut, find_pieces, rect, evv):
     neighbours along one side). A stretch touching a star point stays: a
     star point is a corner of every surface round it. A union whose
     opposite sides meet (wrapped round a member) is not taken. Returns the
-    number of merges."""
+    number of merges. A line drawn from a stop (`keep`: a seam's or a
+    crease corner's) stays too: the stop is a corner of the rectangles
+    beside it, and taking the line out puts it back mid-side."""
     Q, QE = cage.Q, cage.QE
     star_edge = evv[cage.E].any(axis=1) | getattr(cage, "crease", np.zeros(len(cage.E), bool))
+    if keep is not None:
+        star_edge = star_edge | keep
     merges = 0
     for _ in range(64):
         pieces = find_pieces()
@@ -626,7 +649,7 @@ def _merge(cage, cut, find_pieces, rect, evv):
     return merges
 
 
-def _cut_seam(ring, cut, seams, cage, evv, cont):
+def _cut_seam(ring, cut, seams, cage, evv, cont, keep=None):
     """Open a ring of drawn edges with no stop on it (`lay_out`): pick the
     vertex on it where most other lines meet it, make it a stop, and draw
     a line straight out from it on each side until it meets another line
@@ -654,11 +677,48 @@ def _cut_seam(ring, cut, seams, cage, evv, cont):
             w = int(Q[h[0], (h[1] + 1) % 4])
             on_line = deg[w] > 0
             cut[e] = True
+            if keep is not None:
+                keep[e] = True
             deg[E[e]] += 1
             if on_line or evv[w] or cut[QE[cont(*h)]]:
                 break
             h = cont(*h)
     return True
+
+
+def _open_stops(ends, cut, cage, twin, cont, keep=None):
+    """Give every rectangle a corner where a line ends (`lay_out`). A line
+    stops at a crease corner or a seam even where it runs straight on, and
+    a face there with only the line's last side drawn has the stop
+    in the middle of a rectangle's side: that side runs along two curves
+    and no one curve bounds it. Draw a line straight out from the stop
+    along the face's other side, until it meets another line or a star
+    point. True if any line was drawn."""
+    Q, QE, E = cage.Q, cage.QE, cage.E
+    evv = cage.valence != 4
+    deg = np.bincount(E[cut].ravel(), minlength=cage.n)
+    drawn = False
+    for v, last in ends:                    # a line's end and its edge there
+        qs, ks = np.nonzero(Q == v)
+        for q, k in zip(qs.tolist(), ks.tolist()):
+            a, b = bool(cut[QE[q, k]]), bool(cut[QE[q, (k + 3) % 4]])
+            if a == b or last not in (int(QE[q, k]), int(QE[q, (k + 3) % 4])):
+                continue
+            h = (q, k) if not a else twin(q, (k + 3) % 4)
+            for _ in range(len(Q) * 4):
+                e = int(QE[h])
+                if cut[e]:
+                    break
+                w = int(Q[h[0], (h[1] + 1) % 4])
+                cut[e] = True
+                if keep is not None:
+                    keep[e] = True
+                deg[E[e]] += 1
+                drawn = True
+                if deg[w] > 1 or evv[w]:
+                    break
+                h = cont(*h)
+    return drawn
 
 
 def _wraps(Q, R):

@@ -2079,11 +2079,16 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
         rep["cage"] = str(cage_path)
     Hp = Hierarchy(Cage(cage.V, cage.Q, sharp=cage.sharp), LEVEL + 1)
     b = None
+    kinked = None
     if layout == "lines":
         # rectangles along the cage's own lines, star points at their corners
         from .subdlines import lay_out
         b, q = lay_out(Hp, cage.V, rep["tolerance"], progress=progress)
         if b is not None and q["edgeAngle"]["max"] > KINK:
+            # kept: face-by-face patches round many star points on creases
+            # can fail to sew (an optimized lid: 66 free edges, 9,905 faces),
+            # and a kink of a degree or two at a point beats no solid
+            kinked = (b, dict(q))
             b, q["layout"] = None, f"rectangles meet at up to {q['edgeAngle']['max']:.2f} deg"
         if b is not None:
             band = [x for x in b if x[0] == "band"]
@@ -2115,10 +2120,31 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
     # the written patches sit within patchToLimit of the limit surface, so
     # their worst point away from closed holes is within this
     w = rep["worst"]
+    within0 = w["within"]
     w["patchesMax"] = round(w["surfaceMax"] + rep["patches"]["patchToLimit"]["max"], 4)
     w["within"] = bool(w["within"] and w["patchesMax"] <= w["bound"])
     shape, free = to_brep(b)
     valid = bool(BRepCheck_Analyzer(shape).IsValid())
+    if kinked is not None and (free or not valid):
+        kb, kq = kinked
+        band = [x for x in kb if x[0] == "band"]
+        kb = [x for x in kb if x[0] != "band"]
+        if band:
+            bs, lay = patches(Hp, cage.V, degree, irregular=7, refine=0)
+            keep = set(band[0][1].tolist())
+            sel = [k for k, c in enumerate(lay) if c[0] in keep]
+            kb += pack(Hp, cage.V, [bs[k] for k in sel], [lay[k] for k in sel])
+        kshape, kfree = to_brep(kb)
+        if not kfree and BRepCheck_Analyzer(kshape).IsValid():
+            if progress:
+                progress(f"face-by-face patches sew with {free} free edges; the rectangles kept "
+                         f"(they meet at up to {kq['edgeAngle']['max']:.2f} deg)")
+            kq["patches"] = len(kb)
+            kq["kinkKept"] = True
+            rep["patches"] = kq
+            b, shape, free, valid = kb, kshape, 0, True
+            w["patchesMax"] = round(w["surfaceMax"] + kq["patchToLimit"]["max"], 4)
+            w["within"] = bool(within0 and w["patchesMax"] <= w["bound"])
     # points as OpenCascade writes them: rounding the poles of a degree-7
     # patch to 10 nm moves it off its own edges, and a reader cannot mesh it
     wrote = write_step(shape, path, verify=True, decimals=None) if valid and not free else None
