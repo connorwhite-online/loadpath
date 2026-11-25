@@ -169,7 +169,7 @@ def _closest(mesh, P, edge=0.5, k=16):
     `_reps` fall in (a sliver in the cells along it, not in its bounding
     box), searched ring by ring out from each point until no unsearched
     cell can hold a closer triangle (closestjit.Grid); the rare point that
-    is still unsure after 64 rings is asked of an AABB tree. (It used to
+    is still unsure after 64 rings is searched out to the whole grid. (It used to
     split the mesh to `edge` and try the k nearest centroids: an exact
     boolean's or a CAD flat's slivers split as a quadtree, (length /
     edge)^2 triangles each, 6.8 million and a gigabyte on an optimized
@@ -195,11 +195,13 @@ def _closest(mesh, P, edge=0.5, k=16):
     else:
         out, best = np.empty_like(P), np.zeros(len(P), np.int64)
         todo = np.arange(len(P))
-    if len(todo):
-        import igl
-        _, fi, cp = igl.point_mesh_squared_distance(P[todo], np.asarray(mesh.vertices, float),
-                                                    np.asarray(mesh.faces, np.int64))
-        out[todo], best[todo] = cp, fi
+    if len(todo) and grid is not None:
+        # far from the part: rings out to the whole grid
+        o2, b2, _ = grid.closest(P[todo], max_ring=int(grid.dims.max()) + 1)
+        out[todo], best[todo] = o2, b2
+    elif len(todo):
+        o2, b2 = _closest_cand(P[todo], tri, np.broadcast_to(np.arange(len(tri)), (len(todo), len(tri))))
+        out[todo], best[todo] = o2, b2
     return out, nrm[best]
 
 
