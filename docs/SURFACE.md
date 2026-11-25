@@ -116,8 +116,9 @@ fillet, offset or shell. Topology-optimization codes stop at that mesh;
    lines lie rectangles of cage faces with star points only at their
    corners, and each rectangle is one bicubic B-spline face. Every line is
    fitted once as a cubic spline (exact where the limit surface is
-   bicubic; toward a star point its knots halve four times, to 1/16 of an
-   edge, and it is fitted to the exact limit points and tangent planes),
+   bicubic; toward a star point its knots halve down to the samples'
+   spacing, 1/32 of an edge, and it is fitted to the exact limit points
+   and tangent planes),
    and both rectangles beside it take that same curve as their edge, so
    neighbours share edges exactly. Inside, the poles are fitted to the
    exact limit points and tangent planes (Halstead masks at the star
@@ -329,8 +330,8 @@ corner there exactly (`loadpath/subdcrease.py`, on by default,
   shrinks it like a pulled string: a 4 mm hole's rim drew in 0.6-1.7 mm);
   the fairing also stops before it closes a hole the process prints. In
   the rectangles, a line stops where it crosses a crease, and the knots
-  toward a star point on a crease are halved four times, as elsewhere
-  (three left rectangles folded beside star points on a many-hole lid's
+  toward a star point on a crease are halved as often as elsewhere
+  (fewer left rectangles folded beside star points on a many-hole lid's
   creases; see below).
 - **Own test parts (tol 0.1, not the held-out set):**
 
@@ -377,11 +378,22 @@ causes, each fixed where it starts:
   that is no bicubic (0.03-0.11 mm a face off): those vertices are stops
   and get star points' knots. If the rectangles still meet at more than
   KINK (1 deg) but face-by-face patches do not sew, the rectangles are kept.
+- **Kinks beside star points (open patches).** H samples every 1/16 of a
+  cage edge, so knots halved to 1/16 left the last span with its two ends
+  and nothing between: the fit folded there (1.5 deg between rectangles on
+  the lid), and a fifth halving was singular. The faces round each
+  irregular vertex are now subdivided once more on their own
+  (`subdlines.finer_grids`: the face's fine faces and three rings, closed
+  by a mirrored copy glued along a creased rim; equal to the whole cage's
+  next level to 1e-14), the regular faces the halved knots run through
+  get the bicubic through their own samples (exact there), and the knots
+  halve to 1/32. Rectangles now meet at 0.07 deg (lid), 0.05 (wrist link),
+  0.005 (plate), and fit the limit to 0.0025-0.004 mm (was 0.015).
 
 | tol 0.1 | before | after |
 |---|---|---|
-| fastened lid (dev) | 12k face patches, 66 free edges, 10.5 GB | 779 faces, valid, p99 0.083 mm, 9.5 min, 7.6 GB |
-| wrist link (dev) | 10,012 face patches, 18 free edges | 1,400 faces, valid, p99 0.075 mm, 8.5 min, 7.6 GB |
+| fastened lid (dev) | 12k face patches, 66 free edges, 10.5 GB | 779 faces, valid, p99 0.083 mm, worst kink 0.07 deg (was 1.5), 10.1 min, 7.6 GB |
+| wrist link (dev) | 10,012 face patches, 18 free edges | 1,400 faces, valid, p99 0.075 mm, worst kink 0.05 deg, 11.6 min, 8.1 GB |
 | box cover (held out, measured once) | out of memory; capped: 12,910 faces, 39 free edges, p99 0.17, 18/27 lines | 858 faces, valid, p99 0.070 mm, max 1.14 mm, 26/27 lines, 16.5 min, 8.4 GB |
 
 **Holes the printer closes.** Instant Meshes drops a handle narrower than

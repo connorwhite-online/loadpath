@@ -585,3 +585,35 @@ def _frame_cage():
     Q = np.array([[j * ns + i, ((j + 1) % nv) * ns + i, ((j + 1) % nv) * ns + (i + 1) % ns, j * ns + (i + 1) % ns]
                   for j in range(nv) for i in range(ns)])
     return subd.Cage(V, Q)
+
+
+def test_finer_grids_are_the_limit_one_level_finer():
+    # a cube's cage (star points of valence 3) with a crease that turns at
+    # a corner and a dart, subdivided so each face's open patch has a rim:
+    # every face's grid one level finer, from its own patch, is the whole
+    # cage's next level exactly
+    from loadpath import subdlines
+
+    V = np.array([[x, y, z] for x in (0, 10) for y in (0, 10) for z in (0, 10)], float)
+    Q = np.array([[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]])
+    c0 = subd.Cage(V, Q, sharp=np.array([[0, 1], [1, 3], [4, 6]]))
+    h = subd.Hierarchy(c0, 2)
+    c = subd.Cage(h.Pm @ c0.V, h.fine.Q, sharp=h.fine.E[h.fine.crease])
+    H, H2 = subd.Hierarchy(c, 2), subd.Hierarchy(c, 3)
+    fine = subdlines.finer_grids(H, c.V, np.arange(len(c.Q)), batch=16)
+    X2 = (H2.M @ c.V)[H2.G]
+    N2 = subdlines._one_sided(H2, X2, subd.grid_normals(H2, c.V))
+    assert len(fine) == len(c.Q)
+    for q, (X, N) in fine.items():
+        assert np.abs(X - X2[q]).max() < 1e-9
+        assert np.degrees(np.arccos(np.clip((N * N2[q]).sum(-1), -1, 1))).max() < 0.5
+    # a face with four regular corners is one bicubic: its finer grid from H's samples alone
+    XG = (H.M @ c.V)[H.G]
+    val = np.bincount(c.Q.ravel(), minlength=c.n)
+    reg = [q for q in range(len(c.Q)) if (val[c.Q[q]] == 4).all() and not c.crease[c.QE[q]].any()
+           and not (c.sharpness[c.Q[q]] > 0).any()]
+    got = [subdlines._bicubic_finer(XG[q]) for q in reg]
+    assert sum(g is not None for g in got) > len(reg) // 2
+    for q, g in zip(reg, got):
+        if g is not None:
+            assert np.abs(g[0] - X2[q]).max() < 1e-9
