@@ -194,16 +194,17 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     tq, tk = tq.reshape(-1, 4), tk.reshape(-1, 4)
     evv = cage.valence != 4
     evf = evv[Q].any(axis=1)
-    # a vertex where a crease turns, or where three or more creases meet
-    # (the corner rule): the limit round it is no bicubic either (up to
-    # 0.034 mm a face off on an optimized lid's boss seats, where star
-    # points' faces were 0.11), so the curves and rectangles treat it as a
-    # star point: knots halved toward it, every sample row in its faces
+    # a vertex where a crease turns, where three or more creases meet (the
+    # corner rule), or where a crease ends (a dart): the limit round it is
+    # no bicubic either (up to 0.034 mm a face off on an optimized lid's
+    # boss seats, 0.11 mm beside a wrist link's darts, where star points'
+    # faces were 0.11), so the curves and rectangles treat it as a star
+    # point: a stop, knots halved toward it, every sample row in its faces
     ce_at = np.bincount(cage.E[cage.crease].ravel(), minlength=cage.n)
     cq = cage.crease[QE]
     turn = np.zeros(cage.n, bool)
     turn[Q[cq & np.roll(cq, 1, axis=1)]] = True
-    irr = evv | (ce_at >= 3) | ((ce_at == 2) & turn)
+    irr = evv | (ce_at == 1) | (ce_at >= 3) | ((ce_at == 2) & turn)
     irf = irr[Q].any(axis=1)
     cut = motorcycles(cage)
 
@@ -291,9 +292,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     crs = cage.crease
 
     def stops(v, e1, e2):
-        # a crease's free end (one crease edge, a dart) is smooth across:
-        # the line, and the rectangle side along it, run on through
-        return bool(evv[v] or v in seams or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
+        return bool(irr[v] or v in seams or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
     def halvings(v):
         # knots halved toward each star point (and each irregular crease
         # vertex), the same number on a crease: one fewer there once kept a

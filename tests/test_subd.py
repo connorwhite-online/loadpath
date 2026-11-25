@@ -526,3 +526,29 @@ def test_lines_layout_fits_round_a_crease_that_turns_at_a_regular_vertex():
     assert rep["patchToLimit"]["max"] < 0.1 / 3 and rep["edgeAngle"]["max"] < 0.5, rep
     shape, free = subd.to_brep(b)
     assert free == 0 and BRepCheck_Analyzer(shape).IsValid()
+
+
+def test_lines_layout_fits_round_a_crease_that_ends():
+    # a crease's free end (a dart, one crease edge at a regular vertex):
+    # the limit round it is no bicubic, and the line used to run on
+    # through it (0.076 mm a face off here; a wrist link's 0.11 sent the whole
+    # part to face-by-face patches). It is a stop and a rectangle corner now
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    from loadpath.subdlines import lay_out
+
+    corners = np.array([[-2, -1], [2, -1], [2, 1], [-2, 1]], float)
+    sec = np.array([corners[i] + (corners[(i + 1) % 4] - corners[i]) * j / 3 for i in range(4) for j in range(3)])
+    ns, nv = len(sec), 24
+    t = 2 * np.pi * np.arange(nv) / nv
+    V = np.array([[(10 + x) * np.cos(a), (10 + x) * np.sin(a), z] for a in t for x, z in sec])
+    Q = np.array([[j * ns + i, ((j + 1) % nv) * ns + i, ((j + 1) % nv) * ns + (i + 1) % ns, j * ns + (i + 1) % ns]
+                  for j in range(nv) for i in range(ns)])
+    S = np.array([[j * ns, (j + 1) * ns] for j in range(6)])       # along a section corner, ends both ways
+    cage = subd.Cage(V, Q, sharp=S)
+    H = subd.Hierarchy(cage, subd.LEVEL + 1)
+    b, rep = lay_out(H, cage.V, 0.1)
+    assert b is not None, rep
+    assert rep["patchToLimit"]["max"] < 0.1 / 3 and rep["edgeAngle"]["max"] < 0.5, rep
+    shape, free = subd.to_brep(b)
+    assert free == 0 and BRepCheck_Analyzer(shape).IsValid()
