@@ -278,9 +278,20 @@ What the batch showed:
   1.6-2.3 and the wall over the bore 1.7-2.5 to 3.6-4.5; the block reads
   2.81 voxel, 3.07 tet. Checked on a part not in the set, a 6001 pillow
   block in PLA with a 2 mm wall over its bore: short either way (tets 1.47
-  old, 1.50 new, at the same spot), so the ring is not a blanket gain. The
-  optimizer still designs against the fixed pressure (left: the ring in the
-  optimizer, a direction-unknown bearing load as a ring). The tet check
+  old, 1.50 new, at the same spot), so the ring is not a blanket gain.
+  Since then (2026-11-25) the optimizer designs against the same ring
+  (`simp._Analysis._solve_ringed`; exact against the checks' solve on the
+  same design, tests/test_insert.py): on the 6001 block at SF 1.5 the
+  smallest confirmed part went 13.8 g to 12.75 g. A bearing force of
+  unknown direction goes through the ring per direction
+  (`insert.RingedSpread`) where it was an even pull over the whole bore:
+  on a fixed-base 6001 block with a 250 N bearing force from any side the
+  old model passed a 9.7 g part (SF 1.52, tets agreeing, both on the
+  same pull); through the ring the same search's parts read 0.4-0.8 at a
+  push straight up or a thrust toward the open side, and so do the old
+  parts. The even pull was unconservative by 2-4x. Still open: with seats
+  in the same study the any-direction force keeps the even pull (a
+  warning says so). The tet check
   also caught a scattered few bore nodes on a grid-made bore (the block's
   bore sat ~0.4 mm off the keep-out, tolerance 0.2); the ring takes the
   bore's surface within an element.

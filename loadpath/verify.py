@@ -2227,6 +2227,12 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             rhs[:] = redistribute(lambda r: inner(r)[1], rhs, bc.inserts,
                                   lambda ci: layout[ci][0] if len(layout[ci]) == 1 else None, hm.n_dof, hm.node_xyz)
 
+    if bc.seats and any(getattr(i, "thrust", None) is not None for i in bc.inserts):
+        report.setdefault("warnings", []).append(
+            "a bearing force of unknown direction on a part also held by seats (supports[].push) is read as "
+            "an even pull over its bore, not through the bearing's ring per direction: give the directions "
+            "that matter as load cases of their own (the ring is solved for each)")
+
     def solve(moduli, rhs, layout=None, into=None):
         if bc.seats:
             # supports that only push (pushseat.py): their forces are solved with the cases,
