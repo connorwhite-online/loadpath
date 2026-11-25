@@ -289,9 +289,16 @@ What the batch showed:
   old model passed a 9.7 g part (SF 1.52, tets agreeing, both on the
   same pull); through the ring the same search's parts read 0.4-0.8 at a
   push straight up or a thrust toward the open side, and so do the old
-  parts. The even pull was unconservative by 2-4x. Still open: with seats
-  in the same study the any-direction force keeps the even pull (a
-  warning says so). The tet check
+  parts. The even pull was unconservative by 2-4x. With seats in the same
+  study (a block on its base, screwed down) the seats and the ring are
+  now one contact, solved per direction (`insert.SeatedRings`: the
+  complementary energy of every patch's force, seats' and ring's, with
+  each ring in equilibrium; the optimizer designs against the same, exact
+  against the checks on the same design). On a seated 6001 block in PLA,
+  two M4 screws, 250 N from any side, the solid block's peak read 7.2 MPa
+  under the even pull and 10.4 MPa through the ring (voxel; tets 6.0, no
+  less than any single direction's), so the even pull was 1.4x low there
+  too. The tet check
   also caught a scattered few bore nodes on a grid-made bore (the block's
   bore sat ~0.4 mm off the keep-out, tolerance 0.2); the ring takes the
   bore's surface within an element.

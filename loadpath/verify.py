@@ -2227,12 +2227,6 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             rhs[:] = redistribute(lambda r: inner(r)[1], rhs, bc.inserts,
                                   lambda ci: layout[ci][0] if len(layout[ci]) == 1 else None, hm.n_dof, hm.node_xyz)
 
-    if bc.seats and any(getattr(i, "thrust", None) is not None for i in bc.inserts):
-        report.setdefault("warnings", []).append(
-            "a bearing force of unknown direction on a part also held by seats (supports[].push) is read as "
-            "an even pull over its bore, not through the bearing's ring per direction: give the directions "
-            "that matter as load cases of their own (the ring is solved for each)")
-
     def solve(moduli, rhs, layout=None, into=None):
         if bc.seats:
             # supports that only push (pushseat.py): their forces are solved with the cases,
@@ -2251,10 +2245,19 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                                     "lowrank": (bc.springs, _sp.vstack([_sp.csr_matrix(p) for p in ps]).tocsr(), ks)})
             # one matrix for the cases, the patches and the patches cut finer: factored once
             memo = {}
-            rings(lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r, memo), rhs, layout)
+            # bearing loads through a rigid ring (insert.py) solved with the
+            # seats as one contact (insert.SeatedRings), per direction for a
+            # force of unknown direction; the cases' right-hand sides take the
+            # ring's pressures in place, for what reads them after
+            ringset = None
+            if bc.inserts and layout is not None:
+                from .insert import Rings
+
+                ringset = Rings(bc.inserts, hm.node_xyz, hm.n_dof)
             stiff, us, _, cases = pushseat.solve_cases(
                 lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r, memo), rhs, ps, mat.E * ks,
-                xyz=hm.node_xyz, layout=layout, spreads=spreads if layout is not None else None)
+                xyz=hm.node_xyz, layout=layout, spreads=spreads if layout is not None else None, rings=ringset,
+                pushed=rhs if ringset is not None else None)
             if into is not None:
                 into.clear()
                 into.update(cases)

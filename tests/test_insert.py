@@ -256,6 +256,137 @@ def test_any_direction_bearing_through_the_ring():
         assert worst[1] >= c_ring * (1 - 1e-9)
 
 
+def _seated_block(load):
+    """The block on a seat under its base (push only) and held fixed at one
+    end, loaded through its bore."""
+    return study_from_dict({
+        "designSpace": {"type": "box", "min": [-4, -15, 0], "max": [4, 15, 24]},
+        "keepOut": [{"id": "bore", "shape": {"type": "cylinder", "center": [0, 0, 16], "axis": "x", "length": 12,
+                                              "r": 6}}],
+        "supports": [{"shape": {"type": "box", "min": [-4, -12, -0.5], "max": [4, 15, 0.3]}, "push": [0, 0, 1]},
+                     {"shape": {"type": "box", "min": [-4, -15.5, -0.5], "max": [4, -13, 3]}, "fix": "all"}],
+        "loadCases": [{"name": "c", "loads": [load]}],
+        "material": "petg", "pitch": 1.0, "goal": {"safetyFactor": 2}})
+
+
+def _seated_check(st):
+    """The checks' solve of a seated study (pushseat.solve_cases with the
+    rings) on a factor of the sprung stiffness: (domain, bc, K, free,
+    rhs with the rings' pressures, displacements, cases)."""
+    from loadpath import pushseat
+    from loadpath.directions import expand
+    from loadpath.insert import Rings
+
+    d = build_domain(st)
+    m = d.mesh
+    bc = boundary_conditions(st, m)
+    e = st.material.E
+    ps = pushseat.patches(bc.seats, m.node_xyz, m.n_dof)
+    ks, held = pushseat.hold(ps, m.node_xyz, m.pitch)
+    k = Stiffness(m, st.material.nu, bc.fixed).assemble(np.full(m.n_elem, e))
+    free = ~bc.fixed
+    lu = spla.splu((k + e * held).tocsr()[free][:, free].tocsc())
+
+    def inner(rhs):
+        out = []
+        for r in rhs:
+            u = np.zeros(m.n_dof)
+            u[free] = lu.solve(np.asarray(r, float)[free])
+            out.append(u)
+        return None, out
+    rhs, layout = expand(bc.loads, bc.spreads)
+    pushed = list(rhs)
+    _, us, _, cases = pushseat.solve_cases(inner, rhs, ps, e * ks, layout=layout, spreads=bc.spreads,
+                                           rings=Rings(bc.inserts, m.node_xyz, m.n_dof), pushed=pushed)
+    return d, bc, k, free, pushed, us, cases
+
+
+def test_seats_and_ring_are_one_contact():
+    """A bearing force of unknown direction on a part that also rests on a
+    seat (insert.SeatedRingSpread): in each direction the answer is the
+    contact's (the part in equilibrium with the loads, the seat's pushes and
+    the ring's pressures; no seat pulls or goes into its wall, and pushes
+    only where it touches; the ring pushes only, on the patches it touches
+    as a rigid body), it is the answer to that force as written (one case,
+    seats and ring solved together), the seats taken in turn with the ring
+    give the same, and the worst is no smaller than any of them."""
+    from loadpath.insert import _rigid_basis
+
+    raw = {"region": "bore", "force": [0, 0, -100], "direction": "any", "distribution": "bearing"}
+    st = _seated_block(raw)
+    d, bc, k, free, _, _, cases = _seated_check(st)
+    case = cases[0]
+    jt = case.joint
+    ns = jt.ns
+    assert ns > 0 and jt.nr > 0 and jt.joint
+    worst = case.samples(150)[-1]
+    rings = jt.rings
+    for direction in ([0, 0, -1.0], [0, 1.0, 0], [0.6, 0, 0.8], [0, -0.6, 0.8]):
+        dv = np.array(direction)
+        c, _, mu, f, lifts = case.at(dv)
+        assert not lifts
+        u, fl = case.u(dv, mu), case.f(dv)
+        np.testing.assert_allclose(fl.reshape(-1, 3).sum(axis=0), 100 * dv, atol=1e-6)
+        seat = np.asarray(jt.seat.p.T @ f[:ns]).ravel()
+        res = (k @ u - fl - seat)[free]
+        assert np.abs(res).max() < 1e-8 * np.abs(fl).max()
+        g = jt.gaps(u)
+        scale = np.abs(g).max()
+        assert g[:ns].min() > -1e-9 * scale and f.min() >= 0.0
+        assert np.abs(g[:ns] * f[:ns]).max() < 1e-9 * scale * f.max()
+        n = rings.wrench[jt.idx] @ _rigid_basis(rings.axes[rings.bore[jt.idx[0]]])
+        on = f[ns:] > 1e-6 * f[ns:].max()
+        q = np.linalg.lstsq(n[on], g[ns:][on], rcond=None)[0]
+        s = g[ns:] - n @ q
+        assert np.abs(s[on]).max() < 1e-9 * scale and s[~on].min() > -1e-9 * scale
+        np.testing.assert_allclose(c, fl @ u, rtol=1e-9)
+        one = _seated_block({"region": "bore", "force": list(100 * dv), "distribution": "bearing"})
+        _, _, _, _, pushed, us, _ = _seated_check(one)
+        np.testing.assert_allclose(c, pushed[0] @ us[0], rtol=1e-6)
+        np.testing.assert_allclose(u, us[0], atol=1e-6 * np.abs(us[0]).max())
+        jt.joint = False                     # in turn, as friction on a seat takes them
+        try:
+            np.testing.assert_allclose(case.at(dv)[0], c, rtol=1e-7)
+        finally:
+            jt.joint = True
+        assert worst[1] >= c * (1 - 1e-9)
+
+
+def test_optimizer_designs_against_seats_and_ring():
+    """The optimizer's solve (simp._Analysis._solve_seated) with seats and a
+    ring is the checks' on the same design, for a bearing force as written
+    and of unknown direction, on a solve that reads the patches' compliance
+    and on the two after it."""
+    from loadpath.directions import expand
+    from loadpath.simp import _Analysis
+
+    for load in ({"region": "bore", "force": [0, 30, -100], "distribution": "bearing"},
+                 {"region": "bore", "force": [0, 0, -100], "direction": "any", "distribution": "bearing"}):
+        st = _seated_block(load)
+        d, bc, _, _, pushed, us, cases = _seated_check(st)
+        fe = _Analysis(d, st.material.nu, 1e-10)
+        e = np.full(d.mesh.n_elem, st.material.E)
+        rhs, layout = expand(d.loads, d.spreads)
+        uo = [None] * len(rhs)
+        for _ in range(3):
+            loads = list(rhs)
+            uo = fe.solve(e, np.ones(d.mesh.n_elem), uo, rtol=1e-10, loads=loads, layout=layout)
+            if "direction" not in load:
+                u = np.asarray(uo[0]).ravel()
+                np.testing.assert_allclose(loads[0], pushed[0], atol=1e-6 * np.abs(pushed[0]).max())
+                np.testing.assert_allclose(u, us[0], atol=1e-6 * np.abs(us[0]).max())
+                continue
+            mine = fe.seated_cases()[0]
+            for direction in ([0, 0, -1.0], [0, 1.0, 0], [0.6, 0, 0.8]):
+                dv = np.array(direction)
+                c0, _, m0, _, _ = mine.at(dv)
+                c1, _, m1, _, _ = cases[0].at(dv)
+                np.testing.assert_allclose(c0, c1, rtol=1e-6)
+                u1 = cases[0].u(dv, m1)
+                np.testing.assert_allclose(mine.u(dv, m0), u1, atol=1e-6 * np.abs(u1).max())
+            fe.seated_worst()
+
+
 if __name__ == "__main__":
     test_contact_is_the_constrained_minimum()
     test_bearing_pressure_is_square_to_the_wall()
@@ -264,6 +395,8 @@ if __name__ == "__main__":
     test_contact_takes_the_rest_of_the_case()
     test_optimizer_designs_against_the_ring()
     test_any_direction_bearing_through_the_ring()
+    test_seats_and_ring_are_one_contact()
+    test_optimizer_designs_against_seats_and_ring()
     print("ok")
 
 

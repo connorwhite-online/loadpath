@@ -358,7 +358,7 @@ class Seat:
         h = self.a - self.kd
         d, v = np.linalg.eigh(0.5 * (h + h.T))
         floor = FLOOR * float(ks.mean()) if ks.size and ks.mean() > 0 else 1e-12 * max(float(np.abs(d).max()), 1e-300)
-        self.d, self.v, self.dc = d, v, np.maximum(d, floor)
+        self.d, self.v, self.dc, self.floor = d, v, np.maximum(d, floor), floor
         self.m = np.sqrt(self.dc)[:, None] * v.T          # m'm = the stiffness, floored
         r = self.rows
         self.normal = r.kind == 0
@@ -802,7 +802,9 @@ def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, stric
     norms = np.maximum(norms, 1e-300)
     qs = q * norms
     a, s, bt = np.linalg.svd(qs, full_matrices=False)
-    r = int(min(np.sum(s > 1e-3 * s[0]), 24))
+    # (every patch's push is a vector of the basis: seats and a bearing's ring
+    # together are ~40-90, and 24 of them read the 6001 block's peak 5% low)
+    r = int(min(np.sum(s > 1e-3 * s[0]), 64))
     coef = a[:, :r] * s[:r]                                   # samples x r
     stress = []
     for k in range(r):
@@ -947,14 +949,22 @@ def solve(inner, rhs, ps, ks, strict: bool = True, xyz=None):
     return stiff, us, lam
 
 
-def solve_cases(inner, rhs, ps, ks, strict: bool = True, xyz=None, layout=None, spreads=None):
+def solve_cases(inner, rhs, ps, ks, strict: bool = True, xyz=None, layout=None, spreads=None, rings=None,
+                pushed=None):
     """solve, with the cases' layout (directions.expand): a case whose force
     has no known direction (`spreads[ci]`) is not resolved rhs by rhs (the
     seat lets go where the force lifts it, so the axes do not add up): its
     rhs come back as solved on the springs, and the case as a SeatedSpread
     that solves the contact per direction. Returns (stiffness, displacements
     per rhs, seat forces per rhs or None, {case: SeatedSpread}). The patches
-    cut finer are the ones that bear in any case and direction."""
+    cut finer are the ones that bear in any case and direction.
+
+    `rings` (insert.Rings): bearing loads through a rigid ring that only
+    pushes, solved with the seats as one contact (insert.SeatedRings): a
+    case's rhs comes with the ring's fixed pressure (it is taken out here),
+    and with `pushed` (a list like `rhs`) its rhs with the ring's solved
+    pressures in place is written there; a bearing force of unknown
+    direction comes back as an insert.SeatedRingSpread."""
     rhs = list(rhs)
     rows = getattr(ps, "rows", None)
     ps = list(ps)
@@ -962,12 +972,46 @@ def solve_cases(inner, rhs, ps, ks, strict: bool = True, xyz=None, layout=None, 
     if layout is None:
         layout = [(i,) for i in range(len(rhs))]
     spreads = spreads or [None] * len(layout)
-    stiff, us = inner(rhs + ps)
+    # bearing rings: the cases they load, their patches, and the thrusts of a force of unknown direction
+    ring_one, ring_any, ridx, extra = {}, {}, np.zeros(0, int), []
+    if rings is not None and len(rings):
+        for ci, idx in enumerate(layout):
+            if len(idx) == 1 and ci in rings.cases:
+                ring_one[ci] = idx[0]
+            elif len(idx) > 1 and ci in rings.spread and spreads[ci] is not None:
+                ring_any[ci] = idx
+        bores = set()
+        for ci in ring_one:
+            bores |= set(rings.cases[ci])
+        for ci in ring_any:
+            bores |= set(rings.cases.get(ci, {})) | {rings.spread[ci][0]}
+        if bores:
+            ridx = rings.patches_of(bores)
+            extra = rings.dense(ridx)
+        for ci, i in ring_one.items():
+            rhs[i] = rings.strip(rhs[i], ci)
+        for ci, idx in ring_any.items():
+            if idx[0] is not None:
+                rhs[idx[0]] = rings.strip(rhs[idx[0]], ci)
+            extra = extra + rings.thrusts(ci)
+    stiff, us = inner(rhs + ps + extra)
     us = list(us)
     # the cases' own answers in double precision (inner may keep the pushes' in single)
-    u0s, ws = [np.asarray(u, float) for u in us[:len(rhs)]], us[len(rhs):]
+    u0s, ws = [np.asarray(u, float) for u in us[:len(rhs)]], us[len(rhs):len(rhs) + len(ps)]
+    more = us[len(rhs) + len(ps):]
+    wr_all = np.array(more[:len(ridx)]) if len(ridx) else None
+    ut = {}
+    for k, ci in enumerate(ring_any):
+        ut[ci] = [np.asarray(u, float).ravel() for u in more[len(ridx) + 2 * k:len(ridx) + 2 * k + 2]]
+    rpos = {int(j): k for k, j in enumerate(ridx)}
     share = np.eye(len(ps))
     normal = rows.kind == 0
+
+    def joint_of(seat, ci, bores):
+        from .insert import SeatedRings
+
+        own = rings.patches_of(bores)
+        return SeatedRings(seat, rings, own, wr_all[[rpos[int(j)] for j in own]])
 
     def judge():
         seat = Seat(ps, ws, ks, share, rows)
@@ -978,6 +1022,31 @@ def solve_cases(inner, rhs, ps, ks, strict: bool = True, xyz=None, layout=None, 
             return lam / max(lam.sum(), 1e-300)
 
         for ci, idx in enumerate(layout):
+            if ci in ring_one:
+                # the seats and the case's rings, one contact (insert.SeatedRings)
+                i = idx[0]
+                jt = joint_of(seat, ci, set(rings.cases[ci]))
+                _, mu, f, _ = jt.solve(jt.gaps(u0s[i]), rings.cases[ci], strict)
+                lam = f[:len(seat)]
+                done[i] = (jt.apply(u0s[i], mu), lam)
+                if pushed is not None:
+                    pushed[i] = jt.pressures(rhs[i], mu)
+                bear = np.maximum(bear, bears(lam))
+                continue
+            if ci in ring_any:
+                from .insert import SeatedRingSpread
+
+                i0 = idx[0]
+                jt = joint_of(seat, ci, set(rings.cases.get(ci, {})) | {rings.spread[ci][0]})
+                case = SeatedRingSpread(jt, ci, spreads[ci], rhs[i0] if i0 is not None else None,
+                                        u0s[i0] if i0 is not None else None, rings.thrusts(ci), ut[ci])
+                rows_ = case.samples(60)
+                if strict and any(r[4] for r in rows_):
+                    raise ValueError(LIFTS + " A force of unknown direction lifts it in some direction.")
+                for r in rows_:
+                    bear = np.maximum(bear, bears(r[3][:len(seat)]))
+                cases[ci] = case
+                continue
             if len(idx) == 1:
                 i = idx[0]
                 _, mu, lam, _ = seat.push(seat.gaps(u0s[i]), strict)

@@ -323,8 +323,9 @@ class _Analysis:
         given once holds for later calls with as many loads. With bearing
         rings (_solve_ringed) a case's loads in `loads` are replaced by the
         ring's, for what reads them after (the compliance f.u)."""
-        if self._ring is not None:
+        if self._ring is not None and not getattr(self.domain, "seats", None):
             return self._solve_ringed(e, xp, us, rtol, loads, layout)
+        # (with seats the rings are solved with them: _solve_seated)
         return self._solve_any(e, xp, us, rtol, loads, layout)
 
     def _solve_ringed(self, e, xp, us, rtol, loads, layout):
@@ -473,19 +474,51 @@ class _Analysis:
         without pushes along each axis, and with the push its worst direction
         took last time as one more load (the reference): the case is then a
         pushseat.SeatedSpread on the seats' compliance in hand, exact at the
-        reference push (seated_cases)."""
+        reference push (seated_cases).
+
+        Bearing loads through a rigid ring (insert.py) are solved with the
+        seats as one contact (insert.SeatedRings), as the checks solve them:
+        the ring's patches are pushes like the seats', read with them, and a
+        bearing force of unknown direction is an insert.SeatedRingSpread.
+        `loads` given (not the domain's) takes the rings' pressures in place
+        of their fixed ones, for what reads them after (the compliance f.u)."""
         from . import pushseat
 
         d = self.domain
+        caller = loads
         loads = list(loads if loads is not None else d.loads)
         st = self._seat
         ps, ks = st["ps"], st["ks"]
         pm = np.array(ps)
         spreads = getattr(d, "spreads", None) or []
         lay = layout or [(i,) for i in range(len(loads))]
-        single = {idx[0] for idx in lay if len(idx) == 1}
+        # the rings: the cases they load, their patches and thrusts
+        rg = self._ring
+        rings = rg["R"] if rg is not None else None
+        ring_one, ring_any = {}, {}
+        if rings is not None:
+            for ci, idx in enumerate(lay):
+                if len(idx) == 1 and ci in rings.cases:
+                    ring_one[idx[0]] = ci
+                elif len(idx) > 1 and ci in rings.spread and ci < len(spreads) and spreads[ci] is not None:
+                    ring_any[ci] = idx
+            bores = set()
+            for ci in ring_one.values():
+                bores |= set(rings.cases[ci])
+            for ci in ring_any:
+                bores |= set(rings.cases.get(ci, {})) | {rings.spread[ci][0]}
+            ridx = rings.patches_of(bores) if bores else np.zeros(0, int)
+            if not len(ridx):
+                ring_one, ring_any = {}, {}
+            rpos = {int(j): k for k, j in enumerate(ridx)}
+            for i, ci in ring_one.items():
+                loads[i] = rings.strip(loads[i], ci)
+            for ci, idx in ring_any.items():
+                if idx[0] is not None:
+                    loads[idx[0]] = rings.strip(loads[idx[0]], ci)
+        single = {idx[0] for idx in lay if len(idx) == 1} - set(ring_one)
         mu0 = [st["mu"].get(i, np.zeros(len(ps))) if i in single else np.zeros(len(ps)) for i in range(len(loads))]
-        fresh = st["ws"] is None or st["n"] % self.SEAT_EVERY == 0
+        fresh = st["ws"] is None or st["n"] % self.SEAT_EVERY == 0 or (ring_one or ring_any) and st.get("wr") is None
         st["n"] += 1
         if fresh:
             # a seat pushes where the part touches it: each patch's push and
@@ -493,15 +526,62 @@ class _Analysis:
             # there (_seat_patches), read again with the compliance
             ps, ks = self._seat_patches(e)
             pm = np.array(ps)
+        rp = rings.dense(ridx) if ring_one or ring_any else []
+        rpm = np.array(rp) if rp else None
+
+        def ring_bores(ci):
+            return set(rings.cases.get(ci, {})) | ({rings.spread[ci][0]} if ci in ring_any else set())
+
+        def own_rows(ci):
+            own = rings.patches_of(ring_bores(ci))
+            return own, np.array([rpos[int(j)] for j in own], int)
+
+        # the ring cases' pushes of last time: seats' then rings' (theirs alone)
+        jmu = st.setdefault("jmu", {})
+        jmu0 = {}
+        for i, ci in ring_one.items():
+            own, sub = own_rows(ci)
+            m0 = jmu.get(i)
+            jmu0[i] = m0 if m0 is not None and len(m0) == len(ps) + len(own) else np.zeros(len(ps) + len(own))
+
+        def push_of(m, ci):
+            own, sub = own_rows(ci)
+            return m[:len(ps)] @ pm + m[len(ps):] @ rpm[sub]
+
         pushed = [f + mu @ pm for f, mu in zip(loads, mu0)]
+        for i, ci in ring_one.items():
+            pushed[i] = loads[i] + push_of(jmu0[i], ci)
         # the reference pushes of the uncertain cases
-        refs = [(ci, st["ref"][ci]) for ci, idx in enumerate(lay) if len(idx) > 1 and ci in st["ref"]]
+        refs = [(ci, st["ref"][ci]) for ci, idx in enumerate(lay) if len(idx) > 1 and ci in st["ref"]
+                and ci not in ring_any]
         extra = [mu @ pm for _, mu in refs]
+        rrefs = []
+        for ci in ring_any:
+            if ci in st["ref"] and ci in st["dir"] and not fresh and len(st["ref"][ci]) == len(ps) + len(
+                    own_rows(ci)[0]):
+                dref, mref = st["dir"][ci], st["ref"][ci]
+                b, ins = rings.spread[ci]
+                ax = rings.axes[b]
+                size = float(np.linalg.norm(ins.force))
+                s_ = float(np.asarray(dref) @ ax)
+                ap, am = size * max(s_, 0.0), size * max(-s_, 0.0)
+                t = rings.thrusts(ci)
+                rrefs.append((ci, np.concatenate([[ap, am], mref]), ap * t[0] + am * t[1] + push_of(mref, ci)))
+        extra = extra + [f for _, _, f in rrefs]
         n = len(loads)
         if fresh:
-            out = self._solve_safe(e, xp, list(us) + [None] * len(extra) + (st["ws"] or [None] * len(ps)), rtol,
-                                   pushed + extra + ps)
-            us, ur, st["ws"] = list(out[:n]), list(out[n:n + len(extra)]), list(out[n + len(extra):])
+            thr = [v for ci in ring_any for v in rings.thrusts(ci)]
+            nr = len(rp) + len(thr)
+            old = (st["ws"] or [None] * len(ps)) + [None] * nr
+            out = self._solve_safe(e, xp, list(us) + [None] * len(extra) + old, rtol,
+                                   pushed + extra + list(ps) + rp + thr)
+            us, ur = list(out[:n]), list(out[n:n + len(extra)])
+            rest = list(out[n + len(extra):])
+            st["ws"] = rest[:len(ps)]
+            if nr:
+                st["wr"] = np.array([np.asarray(u).ravel() for u in rest[len(ps):len(ps) + len(rp)]])
+                tu = rest[len(ps) + len(rp):]
+                st["ut"] = {ci: [np.asarray(u).ravel() for u in tu[2 * k:2 * k + 2]] for k, ci in enumerate(ring_any)}
         else:
             out = self._solve_safe(e, xp, list(us) + [None] * len(extra), rtol, pushed + extra)
             us, ur = list(out[:n]), list(out[n:])
@@ -518,16 +598,51 @@ class _Analysis:
                 us[i] = u          # exact: the compliance is this design's
             elif np.abs(mu - mu0[i]).sum() > 0.02 * max(np.abs(mu).sum(), 1e-12):
                 again.append(i)
+        joints = {}
+
+        def joint(ci):
+            if ci not in joints:
+                from .insert import SeatedRings
+
+                own, sub = own_rows(ci)
+                joints[ci] = SeatedRings(seat, rings, own, st["wr"][sub])
+            return joints[ci]
+
+        ringed_loads = {}
+        for i, ci in ring_one.items():
+            jt = joint(ci)
+            base = jt.apply(np.asarray(us[i]).ravel(), -jmu0[i])
+            _, mu, f, _ = jt.solve(jt.gaps(base), rings.cases[ci])
+            jmu[i] = mu
+            st["lam"][i] = f[:len(ps)]
+            ringed_loads[i] = jt.pressures(loads[i], mu)
+            if fresh:
+                us[i] = jt.apply(base, mu)
+            elif np.abs(mu - jmu0[i]).sum() > 0.02 * max(np.abs(mu).sum(), 1e-12):
+                again.append(i)
         if again:
-            redo = self._solve_safe(e, xp, [us[i] for i in again], rtol, [loads[i] + st["mu"][i] @ pm for i in again])
+            redo = self._solve_safe(e, xp, [us[i] for i in again], rtol,
+                                    [loads[i] + (push_of(jmu[i], ring_one[i]) if i in ring_one else st["mu"][i] @ pm)
+                                     for i in again])
             for i, u in zip(again, redo):
                 us[i] = u
+        if caller is not None and caller is not d.loads:
+            for i, f in ringed_loads.items():
+                caller[i] = f
         cases = {}
         ref_of = {ci: (mu, u) for (ci, mu), u in zip(refs, ur)}
+        rref_of = {ci: (q, u) for (ci, q, _), u in zip(rrefs, ur[len(refs):])}
         for ci, idx in enumerate(lay):
             if len(idx) == 1:
                 continue
             i0 = idx[0]
+            if ci in ring_any:
+                from .insert import SeatedRingSpread
+
+                cases[ci] = SeatedRingSpread(joint(ci), ci, spreads[ci], loads[i0] if i0 is not None else None,
+                                             np.asarray(us[i0]).ravel() if i0 is not None else None,
+                                             rings.thrusts(ci), st["ut"][ci], ref=rref_of.get(ci))
+                continue
             cases[ci] = pushseat.SeatedSpread(seat, loads[i0] if i0 is not None else None,
                                               us[i0] if i0 is not None else None, [loads[i] for i in idx[1:]],
                                               [us[i] for i in idx[1:]], spreads[ci], ref=ref_of.get(ci))

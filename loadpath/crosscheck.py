@@ -887,9 +887,6 @@ def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, 
     ks = E * ks
     solver = solver_for((ps, ks))
     try:
-        if inserts:
-            # bearing loads through a rigid ring (insert.py), on the sprung stiffness
-            loads = _ringed(loads, spreads, inserts, nodes, solver)
         rhs, layout, sps = [], [], []
         for (name, f, ln), sp in zip(loads, spreads):
             if sp is None:
@@ -923,8 +920,16 @@ def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, 
                     out.append(u.ravel().astype(np.float32))
             return None, out
 
+        # bearing loads through a rigid ring (insert.py), solved with the
+        # seats as one contact (insert.SeatedRings), per direction for a
+        # force of unknown direction
+        rings = None
+        if inserts:
+            from .insert import Rings
+
+            rings = Rings(inserts, nodes, 3 * n)
         _, us, _, cases = pushseat.solve_cases(inner, [flat(f) for f in rhs], ps, ks, strict=True, xyz=nodes,
-                                               layout=layout, spreads=sps)
+                                               layout=layout, spreads=sps, rings=rings)
     finally:
         solver.close()
     out_u, dirs = [], []

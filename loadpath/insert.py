@@ -49,8 +49,11 @@ the sum of three axes' answers through a ring that only pushes: per
 direction the contact is solved again on the patches' compliance, the
 thrust taken on the faces facing it either way (RingedSpread), and the
 checks' worst direction found as for a seated case (pushseat.worst_stress).
-Not yet: a force of unknown direction on a part that is also held by
-seats keeps the even spread over the bore.
+On a part also held by seats (supports[].push) the seats and the rings
+are one contact, solved together for a force as written and per direction
+for one of unknown direction (SeatedRings, SeatedRingSpread, below): the
+ring's pressures load the seats, and where a seat lets go changes how the
+bore deforms under the ring.
 
 Units: mm, N, MPa.
 """
@@ -60,7 +63,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-__all__ = ["Insert", "Rings", "RingedSpread", "plan", "plan_spread", "applies", "redistribute", "ringed_spreads", "SECTORS",
+__all__ = ["Insert", "Rings", "RingedSpread", "SeatedRings", "SeatedRingSpread", "plan", "plan_spread", "applies", "redistribute", "ringed_spreads", "SECTORS",
            "BANDS", "RIGID_BELOW"]
 
 # patches round the axis and along it (a band per end: the ring tilts, so
@@ -221,7 +224,6 @@ def _qp(c, a, b, g=None):
     constant) with the equilibrium as stiff rows, then the rows' residue
     fed back (augmented Lagrangian) until it is under 1e-9 of the load."""
     from scipy.linalg import solve_triangular
-    from scipy.optimize import nnls
 
     c = 0.5 * (c + c.T)
     n = len(c)
@@ -231,16 +233,26 @@ def _qp(c, a, b, g=None):
     sc = float(np.trace(c)) / max(n, 1)
     lo = np.linalg.cholesky(c + 1e-10 * max(sc, 1e-300) * np.eye(n))
     top = np.zeros(n) if g is None else -solve_triangular(lo, np.asarray(g, float), lower=True)
-    # the equilibrium rows weighted far above the energy's: a force of 1 N
-    # off weighs as an energy 1e6 x a patch's own compliance
+    return _nnls_eq(lo.T, top, a, b, sc)
+
+
+def _nnls_eq(mt, top, a, b, sc):
+    """min |mt lam - top|^2, lam >= 0, a lam = b: the equilibrium rows
+    weighted far above the energy's (a force of 1 N off weighs as an energy
+    1e6 x a patch's own compliance `sc`), their residue fed back."""
+    from scipy.optimize import nnls
+
+    n = mt.shape[1]
     beta = np.sqrt(1e6 * max(sc, 1e-300))
-    target = b.copy()
+    target = np.asarray(b, float).copy()
     size = max(float(np.linalg.norm(b)), 1e-300)
     lam = np.zeros(n)
     for _ in range(20):
-        m = np.vstack([lo.T, beta * a])
+        m = np.vstack([mt, beta * a])
         rhs = np.concatenate([top, beta * target])
         lam, _ = nnls(m, rhs, maxiter=50 * n)
+        if a.shape[0] == 0:
+            break
         res = b - a @ lam
         if np.linalg.norm(res) <= 1e-9 * size:
             break
@@ -398,6 +410,47 @@ def redistribute(inner, rhs: list, inserts: list, case_rhs, n_dof: int, xyz) -> 
     return rhs
 
 
+def _ascend(at, sp, n: int, start=None):
+    """[(d, c, mu, lam, lifts)] of `at(d)` (-> (c, _, mu, lam, lifts)) over a
+    spread of `n` directions of the cap `sp` and the axes, then the end of a
+    pattern ascent from the best few (and from `start`) last: the worst. (A
+    contact's compliance has a gradient only where the patches that bear
+    stay the same; the pattern needs none.)"""
+    from .directions import _cap_samples, _to_cap
+
+    axis = np.asarray(sp.nominal, float)
+    dirs = [_to_cap(d / np.linalg.norm(d), axis, sp.cos_half)
+            for d in [*_cap_samples(sp, n), axis, *np.eye(3), *-np.eye(3)]]
+    if start is not None:
+        dirs.append(_to_cap(np.asarray(start, float), axis, sp.cos_half))
+    rows = [(d, *at(d)) for d in dirs]
+    order = list(np.argsort([-r[1] for r in rows])[:3]) + ([len(rows) - 1] if start is not None else [])
+    best = None
+    for k in order:
+        d, cv = rows[k][0], rows[k][1]
+        step = 0.1
+        while step > 1e-4:
+            e1 = np.cross(d, [1.0, 0, 0] if abs(d[0]) < 0.9 else [0, 1.0, 0])
+            e1 /= np.linalg.norm(e1)
+            e2 = np.cross(d, e1)
+            moved = False
+            for e in (e1, -e1, e2, -e2):
+                dn = d + step * e
+                dn = _to_cap(dn / np.linalg.norm(dn), axis, sp.cos_half)
+                cn = at(dn)[0]
+                if cn > cv * (1.0 + 1e-12):
+                    d, cv, moved = dn, cn, True
+                    break
+            if not moved:
+                step *= 0.5
+        if best is None or cv > best[1]:
+            best = (d, cv)
+    r = at(best[0])
+    out = [(row[0], row[1], row[3], row[4], row[5]) for row in rows]
+    out.append((best[0], r[0], r[2], r[3], r[4]))
+    return out
+
+
 class RingedSpread:
     """A load case whose bearing force has no known direction
     (directions.Spread on a ring): for each direction d the ring's contact
@@ -460,40 +513,7 @@ class RingedSpread:
         """[(d, c, lam, lam, False)] over a spread of `n` directions (the
         cap's) and the axes; the ascent's end from the best few (and from
         `start`) last: the worst."""
-        from .directions import _cap_samples, _to_cap
-
-        sp = self.spread
-        axis = np.asarray(sp.nominal, float)
-        dirs = [_to_cap(d / np.linalg.norm(d), axis, sp.cos_half)
-                for d in [*_cap_samples(sp, n), axis, *np.eye(3), *-np.eye(3)]]
-        if start is not None:
-            dirs.append(_to_cap(np.asarray(start, float), axis, sp.cos_half))
-        rows = [(d, *self.at(d)) for d in dirs]
-        order = list(np.argsort([-r[1] for r in rows])[:3]) + ([len(rows) - 1] if start is not None else [])
-        best = None
-        for k in order:
-            d, cv = rows[k][0], rows[k][1]
-            step = 0.1
-            while step > 1e-4:
-                e1 = np.cross(d, [1.0, 0, 0] if abs(d[0]) < 0.9 else [0, 1.0, 0])
-                e1 /= np.linalg.norm(e1)
-                e2 = np.cross(d, e1)
-                moved = False
-                for e in (e1, -e1, e2, -e2):
-                    dn = d + step * e
-                    dn = _to_cap(dn / np.linalg.norm(dn), axis, sp.cos_half)
-                    cn = self.at(dn)[0]
-                    if cn > cv * (1.0 + 1e-12):
-                        d, cv, moved = dn, cn, True
-                        break
-                if not moved:
-                    step *= 0.5
-            if best is None or cv > best[1]:
-                best = (d, cv)
-        r = self.at(best[0])
-        out = [(row[0], row[1], row[3], row[4], row[5]) for row in rows]
-        out.append((best[0], r[0], r[2], r[3], r[4]))
-        return out
+        return _ascend(self.at, self.spread, n, start)
 
     def coefficients(self, rows):
         return np.array([np.concatenate([self._a(r[0]), r[2]]) for r in rows])
@@ -574,3 +594,275 @@ def ringed_spreads(inner, rhs, layout, spreads, rings: Rings, c_all=None, w_all=
         u0 = np.asarray(rhs_u[i0]).ravel() if i0 is not None else None
         out[ci] = RingedSpread(rings, ci, spreads[ci], f0, u0, t, ut, c, w, idx)
     return out
+
+
+# -- seats and rings together ---------------------------------------------------------
+#
+# A part held by seats (pushseat.py) with a bearing in a bore: the ring pushes
+# on the bore, the seats on the part's faces, and each lets go where its
+# load would pull. Neither answer stands alone: the ring's pressures load
+# the seats, and where the seats let go changes how the bore deforms under
+# the ring. Both are contact on one linear model, so they are solved as one.
+#
+# On the sprung stiffness K' (the seats' patch springs, pushseat.hold) every
+# patch, seat's and ring's, has its unit push p_j and answer w_j = K'^-1 p_j,
+# and their compliance C_ij = p_i . w_j. With G the patches' gaps (P u) and
+# G0 those of the case's other loads alone (P u_f), the part's energy in the
+# gaps is 1/2 (G - G0)' A (G - G0) - 1/2 g_s' k g_s (A = C^-1; the seats'
+# springs taken out exactly, as pushseat.Seat does), and the ring is a rigid
+# body q pushed by its load W: minimize that less W'q over g_s >= 0 (a seat
+# does not go into its wall) and g_r - N q >= 0 (the bore does not go into
+# the ring). Its dual is the complementary energy of the contact forces:
+#
+#     min 1/2 (b + F)' H^-1 (b + F),  F >= 0,  N_b' F_b = W_b per ring,
+#
+# with H = A - diag(k, 0) the part's own stiffness seen from its patches and
+# b = A G0: F holds every patch's force (a seat's push, a ring's pressure),
+# and the gaps are G = H^-1 (b + F). H is singular along a motion only the
+# seats stop (the part rests on them); its floor (pushseat.FLOOR) weighs the
+# forces along such a motion far above the rest, so they must balance the
+# load, and what the floor still carries is a part that lifts off. With no
+# seat this is contact()'s problem; with no ring, Seat.push's.
+#
+# Friction across a seat or a preload is not a minimum of one energy: there
+# the seats (Seat.push, with all of its friction) and the rings (contact)
+# are solved in turn, each on the other's pushes, until neither moves.
+
+class SeatedRings:
+    """One case's seats (pushseat.Seat on the sprung stiffness) and rings
+    (the patches `idx` of `rings`, their answers `wr` (len(idx), n_dof) on
+    the same stiffness) as one contact."""
+
+    def __init__(self, seat, rings: Rings, idx, wr):
+        from .pushseat import _gram
+
+        self.seat, self.rings = seat, rings
+        self.idx = np.asarray(idx, int)
+        self.wr = wr
+        ns, nr = len(seat), len(self.idx)
+        self.ns, self.nr = ns, nr
+        css = _gram(seat.p, seat.w)
+        csr = _gram(seat.p, wr) if ns else np.zeros((0, nr))
+        crr = np.array([rings.gaps(u, self.idx) for u in wr]).T
+        c = np.zeros((ns + nr, ns + nr))
+        c[:ns, :ns], c[:ns, ns:], c[ns:, :ns], c[ns:, ns:] = css, csr, csr.T, crr
+        self.c = 0.5 * (c + c.T)
+        self.csr, self.crr = self.c[:ns, ns:], self.c[ns:, ns:]
+        self.a = np.linalg.pinv(self.c, hermitian=True)
+        kd = np.zeros_like(self.c)
+        kd[:ns, :ns] = seat.kd
+        h = self.a - kd
+        d, v = np.linalg.eigh(0.5 * (h + h.T))
+        floor = getattr(seat, "floor", None)
+        if floor is None:
+            floor = 1e-12 * max(float(np.abs(d).max()), 1e-300)
+        self.d, self.v, self.dc = d, v, np.maximum(d, floor)
+        # the energy's factor: |mt (b + F)|^2 = (b + F)' Hc^-1 (b + F)
+        self.mt = (v / np.sqrt(self.dc)).T
+        live = d > floor
+        self.sc = float(np.median(1.0 / self.dc[live])) if live.any() else float(np.mean(1.0 / self.dc))
+        # each ring's equilibrium rows, over all the patches
+        self.eq = []
+        bores = rings.bore[self.idx]
+        for b in np.unique(bores):
+            wr6 = np.zeros((ns + nr, 6))
+            on = np.flatnonzero(bores == b)
+            wr6[ns + on] = rings.wrench[self.idx[on]]
+            basis = _rigid_basis(rings.axes[b])
+            rows = basis.T @ wr6.T
+            keep = np.linalg.norm(rows, axis=1) > 1e-12 * max(float(np.abs(rows).max()), 1e-300)
+            self.eq.append((int(b), rows[keep], basis[:, keep]))
+        # friction across a seat, or a preload: the two solved in turn
+        self.joint = bool(seat.normal.all() and not len(seat.fi) and not seat.e.any())
+
+    def gaps(self, u):
+        """G = (P_s u, P_r u)."""
+        return np.concatenate([self.seat.gaps(u), self.rings.gaps(u, self.idx)])
+
+    def _rhs(self, loads):
+        a = np.vstack([r for _, r, _ in self.eq]) if self.eq else np.zeros((0, self.ns + self.nr))
+        b = [bs.T @ np.asarray(loads.get(bo, np.zeros(6)), float) for bo, _, bs in self.eq]
+        return a, (np.concatenate(b) if b else np.zeros(0))
+
+    def solve(self, g0, loads, strict: bool = False):
+        """(G, mu, F, lifts) for the gaps `g0` the case's other loads open
+        on the sprung stiffness and each ring's load {bore: wrench (6,)}:
+        the gaps, the pushes mu on the sprung stiffness that give the answer
+        (u = u_f + mu_s . w_s + mu_r . w_r), every patch's force F (seats'
+        then rings'; a ring's is its mu) and whether the part lifts off its
+        seats with nothing else to hold it (raised with `strict`)."""
+        from .pushseat import LIFTS
+
+        g0 = np.asarray(g0, float)
+        a_eq, b_eq = self._rhs(loads)
+        if self.joint:
+            b = self.a @ g0
+            f = _nnls_eq(self.mt, -self.mt @ b, a_eq, b_eq, self.sc)
+            g = self.v @ ((self.v.T @ (b + f)) / self.dc)
+            lost = self.v @ ((self.dc - self.d) * (self.v.T @ g))
+            ref = max(float(np.linalg.norm(b)), float(np.linalg.norm(f)), 1e-300)
+            lifts = bool(np.linalg.norm(lost) > 1e-2 * ref)
+            mu = self.a @ (g - g0)
+            mu[self.ns:] = f[self.ns:]
+        else:
+            g, mu, f, lifts = self._in_turn(g0, a_eq[:, self.ns:], b_eq, strict)
+        if strict and lifts:
+            raise ValueError(LIFTS)
+        return g, mu, f, lifts
+
+    def _in_turn(self, g0, a_eq, b_eq, strict: bool = False, most: int = 200):
+        """Seats (Seat.push, friction and preload with it) and rings
+        (contact) solved in turn on each other's pushes until they agree."""
+        ns = self.ns
+        fr = np.zeros(self.nr)
+        g_s = mu_s = lam_s = None
+        lifts = False
+        for _ in range(most):
+            g_s, mu_s, lam_s, lifts = self.seat.push(g0[:ns] + self.csr @ fr)
+            gr = g0[ns:] + self.csr.T @ mu_s
+            fn = _qp(self.crr, a_eq, b_eq, gr)
+            moved = float(np.abs(fn - fr).sum())
+            fr = fn
+            if moved <= 1e-10 * max(float(np.abs(fn).sum()), 1e-300):
+                break
+        g_s, mu_s, lam_s, lifts = self.seat.push(g0[:ns] + self.csr @ fr, strict)
+        g = np.concatenate([g_s, g0[ns:] + self.csr.T @ mu_s + self.crr @ fr])
+        return g, np.concatenate([mu_s, fr]), np.concatenate([lam_s, fr]), lifts
+
+    def apply(self, u_f, mu):
+        """The answer u_f + mu . (w_s, w_r)."""
+        u = np.asarray(u_f, float) + mu[:self.ns] @ self.seat.w if self.ns else np.asarray(u_f, float)
+        return u + mu[self.ns:] @ self.wr
+
+    def pressures(self, f, mu):
+        """The loads `f` with the rings' pressures in."""
+        return self.rings.add(f, mu[self.ns:], self.idx)
+
+
+class SeatedRingSpread:
+    """A bearing force of unknown direction on a part that is also held by
+    seats: per direction d the seats' and the ring's contact solved together
+    (SeatedRings). As RingedSpread, the force's part along the axis bears on
+    the faces that face it (t+ or t-, fixed), the part across it through the
+    ring, and the rest of the case (f0, with any other ring's load W_b) is
+    fixed:
+
+        u(d) = u0 + a+ u+ + a- u- + mu_s(d) . w_s + mu_r(d) . w_r
+
+    with mu the patches' pushes on the sprung stiffness. The compliance is
+    the work of the loads, f(d) . u(d) with the ring's pressures in (a seat
+    does no work where it bears: its gap is zero there). The interface is
+    pushseat.SeatedSpread's, so pushseat.worst_stress, directions.collapse
+    and thermal.sensitivities take it.
+
+    `ref`: (q_ref, u_ref) with q_ref = (a+, a-, mu) a push already solved on
+    the current stiffness while the patches' answers are older (the
+    optimizer reads them every few solves): exact at the reference."""
+
+    def __init__(self, joint: SeatedRings, case, spread, f0, u0, t, ut, ref=None):
+        rings = joint.rings
+        b, ins = rings.spread[case]
+        self.joint, self.rings, self.case, self.spread = joint, rings, case, spread
+        self.bore = b
+        self.axis = rings.axes[b]
+        self.size = float(np.linalg.norm(ins.force))
+        self.fixed = {bo: ld for bo, ld in rings.cases.get(case, {}).items()}
+        self.f0, self.u0 = f0, u0
+        self.t, self.ut = list(t), list(ut)
+        self.ref = ref
+        z = np.zeros(rings.n_dof)
+        fs = [f0 if f0 is not None else z] + self.t
+        us = [u0 if u0 is not None else z] + self.ut
+        self.gram = np.array([[float(fi @ uj) for uj in us] for fi in fs])
+        self.gram = 0.5 * (self.gram + self.gram.T)
+        self.G = np.array([joint.gaps(u) for u in us])          # 3 x patches
+
+    def _a(self, d):
+        s = float(np.asarray(d, float) @ self.axis)
+        return np.array([1.0, self.size * max(s, 0.0), self.size * max(-s, 0.0)])
+
+    def _loads(self, d):
+        d = np.asarray(d, float)
+        out = dict(self.fixed)
+        radial = self.size * (d - (d @ self.axis) * self.axis)
+        out[self.bore] = out.get(self.bore, np.zeros(6)) + np.concatenate([radial, np.zeros(3)])
+        return out
+
+    def at(self, d, strict: bool = False):
+        """(compliance, None, mu, F, lifts) for direction d."""
+        a = self._a(d)
+        g0 = a @ self.G
+        g, mu, f, lifts = self.joint.solve(g0, self._loads(d), strict)
+        ns = self.joint.ns
+        cval = float(a @ self.gram @ a + mu @ g0 + f[ns:] @ g[ns:])
+        return cval, None, mu, f, lifts
+
+    def samples(self, n: int = 200, start=None):
+        return _ascend(self.at, self.spread, n, start)
+
+    def coefficients(self, rows):
+        return np.array([np.concatenate([self._a(r[0]), r[2]]) for r in rows])
+
+    def _pushes(self):
+        return self.joint.seat.w if self.joint.ns else None
+
+    def basis(self):
+        out = self.u0 if self.u0 is not None else np.zeros(self.rings.n_dof)
+        if self.ref is not None:
+            q, ur = self.ref
+            out = out + ur - (q[0] * self.ut[0] + q[1] * self.ut[1]) - self.joint.apply(np.zeros_like(ur), q[2:])
+        return out
+
+    def norms(self):
+        ws = self._pushes()
+        return np.array([np.linalg.norm(self.basis()), *(np.linalg.norm(u) for u in self.ut),
+                         *(np.linalg.norm(ws, axis=1) if ws is not None else []),
+                         *np.linalg.norm(self.joint.wr, axis=1)], float)
+
+    def combine(self, q):
+        q = np.asarray(q, float)
+        u = q[0] * self.basis() + q[1] * self.ut[0] + q[2] * self.ut[1]
+        return self.joint.apply(u, q[3:])
+
+    def u(self, d, mu=None):
+        mu = self.at(d)[2] if mu is None else mu
+        return self.combine(np.concatenate([self._a(d), mu]))
+
+    def f(self, d):
+        a = self._a(d)
+        f = a[1] * self.t[0] + a[2] * self.t[1]
+        if self.f0 is not None:
+            f = f + self.f0
+        return self.joint.pressures(f, self.at(d)[2])
+
+    def worst(self, smooth: float, start=None, n: int = 120):
+        """directions.Worst for the optimizer (pushseat.SeatedSpread.worst);
+        the worst direction and its pushes kept (`self.last`)."""
+        from .directions import Worst
+
+        rows = self.samples(n, start)
+        d, cv, mu = rows[-1][0], rows[-1][1], rows[-1][2]
+        cs = np.array([r[1] for r in rows])
+        wt = np.exp(smooth * (cs - cv) / max(abs(cv), 1e-300))
+        wt /= wt.sum()
+        q = self.coefficients(rows)
+        gm = (q * wt[:, None]).T @ q
+        m, vec = np.linalg.eigh(gm)
+        keep = [j for j in np.argsort(-m)[:8] if m[j] > 1e-6 * m.max()]
+        energy = [(float(m[j]), self.combine(vec[:, j])) for j in keep]
+        u_mean = self.combine(wt @ q)
+        self.last = (d, mu)
+        u = self.combine(np.concatenate([self._a(d), mu]))
+        a = self._a(d)
+        f = self.joint.pressures(a[1] * self.t[0] + a[2] * self.t[1] + (self.f0 if self.f0 is not None else 0.0), mu)
+        return Worst(u, cv, d, f, energy, u_mean)
+
+    def push(self, d, mu):
+        """The thrust and every patch's push at direction d (to solve as one
+        more load: the next reference), and its q = (a+, a-, mu)."""
+        a = self._a(d)
+        f = self.joint.pressures(a[1] * self.t[0] + a[2] * self.t[1], mu)
+        ns = self.joint.ns
+        if ns:
+            f = f + np.asarray(self.joint.seat.p.T @ mu[:ns], float).ravel()
+        return f, np.concatenate([a[1:], mu])
