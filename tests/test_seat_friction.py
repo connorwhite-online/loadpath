@@ -408,6 +408,31 @@ def test_lattice_sizing_and_mechanisms_honor_seats():
     assert rep["converged"] and abs(rep["seats"][0]["force"][2] + 1.0) < 0.01, rep.get("seats")
 
 
+def test_a_socket_of_many_seats_gets_one_whole_patch_per_seat():
+    """A D-shaft's socket held push "normal" is some thirty seats (its round
+    wall in 15 degree groups, the flat, the floor, the edges between): too
+    many for each to have its outline's corners in the patch budget. Each
+    gets one patch over the whole face, never an empty or NaN one (held-out
+    batch 4: a handwheel's every solve read as lifting off its shaft)."""
+    from loadpath import pushseat
+
+    rng = np.random.default_rng(0)
+    xyz = rng.random((400, 3))
+    seats = []
+    for k in range(35):
+        idx = np.arange(k * 10, k * 10 + (1 if k % 3 == 0 else 10))
+        n = np.array([np.cos(k), np.sin(k), 0.0])
+        seats.append((idx, n, np.full(len(idx), 1.0 / len(idx)), 0.3))
+    ps = pushseat.patches(seats, xyz, 3 * len(xyz))
+    p = np.array(ps)
+    assert np.isfinite(p).all()
+    assert (np.abs(p).sum(axis=1) > 0).all()
+    assert len(ps) == 3 * 35
+    for si in range(35):
+        normal = p[(ps.rows.seat == si) & (ps.rows.kind == 0)]
+        assert np.isclose(normal.reshape(-1, 3).sum(axis=0) @ seats[si][1], 1.0)
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 
