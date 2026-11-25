@@ -1813,16 +1813,18 @@ def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, he
     if lowrank is not None:
         rows_, kk = lowrank
         n = len(nodes)
-        rows_ = np.asarray(rows_, float).reshape(len(kk), -1)
-        own = np.asarray([nodes[np.abs(r_).reshape(-1, 3).sum(axis=1) > 0].mean(axis=0) for r_ in rows_])
+        from .pushseat import _nz
+
+        nzs = [_nz(r_) for r_ in rows_]          # dense rows or sparse ones (crosscheck._seated)
+        own = np.asarray([nodes[np.unique(dof // 3)].mean(axis=0) for dof, _ in nzs])
         fh.write("*NODE,NSET=PATCHES\n")
         np.savetxt(fh, np.column_stack([n + 1 + np.arange(len(kk)), own]), fmt="%d,%.9g,%.9g,%.9g")
         for j, k_ in enumerate(kk):
             fh.write(f"*ELEMENT,TYPE=SPRING1,ELSET=PS{j}\n{len(conn) + 1 + j},{n + 1 + j}\n"
                      f"*SPRING,ELSET=PS{j}\n1\n{float(k_):.12e}\n")  # (an integer reads as no data)
         for j in range(len(kk)):
-            dof = np.nonzero(rows_[j])[0]
-            terms = [(n + 1 + j, 1, -1.0)] + [(int(d // 3) + 1, int(d % 3) + 1, float(rows_[j][d])) for d in dof]
+            dof, val = nzs[j]
+            terms = [(n + 1 + j, 1, -1.0)] + [(int(d // 3) + 1, int(d % 3) + 1, float(v)) for d, v in zip(dof, val)]
             fh.write(f"*EQUATION\n{len(terms)}\n")
             for t0 in range(0, len(terms), 4):
                 fh.write(",".join(f"{a},{b},{c:.15g}" for a, b, c in terms[t0:t0 + 4]) + "\n")
