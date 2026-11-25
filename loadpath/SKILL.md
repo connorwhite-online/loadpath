@@ -172,7 +172,8 @@ buckling, printability) you can report to the user.
    Moments written by hand are N·mm (1 N·m = 1000), about the region's centre. A shaft in a
    bore: add `"distribution": "bearing"` so a radial force presses on the
    half of the bore it pushes, as a real shaft does (the checks solve it as a
-   steel ring or shaft that only pushes and keeps the bore round; its axial
+   steel ring or shaft that only pushes and keeps the bore round, and read
+   the stress at the bore itself, where a pinned lug breaks; its axial
    part bears on the shoulder that faces it). Draw that bore keep-out over
    the length the bearing or shaft really fills: the load goes where the
    region is. Add a sideways or torsional case if the part

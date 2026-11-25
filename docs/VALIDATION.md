@@ -21,7 +21,8 @@ Each claim carries one of these labels, strongest first:
 
 No loadpath prediction has been compared with a part printed and measured
 for this project (published tests of other people's prints are below, under
-[Printed lattices against published tests](#printed-lattices-against-published-tests)). A calibration kit is ready and waiting to be printed
+[Printed lattices against published tests](#printed-lattices-against-published-tests)
+and [Printed plates pulled through a pin](#printed-plates-pulled-through-a-pin)). A calibration kit is ready and waiting to be printed
 ([CALIBRATION.md](CALIBRATION.md)): stiffness and strength coupons along and
 across layers, a gyroid-core beam, TPU creep and crush coupons, PETG warp
 bars, and a bench test of the robot-arm wrist yoke with a predicted rotation per
@@ -42,6 +43,7 @@ certified strength.
 | Natural frequencies | Analytic | Cantilever f1 within 0.5% of Euler-Bernoulli, f2/f1 = 6.27 (`modal.py`, docs/IMPACT.md). |
 | Thermal conduction and expansion | Analytic | Conduction exact to solver tolerance; bimetal curvature within 2.5% of Timoshenko (`tests/test_thermal.py`). |
 | The delivered part's safety factor | Cross-checked | Every safety-factor search confirms its pick on a tetrahedral (P2) mesh of the delivered STL. On the same tet mesh, CalculiX and loadpath's native P2 solver agree within 0.1% on the governing peak, and to 3-4 digits for layered (anisotropic) studies. The voxel check reads 24-49% higher peak stress than the tet check on the motor mount and bell crank, so voxel-only numbers err safe. The tet mesh (isosurface stuffing) is deterministic: the same part reads the same every run. |
+| Strength at a pinned or bolted hole (a bearing load through a pin or shaft) | Matched published experiment | 16 published tests of printed PLA and ABS plates pulled through a steel pin: the first-failure reading is under the measured break on all 16, 0.20-0.76x on the voxel check and 0.21-0.82x on the tet check, read at the hole's side (where the net-tension specimens broke) or on the face the pin bears on. Before 2026-11-25 the stress at the bore was left out of the reading, and on four specimens that read 1.26-1.42x the measured break: unsafe ([below](#printed-plates-pulled-through-a-pin)). |
 | Layered (printed) stiffness and layer bond | Simulation only | Transversely isotropic stiffness and a tension-across-layers check, with factors from datasheets and literature. Interlayer shear is not checked separately. Waiting on the calibration coupons. |
 | Material cards | Measured data (datasheets) | Every value cites its datasheet (`loadpath materials`). Datasheet values describe the manufacturer's test bars, not your printer. |
 | Fatigue and creep of printed plastics | Simulation only | One published design curve for printed PLA (Ezeh and Susmel), scaled by strength for PETG, ABS and ASA; rough values for TPU, resins and metals. Not tested. |
@@ -222,6 +224,75 @@ topology-optimized part and its measured stiffness or strength; published
 bracket tests give neither the STL nor enough to rebuild it. The robot-arm wrist
 yoke bench test in the calibration kit remains the planned check for a
 printed optimized part.
+
+## Printed plates pulled through a pin
+
+A pin or a bolt in a hole is where most printed brackets and lugs break,
+and the published tests of it give everything needed to rebuild them: the
+plate, the hole, where it sits, the print and the load at which it broke.
+`bench/published_joints.py` rebuilds each specimen as a plate with its hole
+(an STL, as an agent would hand to `loadpath verify`), held over its grip and
+pulled through the hole by a steel pin (`"distribution": "bearing"`, which
+the checks solve as a rigid pin that only pushes, `insert.py`), and reads
+the load at which the check's stress reaches the strength: 1 kN x strength /
+peak, without the 1.15 allowance the reported safety factor adds. The checks
+are linear and judge first failure, so a reading under the measured break is
+the safe side. Nothing is fitted to these data. Specimens and sources are in
+`loadpath/data/published_joints.json`, the readings in
+`bench/results/published-joints.json`.
+
+| Source | Specimens | Material | Voxel check / measured | Tet check / measured | As read before 2026-11-25 / measured |
+| --- | --- | --- | --- | --- | --- |
+| Hertel, Kwon & Sachau 2024, FDM PLA ([doi](https://doi.org/10.3390/ma17225394)) | 140 x 20 x 2 mm strips, 6.35 mm hole for a 6 mm pin at 70, 45, 32.5 and 12.5 mm from the end; lines along the load (0), +-45 and across (90) | measured in the same lab: E 2919 MPa, strength 44 MPa | 0: 0.34-0.39, and 0.54 at 12.5 mm (bearing). +-45: 0.43. 90: 0.71-0.76 | 0: 0.39-0.43, 0.59. +-45: 0.47. 90: 0.78-0.82 | 0: 0.63-0.69, 0.95. +-45: 0.76-0.81. 90: **1.26-1.42** |
+| Khosravani et al. 2023, FDM PLA and ABS ([doi](https://doi.org/10.3390/polym15071660)) | ASTM D5961 double-shear plates, 36 x 5 mm, hole 18 mm from the end, D = 12, 6, 4, 3 mm | loadpath's cards (the paper's coupon values are only plotted) | PLA 0.34-0.48, ABS 0.20-0.31 | PLA 0.34-0.59, ABS 0.21-0.38 | PLA 0.69-0.88, ABS 0.42-0.56 |
+
+What this shows, and what it does not:
+
+- **The bore was not read, and that was unsafe.** Every check leaves out
+  the stress within a band round the region a load is applied over, because
+  an idealized load (a force spread evenly over a face) puts a peak there
+  that belongs to the idealization, not to the part. A pin's load was
+  treated the same way, so the hole's sides, where a pin-loaded plate breaks
+  in net tension, were never judged: the reading came from the edge of the
+  band, 2 mm out. On the strips printed with their lines across the load
+  (weak between lines, which loadpath's in-plane-isotropic card does not
+  know), that read 1.26-1.42x the measured break. The pin's contact is
+  solved (a rigid pin that only pushes, `insert.py`), so the stress at the
+  bore is the part's: the checks now read it whenever the pin carries a
+  case's whole load (`BoundaryConditions.case_ring_nodes`; a thrust on a
+  shoulder or a moment on the bore keeps the band). The voxel check's peak
+  sits at the hole's side, where the strips broke; the tet check's on the
+  wide strips is on the face the pin bears on, within 10% of the same load.
+- **It errs safe by 1.2-5x.** On the strips with their lines along the
+  load the check reads 0.34-0.43x the break. The strips broke at a
+  net-section stress (48.6 MPa) above the plain strength (44 MPa): printed
+  PLA barely feels a hole. Ahmed & Susmel (2018) measured printed PLA's
+  critical distance at 4.6 mm; loadpath averages stress over 0.86 mm (the
+  value measured on PA 12) and caps the radius at 4/9 of the thinnest wall
+  (0.89 mm on a 2 mm strip), so that a thin wall in bending is not read
+  through its thickness. Read over 4.6 mm, uncapped, the net-tension breaks
+  come out at 0.91-1.04x (PLA, lines along the load), but a hole 12.5 mm from
+  the end, which broke in bearing, at 1.44x, and the double-shear bearing
+  plates at 1.49-1.65x: unsafe. So the longer length is not adopted. Doing
+  it safely needs a cap that applies across a bending gradient and not
+  along an in-plane one, and a bearing reading that knows the crushing
+  under a pin is contained.
+- **Bearing failure is read as first yield.** The double-shear plates broke
+  at a bearing stress (load over D x thickness) of 107-189 MPa, two to
+  six times the plastic's tensile strength: the fixture's plates clamp the
+  hole, and crushing under a pin is contained. The check reads first yield
+  under the pin (0.20-0.48x the break) and does not model crushing.
+- **Limits of the data.** No raster direction in a plate is modelled:
+  loadpath's card is the same in every in-plane direction, so the strips'
+  0, +-45 and 90 rows are one reading against three measurements. Hertel's
+  strength is from coupons whose raster is not stated; Khosravani's
+  materials are loadpath's datasheet cards, not their prints. Hertel's pin
+  had 0.35 mm clearance, which narrows the contact; loadpath's pin fits.
+  Neither paper measured the plate's stiffness with an extensometer, so no
+  stiffness is compared. No published test of a printed topology-optimized
+  bracket with its geometry and a measured stiffness or failure load was
+  found (the ones found print an optimizer's output without publishing it,
+  or test resin, or low infill).
 
 ## Flow and heat
 

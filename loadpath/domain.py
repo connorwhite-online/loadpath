@@ -322,6 +322,12 @@ class BoundaryConditions:
     # bearing loads as a rigid ring in the bore (insert.py): a check that
     # solves them replaces the fixed pressure in `loads` with the ring's
     inserts: list = field(default_factory=list)
+    # per case, bool per node: the bores a ring bears on (inserts) and no
+    # other load of the case touches. The ring's contact is solved, so the
+    # stress at the bore is the part's and is read (a pin-loaded hole's net
+    # section and bearing face are where it breaks), not left out as the
+    # band round an idealized load is.
+    case_ring_nodes: list = field(default_factory=list)
 
 
 def node_mass(mesh: HexMesh, density) -> np.ndarray:
@@ -767,6 +773,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     # loaded face. The share is the count of cells the node touches.
     tributary = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes).astype(float)
     loads, case_nodes, case_wet, imbalance, spreads = [], [], [], [], []
+    case_rings = []
     from .insert import applies as _insert_applies, plan as plan_insert
 
     inserts, insert_applies = [], _insert_applies(study.material)
@@ -775,6 +782,8 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         spread = None
         cn = np.zeros(mesh.n_nodes, bool)
         cw = np.zeros(mesh.n_nodes, bool)
+        ringed = np.zeros(mesh.n_nodes, bool)
+        plain = np.zeros(mesh.n_nodes, bool)
         fp = np.zeros(mesh.n_dof)
         for li, ld in enumerate(case.loads):
             label = f"loadCases[{ci}].loads[{li}]"
@@ -816,7 +825,17 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                                        bearing_forces(sh, pts, share, radial) if np.any(radial) else 0 * pts)
                     if ring is not None:
                         inserts.append(ring)
+                    # read at the bore only when the ring carries all of it:
+                    # a thrust bears on the shoulder as a fixed pressure, a
+                    # moment as fixed tractions
+                    whole = ring is not None and abs(force @ sh.axis) <= 1e-9 * np.linalg.norm(force) \
+                        and not np.any(ld.moment)
+                    (ringed if whole else plain)[idx] = True
+                else:
+                    plain[idx] = True
                 force = np.zeros(3)
+            else:
+                plain[idx] = True
             if np.any(force):
                 f.reshape(-1, 3)[idx] += force[None] * share[:, None]
             if np.any(ld.moment):
@@ -864,6 +883,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         loads.append(f * float(getattr(study, "impact_scale", {}).get(case.name, 1.0)))
         case_nodes.append(cn)
         case_wet.append(cw)
+        case_rings.append(ringed & ~plain)
         load_nodes |= cn
 
     gravity = None
@@ -881,9 +901,10 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         _held_statics(xyz, fixed)
     if study.inertia_relief:
         inserts = []    # the loads were rebalanced on the part's inertia: the ring's are not
+        case_rings = [np.zeros(mesh.n_nodes, bool) for _ in case_rings]
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
                               case_wet, imbalance, spreads, raw, pinned=pinned, seats=seats,
-                              pin_springs=pin_springs, inserts=inserts)
+                              pin_springs=pin_springs, inserts=inserts, case_ring_nodes=case_rings)
 
 
 def _free_motions(xyz, fixed):

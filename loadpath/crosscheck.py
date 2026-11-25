@@ -620,7 +620,8 @@ def _clearance_rows(study, name, pts, u, nodes_per):
     return rows
 
 
-def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None, ring_reach=None):
+def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None, ring_reach=None, ringed=None,
+                  banded=None):
     """Per load case: nodal force array (n, 3), and the load node indices.
     `faces`: the boundary triangles, for each vertex's share of a loaded
     surface (equal shares without).
@@ -634,7 +635,12 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None,
 
     `inserts` (a list, filled here): each bearing load's rigid ring
     (insert.py), when the material is soft against steel, on the bore's
-    surface nodes within `ring_reach` (mm; the element size) of the bore."""
+    surface nodes within `ring_reach` (mm; the element size) of the bore.
+
+    `ringed` (a set, filled here): (case, load) of each load a ring carries
+    whole (no thrust, no moment): its bore is read, not banded
+    (domain.BoundaryConditions.case_ring_nodes). `banded` (a list, filled
+    here): per case, the nodes of its other loads."""
     from .insert import applies as insert_applies, plan as plan_insert
 
     rings = inserts is not None and insert_applies(study.material)
@@ -643,7 +649,7 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None,
         f = np.zeros((len(pts), 3))
         nodes_all = []
         spread = None
-        for ld in case.loads:
+        for li, ld in enumerate(case.loads):
             if ld.pressure:
                 raise ValueError("the tetrahedral cross-check does not apply pressure loads yet")
             shape = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
@@ -684,8 +690,10 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None,
                                                bearing_forces(shape, pts[nodes], share, radial))
                             if ring is not None:
                                 ring.at = nodes
-                            if ring is not None:
                                 inserts.append(ring)
+                                if ringed is not None and abs(force @ shape.axis) <= 1e-9 * np.linalg.norm(force) \
+                                        and not np.any(ld.moment):
+                                    ringed.add((ci, li))
                         force = np.zeros(3)
             if np.any(force):
                 f[nodes] += force[None] * share[:, None]
@@ -697,6 +705,13 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None,
                 w = np.linalg.solve(j + 1e-9 * np.trace(j) * np.eye(3), m)
                 f[nodes] += share[:, None] * np.cross(w, r)
         cases.append((case.name, f, np.unique(np.concatenate(nodes_all))))
+        if ringed is not None and spread is not None:
+            # a force of unknown direction keeps the fixed pressure (_ringed)
+            ringed -= {k for k in ringed if k[0] == ci}
+        if banded is not None:
+            banded.append(np.unique(np.concatenate(
+                [n for li, n in enumerate(nodes_all) if ringed is None or (ci, li) not in ringed]
+                or [np.zeros(0, int)])))
         if spreads is not None:
             spreads.append(spread)
     return cases
@@ -1557,16 +1572,19 @@ def _capture_tolerance(mesh, size: float) -> float:
     return max(2.0 * TETWILD_EPSILON * diag, _CAPTURE * size)
 
 
-def _held_distance(study, pts):
+def _held_distance(study, pts, skip=()):
     """Each point's distance (mm, signed) to the nearest region a support
     or a load of any case is applied over: the regions as the study draws
-    them, not the nodes a mesh happened to put in them."""
+    them, not the nodes a mesh happened to put in them. Loads (case, load)
+    in `skip` (a ring's solved contact) are not counted."""
     d = np.full(len(pts), np.inf)
     for sup in study.supports:
         sh = sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
         d = np.minimum(d, sh.sdf(pts))
-    for case in study.load_cases:
-        for ld in case.loads:
+    for ci, case in enumerate(study.load_cases):
+        for li, ld in enumerate(case.loads):
+            if (ci, li) in skip:
+                continue
             sh = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
             d = np.minimum(d, sh.sdf(pts))
     return d
@@ -1630,14 +1648,19 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     bfaces = _boundary_faces(tets)
     surf = np.unique(bfaces)
     tol = _capture_tolerance(mesh, size)
-    spreads, inserts = [], []
-    loads = _load_vectors(study, pts, surf, tol, bfaces, spreads, inserts, ring_reach=size)
+    spreads, inserts, ringed, banded = [], [], set(), []
+    loads = _load_vectors(study, pts, surf, tol, bfaces, spreads, inserts, ring_reach=size, ringed=ringed,
+                          banded=banded)
+    # the bores a ring's solved contact bears on are read, on the native
+    # solve that solves it (CalculiX here takes the fixed pressure)
+    if backend != "native" or not inserts:
+        banded, ringed = [l[2] for l in loads], set()
 
     t1 = time.time()
     nodes, conn, edges = _p2_mesh(pts, tets)
     fixed_dof, supports, pin_blocks, fixed_nodes = _supports_on(study, pts, nodes, edges, surf, tol)
     fixed_nodes = np.unique(np.concatenate(fixed_nodes))
-    contact = np.unique(np.concatenate([fixed_nodes] + [l[2] for l in loads]))
+    contact = np.unique(np.concatenate([fixed_nodes] + banded))
     # Left out of the peak: within `band` of a region a load or a support is
     # applied over, measured to the region as drawn. (It was measured to the
     # nodes the mesh put in the region, and those move a whole element from
@@ -1649,8 +1672,8 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     # band's edge itself, between nodes: a hot spot the edge passes through
     # (the root of a loaded boss, 3.5 mm from it on the wrist yoke) read
     # 10.8 or 11.4 MPa as a node did or did not fall just outside.
-    level = np.maximum(_held_distance(study, pts) - band,
-                       cKDTree(pts[contact]).query(pts)[0] - (band + size))
+    level = np.maximum(_held_distance(study, pts, ringed) - band,
+                       cKDTree(pts[contact]).query(pts)[0] - (band + size) if len(contact) else np.inf)
     far = level > 0
     cut = edges[far[edges[:, 0]] != far[edges[:, 1]]]
     cut_t = level[cut[:, 0]] / (level[cut[:, 0]] - level[cut[:, 1]])

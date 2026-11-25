@@ -2409,9 +2409,15 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     deferred, top_util = [], 0.0
     for ci, case in enumerate(study.load_cases):
         load_nodes = bc.case_load_nodes[ci]
+        banded = load_nodes
+        if bc.inserts and bc.case_ring_nodes and len(layout[ci]) == 1:
+            # a bore the ring's solved contact bears on is read like any wall
+            # (domain.BoundaryConditions.case_ring_nodes)
+            banded = load_nodes & ~bc.case_ring_nodes[ci]
         # Exclude nodes within the contact band of an applied load or support.
-        contact = support_nodes | load_nodes
-        near = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=band)[0] < np.inf
+        contact = support_nodes | banded
+        near = (cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=band)[0] < np.inf
+                if contact.any() else np.zeros(hm.n_nodes, bool))
         if on_edge is not None:
             near |= on_edge
         body = ~near

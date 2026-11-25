@@ -1,0 +1,917 @@
+{
+ "force": 1000.0,
+ "specimens": {
+  "hertel-0-70": {
+   "measured": 1328.0,
+   "mode": "net tension",
+   "source": "hertel2024",
+   "voxel": {
+    "peak": 92.18,
+    "at": [
+     70.0,
+     2.92,
+     0.0
+    ],
+    "fromHole": -0.25,
+    "angle": 90.0,
+    "predicted": 477.3,
+    "overMeasured": 0.359,
+    "pitch": 0.65
+   },
+   "banded": {
+    "peak": 49.51,
+    "at": [
+     75.2,
+     0.32,
+     1.3
+    ],
+    "fromHole": 2.04,
+    "angle": 3.6,
+    "predicted": 888.7,
+    "overMeasured": 0.669
+   },
+   "length": {
+    "peak": 34.41,
+    "at": [
+     68.7,
+     3.57,
+     1.3
+    ],
+    "fromHole": 0.63,
+    "angle": 110.0,
+    "predicted": 1278.9,
+    "overMeasured": 0.963,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 85.73,
+    "at": [
+     73.18,
+     0.0,
+     1.0
+    ],
+    "fromHole": 0.0,
+    "angle": 0.0,
+    "predicted": 513.3,
+    "overMeasured": 0.386,
+    "size": 0.8,
+    "nodes": 74530
+   }
+  },
+  "hertel-0-45": {
+   "measured": 1376.0,
+   "mode": "net tension",
+   "source": "hertel2024",
+   "voxel": {
+    "peak": 94.01,
+    "at": [
+     95.35,
+     2.92,
+     0.0
+    ],
+    "fromHole": -0.23,
+    "angle": 83.2,
+    "predicted": 468.0,
+    "overMeasured": 0.34,
+    "pitch": 0.65
+   },
+   "banded": {
+    "peak": 50.93,
+    "at": [
+     98.6,
+     3.57,
+     0.0
+    ],
+    "fromHole": 1.9,
+    "angle": 44.8,
+    "predicted": 863.9,
+    "overMeasured": 0.628
+   },
+   "length": {
+    "peak": 35.07,
+    "at": [
+     94.05,
+     3.57,
+     1.3
+    ],
+    "fromHole": 0.52,
+    "angle": 104.9,
+    "predicted": 1254.5,
+    "overMeasured": 0.912,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 82.43,
+    "at": [
+     95.2,
+     -3.17,
+     0.0
+    ],
+    "fromHole": -0.0,
+    "angle": 86.4,
+    "predicted": 533.8,
+    "overMeasured": 0.388,
+    "size": 0.8,
+    "nodes": 74506
+   }
+  },
+  "hertel-0-32.5": {
+   "measured": 1240.0,
+   "mode": "net tension or shear-out",
+   "source": "hertel2024",
+   "voxel": {
+    "peak": 91.16,
+    "at": [
+     107.05,
+     2.92,
+     0.0
+    ],
+    "fromHole": -0.22,
+    "angle": 98.7,
+    "predicted": 482.7,
+    "overMeasured": 0.389,
+    "pitch": 0.65
+   },
+   "banded": {
+    "peak": 51.47,
+    "at": [
+     111.6,
+     2.92,
+     1.3
+    ],
+    "fromHole": 1.86,
+    "angle": 35.5,
+    "predicted": 854.9,
+    "overMeasured": 0.689
+   },
+   "length": {
+    "peak": 34.26,
+    "at": [
+     107.05,
+     3.57,
+     -1.3
+    ],
+    "fromHole": 0.43,
+    "angle": 97.2,
+    "predicted": 1284.2,
+    "overMeasured": 1.036,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 82.81,
+    "at": [
+     108.8,
+     2.9,
+     0.0
+    ],
+    "fromHole": -0.0,
+    "angle": 65.8,
+    "predicted": 531.3,
+    "overMeasured": 0.428,
+    "size": 0.8,
+    "nodes": 74506
+   }
+  },
+  "hertel-0-12.5": {
+   "measured": 848.0,
+   "mode": "bearing",
+   "source": "hertel2024",
+   "voxel": {
+    "peak": 96.8,
+    "at": [
+     127.85,
+     -2.93,
+     0.0
+    ],
+    "fromHole": -0.23,
+    "angle": 83.2,
+    "predicted": 454.5,
+    "overMeasured": 0.536,
+    "pitch": 0.65
+   },
+   "banded": {
+    "peak": 54.36,
+    "at": [
+     131.1,
+     -3.58,
+     0.0
+    ],
+    "fromHole": 1.9,
+    "angle": 44.8,
+    "predicted": 809.5,
+    "overMeasured": 0.955
+   },
+   "length": {
+    "peak": 35.95,
+    "at": [
+     126.55,
+     -2.93,
+     -1.3
+    ],
+    "fromHole": -0.1,
+    "angle": 108.0,
+    "predicted": 1224.0,
+    "overMeasured": 1.443,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 87.74,
+    "at": [
+     128.8,
+     2.9,
+     0.0
+    ],
+    "fromHole": -0.0,
+    "angle": 65.8,
+    "predicted": 501.5,
+    "overMeasured": 0.591,
+    "size": 0.8,
+    "nodes": 74506
+   }
+  },
+  "hertel-45-70": {
+   "measured": 1100.0,
+   "mode": "net tension",
+   "source": "hertel2024",
+   "voxel": {
+    "peak": 92.18,
+    "at": [
+     70.0,
+     2.92,
+     0.0
+    ],
+    "fromHole": -0.25,
+    "angle": 90.0,
+    "predicted": 477.3,
+    "overMeasured": 0.434,
+    "pitch": 0.65
+   },
+   "banded": {
+    "peak": 49.51,
+    "at": [
+     75.2,
+     0.32,
+     1.3
+    ],
+    "fromHole": 2.04,
+    "angle": 3.6,
+    "predicted": 888.7,
+    "overMeasured": 0.808
+   },
+   "length": {
+    "peak": 34.41,
+    "at": [
+     68.7,
+     3.57,
+     1.3
+    ],
+    "fromHole": 0.63,
+    "angle": 110.0,
+    "predicted": 1278.9,
+    "overMeasured": 1.163,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 85.73,
+    "at": [
+     73.18,
+     0.0,
+     1.0
+    ],
+    "fromHole": 0.0,
+    "angle": 0.0,
+    "predicted": 513.3,
+    "overMeasured": 0.467,
+    "size": 0.8,
+    "nodes": 74530
+   }
+  },
+  "hertel-45-32.5": {
+   "measured": 1128.0,
+   "mode": "net tension",
+   "source": "hertel2024",
+   "voxel": {
+    "peak": 91.16,
+    "at": [
+     107.05,
+     2.92,
+     0.0
+    ],
+    "fromHole": -0.22,
+    "angle": 98.7,
+    "predicted": 482.7,
+    "overMeasured": 0.428,
+    "pitch": 0.65
+   },
+   "banded": {
+    "peak": 51.47,
+    "at": [
+     111.6,
+     2.92,
+     1.3
+    ],
+    "fromHole": 1.86,
+    "angle": 35.5,
+    "predicted": 854.9,
+    "overMeasured": 0.758
+   },
+   "length": {
+    "peak": 34.26,
+    "at": [
+     107.05,
+     3.57,
+     -1.3
+    ],
+    "fromHole": 0.43,
+    "angle": 97.2,
+    "predicted": 1284.2,
+    "overMeasured": 1.138,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 82.81,
+    "at": [
+     108.8,
+     2.9,
+     0.0
+    ],
+    "fromHole": -0.0,
+    "angle": 65.8,
+    "predicted": 531.3,
+    "overMeasured": 0.471,
+    "size": 0.8,
+    "nodes": 74506
+   }
+  },
+  "hertel-90-70": {
+   "measured": 628.0,
+   "mode": "between lines",
+   "source": "hertel2024",
+   "voxel": {
+    "peak": 92.18,
+    "at": [
+     70.0,
+     2.92,
+     0.0
+    ],
+    "fromHole": -0.25,
+    "angle": 90.0,
+    "predicted": 477.3,
+    "overMeasured": 0.76,
+    "pitch": 0.65
+   },
+   "banded": {
+    "peak": 49.51,
+    "at": [
+     75.2,
+     0.32,
+     1.3
+    ],
+    "fromHole": 2.04,
+    "angle": 3.6,
+    "predicted": 888.7,
+    "overMeasured": 1.415
+   },
+   "length": {
+    "peak": 34.41,
+    "at": [
+     68.7,
+     3.57,
+     1.3
+    ],
+    "fromHole": 0.63,
+    "angle": 110.0,
+    "predicted": 1278.9,
+    "overMeasured": 2.036,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 85.73,
+    "at": [
+     73.18,
+     0.0,
+     1.0
+    ],
+    "fromHole": 0.0,
+    "angle": 0.0,
+    "predicted": 513.3,
+    "overMeasured": 0.817,
+    "size": 0.8,
+    "nodes": 74530
+   }
+  },
+  "hertel-90-12.5": {
+   "measured": 644.0,
+   "mode": "between lines",
+   "source": "hertel2024",
+   "voxel": {
+    "peak": 96.8,
+    "at": [
+     127.85,
+     -2.93,
+     0.0
+    ],
+    "fromHole": -0.23,
+    "angle": 83.2,
+    "predicted": 454.5,
+    "overMeasured": 0.706,
+    "pitch": 0.65
+   },
+   "banded": {
+    "peak": 54.36,
+    "at": [
+     131.1,
+     -3.58,
+     0.0
+    ],
+    "fromHole": 1.9,
+    "angle": 44.8,
+    "predicted": 809.5,
+    "overMeasured": 1.257
+   },
+   "length": {
+    "peak": 35.95,
+    "at": [
+     126.55,
+     -2.93,
+     -1.3
+    ],
+    "fromHole": -0.1,
+    "angle": 108.0,
+    "predicted": 1224.0,
+    "overMeasured": 1.901,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 87.74,
+    "at": [
+     128.8,
+     2.9,
+     0.0
+    ],
+    "fromHole": -0.0,
+    "angle": 65.8,
+    "predicted": 501.5,
+    "overMeasured": 0.779,
+    "size": 0.8,
+    "nodes": 74506
+   }
+  },
+  "khos-pla-12": {
+   "measured": 3595.0,
+   "mode": "net tension",
+   "source": "khosravani2023",
+   "voxel": {
+    "peak": 31.53,
+    "at": [
+     119.62,
+     4.4,
+     0.37
+    ],
+    "fromHole": -0.88,
+    "angle": 59.3,
+    "predicted": 1617.4,
+    "overMeasured": 0.45,
+    "pitch": 0.7340817246614291
+   },
+   "banded": {
+    "peak": 16.18,
+    "at": [
+     119.62,
+     7.34,
+     0.37
+    ],
+    "fromHole": 1.79,
+    "angle": 70.4,
+    "predicted": 3151.2,
+    "overMeasured": 0.877
+   },
+   "length": {
+    "peak": 14.41,
+    "at": [
+     119.62,
+     4.4,
+     -2.57
+    ],
+    "fromHole": -0.88,
+    "angle": 59.3,
+    "predicted": 3538.4,
+    "overMeasured": 0.984,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 24.21,
+    "at": [
+     118.0,
+     5.91,
+     -1.0
+    ],
+    "fromHole": -0.0,
+    "angle": 80.4,
+    "predicted": 2106.7,
+    "overMeasured": 0.586,
+    "size": 1.0,
+    "nodes": 64049
+   }
+  },
+  "khos-pla-6": {
+   "measured": 3218.0,
+   "mode": "bearing",
+   "source": "khosravani2023",
+   "voxel": {
+    "peak": 39.3,
+    "at": [
+     118.82,
+     1.85,
+     0.37
+    ],
+    "fromHole": -0.41,
+    "angle": 45.4,
+    "predicted": 1297.9,
+    "overMeasured": 0.403,
+    "pitch": 0.7384266251576952
+   },
+   "banded": {
+    "peak": 22.27,
+    "at": [
+     121.77,
+     0.37,
+     0.37
+    ],
+    "fromHole": 1.79,
+    "angle": 4.4,
+    "predicted": 2289.7,
+    "overMeasured": 0.712
+   },
+   "length": {
+    "peak": 10.67,
+    "at": [
+     117.34,
+     4.06,
+     2.58
+    ],
+    "fromHole": 1.08,
+    "angle": 85.2,
+    "predicted": 4781.0,
+    "overMeasured": 1.486,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 37.35,
+    "at": [
+     119.83,
+     -1.0,
+     1.0
+    ],
+    "fromHole": -0.0,
+    "angle": 19.5,
+    "predicted": 1365.6,
+    "overMeasured": 0.424,
+    "size": 1.0,
+    "nodes": 64777
+   }
+  },
+  "khos-pla-4": {
+   "measured": 2850.0,
+   "mode": "bearing",
+   "source": "khosravani2023",
+   "voxel": {
+    "peak": 52.74,
+    "at": [
+     118.88,
+     0.37,
+     0.37
+    ],
+    "fromHole": -0.09,
+    "angle": 11.1,
+    "predicted": 967.1,
+    "overMeasured": 0.339,
+    "pitch": 0.7392256467901298
+   },
+   "banded": {
+    "peak": 25.84,
+    "at": [
+     120.35,
+     1.85,
+     -0.37
+    ],
+    "fromHole": 1.83,
+    "angle": 28.9,
+    "predicted": 1974.0,
+    "overMeasured": 0.693
+   },
+   "length": {
+    "peak": 11.11,
+    "at": [
+     114.44,
+     0.37,
+     -0.37
+    ],
+    "fromHole": 0.59,
+    "angle": 171.8,
+    "predicted": 4592.0,
+    "overMeasured": 1.611,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 51.05,
+    "at": [
+     118.82,
+     -0.82,
+     0.82
+    ],
+    "fromHole": -0.0,
+    "angle": 24.3,
+    "predicted": 999.0,
+    "overMeasured": 0.351,
+    "size": 1.0,
+    "nodes": 64941
+   }
+  },
+  "khos-pla-3": {
+   "measured": 2761.0,
+   "mode": "bearing",
+   "source": "khosravani2023",
+   "voxel": {
+    "peak": 38.1,
+    "at": [
+     117.42,
+     1.11,
+     0.37
+    ],
+    "fromHole": -0.32,
+    "angle": 69.4,
+    "predicted": 1338.5,
+    "overMeasured": 0.485,
+    "pitch": 0.7395048963977263
+   },
+   "banded": {
+    "peak": 21.59,
+    "at": [
+     120.37,
+     -0.37,
+     0.37
+    ],
+    "fromHole": 1.89,
+    "angle": 6.3,
+    "predicted": 2361.9,
+    "overMeasured": 0.855
+   },
+   "length": {
+    "peak": 11.19,
+    "at": [
+     114.46,
+     0.37,
+     2.59
+    ],
+    "fromHole": 1.07,
+    "angle": 171.7,
+    "predicted": 4555.8,
+    "overMeasured": 1.65,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 54.18,
+    "at": [
+     118.5,
+     0.0,
+     1.0
+    ],
+    "fromHole": 0.0,
+    "angle": 0.0,
+    "predicted": 941.4,
+    "overMeasured": 0.341,
+    "size": 1.0,
+    "nodes": 65021
+   }
+  },
+  "khos-abs-12": {
+   "measured": 3646.0,
+   "mode": "cleavage",
+   "source": "khosravani2023",
+   "voxel": {
+    "peak": 31.78,
+    "at": [
+     119.62,
+     4.4,
+     0.37
+    ],
+    "fromHole": -0.88,
+    "angle": 59.3,
+    "predicted": 1048.0,
+    "overMeasured": 0.287,
+    "pitch": 0.7340817246614291
+   },
+   "banded": {
+    "peak": 16.22,
+    "at": [
+     119.62,
+     7.34,
+     0.37
+    ],
+    "fromHole": 1.79,
+    "angle": 70.4,
+    "predicted": 2053.5,
+    "overMeasured": 0.563
+   },
+   "length": {
+    "peak": 14.43,
+    "at": [
+     119.62,
+     4.4,
+     -2.57
+    ],
+    "fromHole": -0.88,
+    "angle": 59.3,
+    "predicted": 2307.6,
+    "overMeasured": 0.633,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 24.2,
+    "at": [
+     118.0,
+     5.91,
+     -1.0
+    ],
+    "fromHole": -0.0,
+    "angle": 80.4,
+    "predicted": 1376.3,
+    "overMeasured": 0.377,
+    "size": 1.0,
+    "nodes": 64049
+   }
+  },
+  "khos-abs-6": {
+   "measured": 3521.0,
+   "mode": "cleavage",
+   "source": "khosravani2023",
+   "voxel": {
+    "peak": 39.43,
+    "at": [
+     118.82,
+     1.85,
+     0.37
+    ],
+    "fromHole": -0.41,
+    "angle": 45.4,
+    "predicted": 844.5,
+    "overMeasured": 0.24,
+    "pitch": 0.7384266251576952
+   },
+   "banded": {
+    "peak": 22.33,
+    "at": [
+     121.77,
+     0.37,
+     -0.37
+    ],
+    "fromHole": 1.79,
+    "angle": 4.4,
+    "predicted": 1491.0,
+    "overMeasured": 0.423
+   },
+   "length": {
+    "peak": 10.67,
+    "at": [
+     117.34,
+     4.06,
+     2.58
+    ],
+    "fromHole": 1.08,
+    "angle": 85.2,
+    "predicted": 3120.8,
+    "overMeasured": 0.886,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 37.5,
+    "at": [
+     119.83,
+     -1.0,
+     1.0
+    ],
+    "fromHole": -0.0,
+    "angle": 19.5,
+    "predicted": 888.1,
+    "overMeasured": 0.252,
+    "size": 1.0,
+    "nodes": 64777
+   }
+  },
+  "khos-abs-4": {
+   "measured": 3081.0,
+   "mode": "bearing",
+   "source": "khosravani2023",
+   "voxel": {
+    "peak": 52.74,
+    "at": [
+     118.88,
+     0.37,
+     0.37
+    ],
+    "fromHole": -0.09,
+    "angle": 11.1,
+    "predicted": 631.4,
+    "overMeasured": 0.205,
+    "pitch": 0.7392256467901298
+   },
+   "banded": {
+    "peak": 25.91,
+    "at": [
+     120.35,
+     1.85,
+     0.37
+    ],
+    "fromHole": 1.83,
+    "angle": 28.9,
+    "predicted": 1285.1,
+    "overMeasured": 0.417
+   },
+   "length": {
+    "peak": 11.09,
+    "at": [
+     114.44,
+     0.37,
+     -0.37
+    ],
+    "fromHole": 0.59,
+    "angle": 171.8,
+    "predicted": 3001.7,
+    "overMeasured": 0.974,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 51.29,
+    "at": [
+     118.82,
+     -0.82,
+     0.82
+    ],
+    "fromHole": -0.0,
+    "angle": 24.3,
+    "predicted": 649.3,
+    "overMeasured": 0.211,
+    "size": 1.0,
+    "nodes": 64941
+   }
+  },
+  "khos-abs-3": {
+   "measured": 2833.0,
+   "mode": "bearing",
+   "source": "khosravani2023",
+   "voxel": {
+    "peak": 37.87,
+    "at": [
+     117.42,
+     1.11,
+     0.37
+    ],
+    "fromHole": -0.32,
+    "angle": 69.4,
+    "predicted": 879.3,
+    "overMeasured": 0.31,
+    "pitch": 0.7395048963977263
+   },
+   "banded": {
+    "peak": 21.68,
+    "at": [
+     120.37,
+     -0.37,
+     -0.37
+    ],
+    "fromHole": 1.89,
+    "angle": 6.3,
+    "predicted": 1536.3,
+    "overMeasured": 0.542
+   },
+   "length": {
+    "peak": 11.17,
+    "at": [
+     114.46,
+     0.37,
+     2.59
+    ],
+    "fromHole": 1.07,
+    "angle": 171.7,
+    "predicted": 2980.0,
+    "overMeasured": 1.052,
+    "radius": 4.6
+   },
+   "tet": {
+    "peak": 54.43,
+    "at": [
+     118.5,
+     0.0,
+     1.0
+    ],
+    "fromHole": 0.0,
+    "angle": 0.0,
+    "predicted": 611.8,
+    "overMeasured": 0.216,
+    "size": 1.0,
+    "nodes": 65021
+   }
+  }
+ }
+}
