@@ -181,11 +181,9 @@ jobs:
 
   # docs/tutorials/: each tutorial's commands, run in quick mode (coarse grid)
   # and held to its expect.json, so the docs can't drift from the code
-  # (60 minutes: urdf-arm-link took 44 on main 45e2a22 confirming on voxels;
-  # since the tet mesher needs no extra (stuffing.py) these runs confirm on
-  # tets, ~90 s a design on a 4-core runner, and it and agent-mcp went past
-  # the old 45 on main d2aafff. Capping quick mode's tets instead (60k, 2.2 mm
-  # on the forearm) read its 1.9 mm members at SF 1.13 against 2.08: no.)
+  # (60 minutes: urdf-arm-link took 44 on main 45e2a22; quick runs confirm
+  # on voxels (quick.py), as they did here before the tet mesher needed no
+  # extra, since tets on every passing part pushed it and agent-mcp past 60)
   tutorials:
     runs-on: ubuntu-latest
     timeout-minutes: 60

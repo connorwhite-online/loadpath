@@ -9,7 +9,8 @@ What it lowers: a study's cells, optimizer iterations and outcome-search runs
 (the evals' coarse tier, evals/run.py COARSE), a heat exchanger's grid and
 whole-exchanger simulation, a field graph's mesh pitch (and its drain search's)
 and the analysis behind its `result` nodes (no hotspot submodels), `tune`'s
-analyses, `assembly`'s sampled poses, `verify`'s grid and `buildsim`'s voxels.
+analyses, `assembly`'s sampled poses, `verify`'s grid and `buildsim`'s voxels; the search's pick is confirmed on
+voxels unless the study's goal.confirm asks for tets.
 Numbers move (mass a few %, safety factor
 more on thin members): read a quick run for direction, run without it to print.
 """
@@ -55,6 +56,15 @@ def study(d: dict) -> dict:
     res["maxElements"] = min(int(res.get("maxElements", 80000)), cells)
     d["resolution"] = res
     d["maxIterations"] = min(int(d.get("maxIterations", 120)), STUDY["maxIterations"])
+    # the pick confirmed on voxels unless the study asks for tets: a tet
+    # confirm is ~90 s a design on a 4-core runner and the search checks
+    # each passing part beside the optimizer, so the urdf tutorial's quick
+    # run went from 44 minutes to past 60 once the mesher needed no extra
+    # (stuffing.py). Coarser quick tets misread thin members (the forearm's
+    # 1.9 mm ones at 2.2 mm tets: SF 1.13 against 2.08), so not those.
+    goal = d.get("goal")
+    if isinstance(goal, dict) and goal.get("confirm", "auto") == "auto":
+        d["goal"] = {**goal, "confirm": "voxel"}
     from . import study as st
     st._MAX_SEARCH_RUNS = min(st._MAX_SEARCH_RUNS, int(os.environ.get("LOADPATH_QUICK_SEARCH_RUNS")
                                                         or STUDY["searchRuns"]))
