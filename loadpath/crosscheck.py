@@ -620,7 +620,7 @@ def _clearance_rows(study, name, pts, u, nodes_per):
     return rows
 
 
-def _load_vectors(study, pts, surf, tol, faces=None, spreads=None):
+def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None, ring_reach=None):
     """Per load case: nodal force array (n, 3), and the load node indices.
     `faces`: the boundary triangles, for each vertex's share of a loaded
     surface (equal shares without).
@@ -630,9 +630,16 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None):
     three nodal force arrays along x, y and z, its direction as written and
     the cosine of the cone's half-angle (-1: any direction), as domain.py
     builds them for the grid. The case's own array carries that force as
-    written; _worst_directions solves the three and takes the worst."""
+    written; _worst_directions solves the three and takes the worst.
+
+    `inserts` (a list, filled here): each bearing load's rigid ring
+    (insert.py), when the material is soft against steel, on the bore's
+    surface nodes within `ring_reach` (mm; the element size) of the bore."""
+    from .insert import applies as insert_applies, plan as plan_insert
+
+    rings = inserts is not None and insert_applies(study.material)
     cases = []
-    for case in study.load_cases:
+    for ci, case in enumerate(study.load_cases):
         f = np.zeros((len(pts), 3))
         nodes_all = []
         spread = None
@@ -661,19 +668,25 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None):
             if ld.distribution == "bearing":
                 # as domain.py: the shaft pushes on the half of the bore facing
                 # the force, as a cosine over it
-                from .domain import _cylinder_of
+                from .domain import _cylinder_of, bearing_forces
 
-                p0, ax = _cylinder_of(study, ld.region, ld.shape, f"load in case {case.name!r}")
-                axial = (force @ ax) * ax
-                radial = force - axial
-                if np.any(radial):
-                    d = pts[nodes] - p0
-                    rad = d - (d @ ax)[:, None] * ax
-                    rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
-                    w = np.maximum(rad @ (radial / np.linalg.norm(radial)), 0.0) * share
-                    if w.sum() > 0:
-                        f[nodes] += (w / w.sum())[:, None] * radial[None]
-                        force = axial
+                _cylinder_of(study, ld.region, ld.shape, f"load in case {case.name!r}")
+                if np.any(force):
+                    fb = bearing_forces(shape, pts[nodes], share, force)
+                    if fb is not None:
+                        f[nodes] += fb
+                        radial = force - (force @ shape.axis) * shape.axis
+                        if rings and np.any(radial):
+                            # the ring bears on the bore the mesh has, which a part or block
+                            # made from the grid puts up to an element off the drawn keep-out
+                            wide = _region_nodes(study, shape, pts, max(tol, ring_reach or 0.0), surf)
+                            ring = plan_insert(ci, shape, pts[wide], wide, _area_shares(pts, faces, wide), force,
+                                               bearing_forces(shape, pts[nodes], share, radial))
+                            if ring is not None:
+                                ring.at = nodes
+                            if ring is not None:
+                                inserts.append(ring)
+                        force = np.zeros(3)
             if np.any(force):
                 f[nodes] += force[None] * share[:, None]
             if ld.moment is not None and np.any(ld.moment):
@@ -772,7 +785,23 @@ def _seats_on(study, pts, surf, tol, faces):
     return out
 
 
-def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, judge=None):
+def _ringed(loads, spreads, inserts, nodes, solver):
+    """`loads` with each bearing load's fixed pressure replaced by its
+    rigid ring's (insert.py), solved on `solver`."""
+    from .insert import redistribute
+
+    n = len(nodes)
+    rhs = []
+    for _, f, _ in loads:
+        v = np.zeros(3 * n)
+        v[: f.size] = np.asarray(f, float).ravel()
+        rhs.append(v)
+    rhs = redistribute(lambda r: [u.ravel() for u in solver.solve([("", v.reshape(-1, 3), None) for v in r])], rhs,
+                       inserts, lambda ci: None if spreads[ci] is not None else ci, 3 * n, nodes)
+    return [(name, r.reshape(n, 3)[: len(f)], ln) for (name, f, ln), r in zip(loads, rhs)]
+
+
+def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, judge=None, inserts=None):
     """The cases solved with the seats pushing (pushseat.py), as the grid's
     check solves them: the seat's force an unknown on patches of the face,
     the patches held by springs for the solves (in the CG's operator,
@@ -790,6 +819,9 @@ def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, 
     ks = E * ks
     solver = solver_for((ps, ks))
     try:
+        if inserts:
+            # bearing loads through a rigid ring (insert.py), on the sprung stiffness
+            loads = _ringed(loads, spreads, inserts, nodes, solver)
         rhs, layout, sps = [], [], []
         for (name, f, ln), sp in zip(loads, spreads):
             if sp is None:
@@ -1583,8 +1615,8 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     bfaces = _boundary_faces(tets)
     surf = np.unique(bfaces)
     tol = _capture_tolerance(mesh, size)
-    spreads = []
-    loads = _load_vectors(study, pts, surf, tol, bfaces, spreads)
+    spreads, inserts = [], []
+    loads = _load_vectors(study, pts, surf, tol, bfaces, spreads, inserts, ring_reach=size)
 
     t1 = time.time()
     nodes, conn, edges = _p2_mesh(pts, tets)
@@ -1670,7 +1702,15 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
             us, dirs = _seated(seats, loads, spreads, nodes, size, mat.E,
                                lambda lowrank: _solver(nodes, conn, mat.E, el, fixed_dof, springs, len(pts), edges,
                                                        lowrank),
-                               stress_of, far, judge=lambda sig: peak_of(equivalent_stress(sig, m_c))[0])
+                               stress_of, far, judge=lambda sig: peak_of(equivalent_stress(sig, m_c))[0],
+                               inserts=inserts)
+        elif inserts:
+            solver = _solver(nodes, conn, mat.E, el, fixed_dof, springs, len(pts), edges)
+            try:
+                loads = _ringed(loads, spreads, inserts, nodes, solver)
+                us, _, dirs = _worst_directions(loads, spreads, solver.solve, stress_of, far)
+            finally:
+                solver.close()
         else:
             us, _, dirs = _worst_directions(
                 loads, spreads, lambda ls: _solve(nodes, conn, mat.E, el, fixed_dof, springs, ls, len(pts), edges),

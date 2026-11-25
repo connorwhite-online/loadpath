@@ -2198,6 +2198,16 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
     # cases solved per direction (pushseat.SeatedSpread), by case
     seated = {}
 
+    def rings(inner, rhs, layout):
+        # bearing loads through a rigid ring that only pushes (insert.py):
+        # its pressures in place of the fixed ones, on this stiffness; the
+        # case's right-hand side changes in place, for what reads it after
+        if bc.inserts and layout is not None:
+            from .insert import redistribute
+
+            rhs[:] = redistribute(lambda r: inner(r)[1], rhs, bc.inserts,
+                                  lambda ci: layout[ci][0] if len(layout[ci]) == 1 else None, hm.n_dof, hm.node_xyz)
+
     def solve(moduli, rhs, layout=None, into=None):
         if bc.seats:
             # supports that only push (pushseat.py): their forces are solved with the cases,
@@ -2213,6 +2223,7 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=sprung)})
             # one matrix for the cases, the patches and the patches cut finer: factored once
             memo = {}
+            rings(lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r, memo), rhs, layout)
             stiff, us, _, cases = pushseat.solve_cases(
                 lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r, memo), rhs, ps, mat.E * ks,
                 xyz=hm.node_xyz, layout=layout, spreads=spreads if layout is not None else None)
@@ -2220,6 +2231,10 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                 into.clear()
                 into.update(cases)
             return stiff, us
+        if bc.inserts and layout is not None:
+            memo = {}
+            rings(lambda r: _solve_grid(study, g, study.elastic(mat), moduli, r, memo), rhs, layout)
+            return _solve_grid(study, g, study.elastic(mat), moduli, rhs, memo)
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
 
     # Stress is read against strength as an average over the material's own

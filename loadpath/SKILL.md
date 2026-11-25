@@ -171,7 +171,11 @@ buckling, printability) you can report to the user.
    `check` → `resolvedLoads` shows the force and moment each case comes to.
    Moments written by hand are N·mm (1 N·m = 1000), about the region's centre. A shaft in a
    bore: add `"distribution": "bearing"` so a radial force presses on the
-   half of the bore it pushes, as a real shaft does. Add a sideways or torsional case if the part
+   half of the bore it pushes, as a real shaft does (the checks solve it as a
+   steel ring or shaft that only pushes and keeps the bore round; its axial
+   part bears on the shoulder that faces it). Draw that bore keep-out over
+   the length the bearing or shaft really fills: the load goes where the
+   region is. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.
    A rare event the part may use most of its strength for (a crash, a
    drop, a hard landing) beside service loads: give that case its own

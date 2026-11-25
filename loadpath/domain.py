@@ -319,6 +319,9 @@ class BoundaryConditions:
     seats: list = field(default_factory=list)
     # the pins' own springs (the part of `springs` that holds it), or None
     pin_springs: object = None
+    # bearing loads as a rigid ring in the bore (insert.py): a check that
+    # solves them replaces the fixed pressure in `loads` with the ring's
+    inserts: list = field(default_factory=list)
 
 
 def node_mass(mesh: HexMesh, density) -> np.ndarray:
@@ -524,6 +527,72 @@ def _cylinder_of(study: Study, region, shape, label):
     return sh.p0, sh.axis
 
 
+def _wall_normals(shape: Shape, pts: np.ndarray) -> np.ndarray:
+    """Unit normals of the keep-out's surface at `pts` (nodes lining it, on
+    the material side): the gradient of its distance, pointing out of the
+    hole into the wall."""
+    pts = np.asarray(pts, float)
+    lo, hi = (np.asarray(b, float) for b in shape.bounds())
+    h = 1e-4 * max(float(np.max(hi - lo)), 1.0)
+    g = np.empty_like(pts)
+    for a in range(3):
+        e = np.zeros(3)
+        e[a] = h
+        g[:, a] = shape.sdf(pts + e) - shape.sdf(pts - e)
+    return g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+
+
+def bearing_forces(shape: Shape, pts: np.ndarray, share: np.ndarray, force: np.ndarray) -> np.ndarray | None:
+    """Nodal forces (n, 3) of a body seated in the bore `shape` (a bearing's
+    outer ring, a shaft, a pin) pushed with `force`, or None when no wall
+    faces the radial part of it.
+
+    A seated body reaches the wall through contact, and contact carries
+    pressure square to the surface it touches (friction aside), so each
+    wall takes p n, never a share of the force along the force's own
+    direction. Radially that is the cosine law: p = p0 max(n . d, 0) on the
+    bore's half facing the push. A bore's end face (a bearing's shoulder,
+    a blind bore's floor) faces along the axis, so it takes none of the
+    radial load: the 608 pillow block's seat put 31% of its side load on
+    the shoulder face, sideways, beside the shaft's clearance hole, and
+    the solid block peaked there. The axial part bears on the faces that
+    face it (the shoulder a bearing is pushed into); with none (a pin
+    through an open bore) it is the friction along the bore, spread on it
+    as before."""
+    pts = np.asarray(pts, float)
+    share = np.asarray(share, float)
+    force = np.asarray(force, float)
+    ax = getattr(shape, "axis", None)
+    out = np.zeros((len(pts), 3))
+    if ax is None or not len(pts):
+        out += force[None] * share[:, None]
+        return out
+    m = _wall_normals(shape, pts)
+    axial = (force @ ax) * ax
+    radial = force - axial
+    size = float(np.linalg.norm(radial))
+    if size > 0:
+        d = radial / size
+        w = np.maximum(m @ d, 0.0) * share
+        if w.sum() <= 0:
+            return None
+        t = w[:, None] * m
+        t *= size / float((t @ d).sum())
+        # what the nodes' sampling of the circle leaves over (a grid's bore
+        # is not exactly symmetric about the force): spread as the pressure
+        out += t + (w / w.sum())[:, None] * (radial - t.sum(axis=0))[None]
+    size = float(np.linalg.norm(axial))
+    if size > 0:
+        d = axial / size
+        # faces that face the push: within 45 degrees of the axis
+        w = np.where(m @ d > np.sqrt(0.5), share, 0.0)
+        if w.sum() > 0:
+            out += (w / w.sum())[:, None] * axial[None]
+        else:
+            out += share[:, None] * axial[None]
+    return out
+
+
 def _wetted(study: Study, mesh: HexMesh) -> dict:
     """Per pressurized keep-out: (nodal force per unit pressure, node mask)."""
     from .pressure import pressure_force
@@ -646,6 +715,9 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     # loaded face. The share is the count of cells the node touches.
     tributary = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes).astype(float)
     loads, case_nodes, case_wet, imbalance, spreads = [], [], [], [], []
+    from .insert import applies as _insert_applies, plan as plan_insert
+
+    inserts, insert_applies = [], _insert_applies(study.material)
     for ci, case in enumerate(study.load_cases):
         f = np.zeros(mesh.n_dof)
         spread = None
@@ -679,19 +751,20 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                 force = np.zeros(3)
             if ld.distribution == "bearing" and np.any(force):
                 # A shaft pushes on the half of the bore that faces the force,
-                # most at the centre of that half: a cosine over it.
-                p0, ax = _cylinder_of(study, ld.region, ld.shape, label)
-                axial = (force @ ax) * ax
-                radial = force - axial
-                if np.any(radial):
-                    d = pts - p0
-                    rad = d - (d @ ax)[:, None] * ax
-                    rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
-                    w = np.maximum(rad @ (radial / np.linalg.norm(radial)), 0.0) * share
-                    if w.sum() <= 0:
-                        raise ValueError(f"{label}: no material on the loaded side of the bore")
-                    f.reshape(-1, 3)[idx] += (w / w.sum())[:, None] * radial[None]
-                force = axial
+                # as contact pressure square to the wall (bearing_forces).
+                _cylinder_of(study, ld.region, ld.shape, label)
+                sh = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
+                fb = bearing_forces(sh, pts, share, force)
+                if fb is None:
+                    raise ValueError(f"{label}: no material on the loaded side of the bore")
+                f.reshape(-1, 3)[idx] += fb
+                if insert_applies:
+                    radial = force - (force @ sh.axis) * sh.axis
+                    ring = plan_insert(ci, sh, pts, idx, share, force,
+                                       bearing_forces(sh, pts, share, radial) if np.any(radial) else 0 * pts)
+                    if ring is not None:
+                        inserts.append(ring)
+                force = np.zeros(3)
             if np.any(force):
                 f.reshape(-1, 3)[idx] += force[None] * share[:, None]
             if np.any(ld.moment):
@@ -754,9 +827,11 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     elif check_loads and not seats and springs is None and study.supports and not study.self_equilibrated \
             and not study.inertia_relief:
         _held_statics(xyz, fixed)
+    if study.inertia_relief:
+        inserts = []    # the loads were rebalanced on the part's inertia: the ring's are not
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
                               case_wet, imbalance, spreads, raw, pinned=pinned, seats=seats,
-                              pin_springs=pin_springs)
+                              pin_springs=pin_springs, inserts=inserts)
 
 
 def _free_motions(xyz, fixed):
