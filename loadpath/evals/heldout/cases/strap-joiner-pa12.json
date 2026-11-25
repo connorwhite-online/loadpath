@@ -1,0 +1,122 @@
+{
+ "id": "strap-joiner-pa12",
+ "batch": 4,
+ "brief": "A flat joiner that links two 25 mm webbing straps end to end, MJF PA12. It is a plate 4 mm thick (z = 0 to 4) inside x = -18 to 18, y = -16 to 16, with two slots for the webbing, each 27 x 4 mm with 1.5 mm corner radii, through the plate at y = 4 to 8 and y = -8 to -4 (x = -13.5 to 13.5). Each strap loops through its slot and round the outer bar, so a strap pulls the outer bar's slot-side edge outward along the strap. The straps pull 300 N apart along Y. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "strap",
+  "flat",
+  "mjf",
+  "no-fasteners",
+  "bending"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -18,
+     -16,
+     0
+    ],
+    "max": [
+     18,
+     16,
+     4
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "slot-a",
+    "shape": {
+     "type": "box",
+     "min": [
+      -13.5,
+      -8,
+      -1
+     ],
+     "max": [
+      13.5,
+      -4,
+      5
+     ],
+     "radius": 1.5
+    }
+   },
+   {
+    "id": "slot-b",
+    "shape": {
+     "type": "box",
+     "min": [
+      -13.5,
+      4,
+      -1
+     ],
+     "max": [
+      13.5,
+      8,
+      5
+     ],
+     "radius": 1.5
+    }
+   }
+  ],
+  "supports": [
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -12.5,
+      -8.6,
+      0
+     ],
+     "max": [
+      12.5,
+      -8,
+      4
+     ]
+    }
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "pull",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -12.5,
+        8,
+        0
+       ],
+       "max": [
+        12.5,
+        8.6,
+        4
+       ]
+      },
+      "force": [
+       0,
+       300,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "mjf",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "strap-joiner-pa12",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

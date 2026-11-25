@@ -1,0 +1,200 @@
+{
+ "id": "ceiling-plant-hook-petg",
+ "batch": 4,
+ "brief": "A ceiling hook for a hanging plant, PETG on FDM, printed on its side so the layers stack along Y. The ceiling is the plane z = 0 and the hook hangs below it inside x = -30 to 30, y = -15 to 15, z = -70 to 0. Two M4 wood screws go up into the ceiling at x = -15, y = -10 and y = +10, through a 6 mm plate. The pot hangs from a ring of 8 mm round wire that sits in the bottom of the hook at x = 0, z = -55 (the wire runs along Y there); the wire drops in down a 9 mm channel above it and comes in from the +X side through a 9 mm slot at z = -36 to -27, so the hook's tip rises on the +X side and the wire cannot slide out. The pot weighs 6 kg and hangs there for years; someone tugging or watering it pulls up to 2 g, up to 20 degrees off vertical. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "hook",
+  "ceiling",
+  "hanging",
+  "fdm",
+  "fasteners",
+  "push-support",
+  "creep"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -30,
+     -15,
+     -70
+    ],
+    "max": [
+     30,
+     15,
+     0
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "wire",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        0,
+        -55
+       ],
+       "axis": "y",
+       "length": 34,
+       "r": 4.5
+      },
+      {
+       "type": "box",
+       "min": [
+        -4.5,
+        -17,
+        -55
+       ],
+       "max": [
+        4.5,
+        17,
+        -30
+       ],
+       "radius": 3
+      },
+      {
+       "type": "box",
+       "min": [
+        -4.5,
+        -17,
+        -36
+       ],
+       "max": [
+        31,
+        17,
+        -27
+       ],
+       "radius": 3
+      }
+     ]
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "s1",
+    "size": "M4",
+    "seat": [
+     -15,
+     -10,
+     -6
+    ],
+    "direction": "+z",
+    "grip": 6,
+    "end": "face"
+   },
+   {
+    "id": "s2",
+    "size": "M4",
+    "seat": [
+     -15,
+     10,
+     -6
+    ],
+    "direction": "+z",
+    "grip": 6,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "s1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "s2-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -30,
+      -15,
+      -0.3
+     ],
+     "max": [
+      30,
+      15,
+      0.5
+     ]
+    },
+    "push": "-z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "hanging",
+    "hours": 50000,
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -3,
+        -6,
+        -60
+       ],
+       "max": [
+        3,
+        6,
+        -59.5
+       ]
+      },
+      "mass": 6,
+      "dynamic": 1,
+      "gravity": "-z"
+     }
+    ]
+   },
+   {
+    "name": "tug",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -3,
+        -6,
+        -60
+       ],
+       "max": [
+        3,
+        6,
+        -59.5
+       ]
+      },
+      "force": [
+       0,
+       0,
+       -117.7
+      ],
+      "cone": 20
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+y"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "ceiling-plant-hook-petg",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

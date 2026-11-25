@@ -6,7 +6,9 @@ tablet stand, a C-clamp, an action-camera mount; and a second batch
 (`"batch": 2`): a tool clip, a latch hook, a hose elbow, a fan duct, a
 junction-box cover, a wall box; and a third (`"batch": 3`): a 608 pillow
 block, a pegboard hammer holder, a 20 mm tube tee, an under-desk laptop
-bracket, a Raspberry Pi wall mount, a spool arm. Each study was written once,
+bracket, a Raspberry Pi wall mount, a spool arm; and a fourth (`"batch": 4`):
+a ceiling plant hook, a handwheel on a D-shaft, a bed-leg riser, a strap
+joiner, a rope pulley on a 608 bearing, a 13 mm box-end wrench. Each study was written once,
 cold, from SKILL.md alone, the way an agent meeting loadpath for the first
 time would write it, and run without looking at loadpath's code.
 
