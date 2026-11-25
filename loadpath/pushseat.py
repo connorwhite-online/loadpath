@@ -231,7 +231,12 @@ def patches(seats, xyz, n_dof, most: int = MAX_PATCHES):
             continue
         dirs = [n] + (list(_across(n)) if mus[si] > 0 else [])
         keys = np.full(len(idx), -1)
-        if len(idx) > per:
+        if len(idx) > per and per < 3:
+            # no room for the outline's corners (a socket's walls are many seats): one patch, the
+            # face's push at its centre; a node's own push past the budget is what NaN patches were
+            keys[:] = 0
+            corners = [0]
+        elif len(idx) > per:
             # a corner is its node and the nodes beside it: one node alone can hang off a sliver of a cut cell
             from scipy.spatial import cKDTree
 
@@ -258,6 +263,7 @@ def patches(seats, xyz, n_dof, most: int = MAX_PATCHES):
                     break
                 size *= 1.25
             keys[rest] = len(corners) + sq
+        keys = np.unique(keys, return_inverse=True)[1].ravel()   # no empty patch
         for k in range(int(keys.max()) + 1):
             m = keys == k
             share = w[m] / w[m].sum()
@@ -274,17 +280,19 @@ def patches(seats, xyz, n_dof, most: int = MAX_PATCHES):
     return out
 
 
-def hold(ps, xyz, pitch: float):
+def hold(ps, xyz, pitch: float, scale=None):
     """The springs that hold the seats' patches for the solves, at unit
-    modulus: (k per patch in mm, sparse sum_j k_j p_j p_j')."""
+    modulus: (k per patch in mm, sparse sum_j k_j p_j p_j'). `scale`, per
+    patch, multiplies its spring (the modulus of the material on the patch
+    relative to the solid's, simp._Analysis._seat_patches)."""
     import scipy.sparse as sp
 
     ks, rows, cols, vals = [], [], [], []
-    for p in ps:
+    for j, p in enumerate(ps):
         dof, v = _nz(p)
         nodes = np.unique(dof // 3)
         width = float(np.ptp(xyz[nodes], axis=0).max()) if len(nodes) > 1 else 0.0
-        k = HOLD * max(width, pitch)
+        k = HOLD * max(width, pitch) * (1.0 if scale is None else float(scale[j]))
         ks.append(k)
         rows.append(np.repeat(dof, len(dof)))
         cols.append(np.tile(dof, len(dof)))

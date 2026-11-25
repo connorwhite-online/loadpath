@@ -265,3 +265,35 @@ if __name__ == "__main__":
     test_optimizer_designs_against_the_ring()
     test_any_direction_bearing_through_the_ring()
     print("ok")
+
+
+def test_a_pinned_bore_is_read_at_its_net_section():
+    """A plate pulled through a pin in a hole breaks at the hole's sides
+    (net tension; Hertel et al. 2024, docs/VALIDATION.md). The ring's
+    contact is solved, so the check reads the bore like any wall: the peak
+    is at the hole's side, not on the edge of a band left out round it."""
+    import trimesh
+
+    from loadpath.verify import verify_part
+
+    L, W, t, D, xh = 40.0, 12.0, 3.0, 4.0, 30.0
+    box = trimesh.creation.box(extents=[L, W, t])
+    box.apply_translation([L / 2, 0, 0])
+    cyl = trimesh.creation.cylinder(radius=D / 2, height=3 * t, sections=64)
+    cyl.apply_translation([xh, 0, 0])
+    part = box.difference(cyl)
+    st = study_from_dict({
+        "designSpace": {"type": "box", "min": [0, -W / 2, -t / 2], "max": [L, W / 2, t / 2]},
+        "keepOut": [{"id": "hole", "shape": {"type": "cylinder", "center": [xh, 0, 0], "axis": "z", "length": t,
+                                              "r": D / 2}}],
+        "supports": [{"shape": {"type": "box", "min": [-0.5, -W, -t], "max": [6, W, t]}, "fix": "all"}],
+        "loadCases": [{"name": "pin", "loads": [{"region": "hole", "force": [300, 0, 0],
+                                                  "distribution": "bearing"}]}],
+        "material": "petg", "goal": {"safetyFactor": 1.0}})
+    rep = verify_part(st, part, max_cells=40_000, min_pitch=None, contact_band=0.5, max_pitch=None)
+    c = rep["cases"][0]
+    x, y = c["peakAt"][0] - xh, c["peakAt"][1]
+    assert np.hypot(x, y) < D / 2 + 1.0, c["peakAt"]                  # at the bore
+    assert np.degrees(np.arctan2(abs(y), x)) > 60, c["peakAt"]         # at its side, not its bearing face
+    net = 300 / ((W - D) * t)
+    assert 1.5 * net < c["peakStress"] < 4 * net, (c["peakStress"], net)

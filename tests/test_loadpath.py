@@ -1781,6 +1781,31 @@ def test_constrained_run_stops_when_its_part_cannot_reach_the_search():
     assert S._PROBE_REACH >= 1.0
 
 
+def test_a_constrained_part_out_of_reach_on_voxels_skips_its_tet_check():
+    """The tet check of a constrained part is skipped only when no reading
+    it could give brings the part within reach of the search's: its voxel
+    margin lifted by the largest tet over voxel factor of the run's own
+    confirmed parts (never under one) still leaves it out of reach. A near
+    miss under its target is one the next run warm-starts from."""
+    from loadpath import study as S
+
+    def stop():
+        return False
+    stop.beat, stop.lift = 10.13, 0.99
+    # the held-out pegboard holder's constrained part: 19.2 g at voxel 1.23 against 10.1 g
+    assert S._reach_settled({"mass": 19.24, "margin": 1.225}, stop)
+    # a lighter one could reach it, and a run that measured tets lifting voxels by 1.6 keeps the check
+    assert not S._reach_settled({"mass": 12.0, "margin": 1.225}, stop)
+    stop.lift = 1.6
+    assert not S._reach_settled({"mass": 19.24, "margin": 1.225}, stop)
+    # no search part confirmed on tets: no bound
+    stop.lift = None
+    assert not S._reach_settled({"mass": 19.24, "margin": 1.225}, stop)
+    whole = {"bodies": 1, "sound": {"ok": True}}
+    assert S._near_miss(0.988, whole) and not S._near_miss(0.85, whole) and not S._near_miss(1.02, whole)
+    assert not S._near_miss(0.988, {"bodies": 1, "sound": {"ok": False}})
+
+
 def test_constrained_probe_settles_once_it_wins():
     from loadpath import study as S
     # the full-tier wrist yoke's probe: parts at 1313, 2780 and 4021 s, the

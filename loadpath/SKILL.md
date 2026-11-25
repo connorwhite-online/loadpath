@@ -173,7 +173,8 @@ buckling, printability) you can report to the user.
    bore: add `"distribution": "bearing"` so a radial force presses on the
    half of the bore it pushes, as a real shaft does (the optimizer and the
    checks solve it as a steel ring or shaft that only pushes and keeps the
-   bore round, with `"direction": "any"` too, per direction; its axial
+   bore round, with `"direction": "any"` too, per direction, and read the
+   stress at the bore itself, where a pinned lug breaks; its axial
    part bears on the shoulder that faces it). Draw that bore keep-out over
    the length the bearing or shaft really fills: the load goes where the
    region is. Add a sideways or torsional case if the part

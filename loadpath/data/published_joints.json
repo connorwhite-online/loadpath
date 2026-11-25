@@ -1,0 +1,42 @@
+{
+  "note": "Printed plates loaded through a pin in a hole, from published tests. Lengths mm, forces N, stresses MPa. Each specimen: a flat plate printed flat (layers in the plate), held at one end, pulled through a steel pin in a hole near the other end. failureLoad is the measured maximum load (mean of the repeats).",
+  "sources": {
+    "hertel2024": {
+      "cite": "Hertel, Kwon & Sachau, Cyclic Fatigue Failure of Perforated 3D-Printed Polylactide (PLA) Specimens by Inserted Pin Loading, Materials 17 (2024) 5394",
+      "doi": "10.3390/ma17225394",
+      "pmcid": "PMC11595828",
+      "printer": "UltiMaker S5, 0.4 mm nozzle, 0.2 mm layers, 0.35 mm lines, 100% infill at 110% flow, no walls",
+      "material": {"name": "pla", "base": "pla", "E": 2919, "nu": 0.375, "strength": 44.0,
+                    "measured": "four tensile coupons in the same lab (Table 4); the raster of the coupons is not stated"},
+      "geometry": "140 x 20 x 2 mm strip, gripped over 20 mm at one end; 6.35 mm hole drilled after printing at `hole` mm from the pin-loaded end; 6.0 mm steel pin (0.35 mm clearance)",
+      "failure": "Table 5: failure stress = maximum load over the gross section (20 x 2 mm)"
+    },
+    "khosravani2023": {
+      "cite": "Khosravani, Sadeghian, Ayatollahi & Reinicke, On the Pin-Bearing Strength of Additively Manufactured Polymer Parts, Polymers 15 (2023) 1660",
+      "doi": "10.3390/polym15071660",
+      "pmcid": "PMC10097255",
+      "printer": "0.25 mm layers, 0.42 mm lines, 2 contours, 100% infill at +-45 deg",
+      "material": "the paper's dumbbell tests are only plotted, so the material is loadpath's card for each plastic (pla: Prusament, abs: PolyLite)",
+      "geometry": "ASTM D5961 double-shear plate: W = 36, e = 18 (hole centre to the end), h = 5 (from Table 3's bearing strengths); D = 12, 6, 4, 3 for W/D = 3, 6, 9, 12. Length 135 mm and a 40 mm grip assumed from the standard (they do not change the stress at the hole). The pin was lightly clamped by the fixture's plates, which the authors note raises the bearing load",
+      "failure": "Table 2: maximum load"
+    }
+  },
+  "specimens": [
+    {"id": "hertel-0-70", "source": "hertel2024", "raster": "0", "L": 140, "W": 20, "t": 2, "D": 6.35, "hole": 70, "grip": 20, "failureLoad": 1328, "mode": "net tension"},
+    {"id": "hertel-0-45", "source": "hertel2024", "raster": "0", "L": 140, "W": 20, "t": 2, "D": 6.35, "hole": 45, "grip": 20, "failureLoad": 1376, "mode": "net tension"},
+    {"id": "hertel-0-32.5", "source": "hertel2024", "raster": "0", "L": 140, "W": 20, "t": 2, "D": 6.35, "hole": 32.5, "grip": 20, "failureLoad": 1240, "mode": "net tension or shear-out"},
+    {"id": "hertel-0-12.5", "source": "hertel2024", "raster": "0", "L": 140, "W": 20, "t": 2, "D": 6.35, "hole": 12.5, "grip": 20, "failureLoad": 848, "mode": "bearing"},
+    {"id": "hertel-45-70", "source": "hertel2024", "raster": "+-45", "L": 140, "W": 20, "t": 2, "D": 6.35, "hole": 70, "grip": 20, "failureLoad": 1100, "mode": "net tension"},
+    {"id": "hertel-45-32.5", "source": "hertel2024", "raster": "+-45", "L": 140, "W": 20, "t": 2, "D": 6.35, "hole": 32.5, "grip": 20, "failureLoad": 1128, "mode": "net tension"},
+    {"id": "hertel-90-70", "source": "hertel2024", "raster": "90", "L": 140, "W": 20, "t": 2, "D": 6.35, "hole": 70, "grip": 20, "failureLoad": 628, "mode": "between lines"},
+    {"id": "hertel-90-12.5", "source": "hertel2024", "raster": "90", "L": 140, "W": 20, "t": 2, "D": 6.35, "hole": 12.5, "grip": 20, "failureLoad": 644, "mode": "between lines"},
+    {"id": "khos-pla-12", "source": "khosravani2023", "material": "pla", "L": 135, "W": 36, "t": 5, "D": 12, "hole": 18, "grip": 40, "failureLoad": 3595, "mode": "net tension"},
+    {"id": "khos-pla-6", "source": "khosravani2023", "material": "pla", "L": 135, "W": 36, "t": 5, "D": 6, "hole": 18, "grip": 40, "failureLoad": 3218, "mode": "bearing"},
+    {"id": "khos-pla-4", "source": "khosravani2023", "material": "pla", "L": 135, "W": 36, "t": 5, "D": 4, "hole": 18, "grip": 40, "failureLoad": 2850, "mode": "bearing"},
+    {"id": "khos-pla-3", "source": "khosravani2023", "material": "pla", "L": 135, "W": 36, "t": 5, "D": 3, "hole": 18, "grip": 40, "failureLoad": 2761, "mode": "bearing"},
+    {"id": "khos-abs-12", "source": "khosravani2023", "material": "abs", "L": 135, "W": 36, "t": 5, "D": 12, "hole": 18, "grip": 40, "failureLoad": 3646, "mode": "cleavage"},
+    {"id": "khos-abs-6", "source": "khosravani2023", "material": "abs", "L": 135, "W": 36, "t": 5, "D": 6, "hole": 18, "grip": 40, "failureLoad": 3521, "mode": "cleavage"},
+    {"id": "khos-abs-4", "source": "khosravani2023", "material": "abs", "L": 135, "W": 36, "t": 5, "D": 4, "hole": 18, "grip": 40, "failureLoad": 3081, "mode": "bearing"},
+    {"id": "khos-abs-3", "source": "khosravani2023", "material": "abs", "L": 135, "W": 36, "t": 5, "D": 3, "hole": 18, "grip": 40, "failureLoad": 2833, "mode": "bearing"}
+  ]
+}
