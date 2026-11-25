@@ -460,3 +460,39 @@ def test_creases_laid_on_a_cad_part_with_a_hole_and_a_pocket():
     assert rep["takenLength"] >= 0.95 * rep["length"], rep["refusedAt"]
     closed = [P for P, cl, _ in subdcrease.feature_lines(m, tol, h)[0] if cl]
     assert len(closed) == 2 and not any(r["closed"] for r in rep["refusedAt"])   # both rims of the hole
+
+
+def test_a_crease_corner_is_not_a_fold_and_a_flipped_face_is():
+    # quads beside a crease are compared with their neighbours on their own
+    # side: a creased square frame has no folds, the same frame with a
+    # top control point dragged past its neighbours (its faces turned over) has
+    corners = np.array([[-2, -1], [2, -1], [2, 1], [-2, 1]], float)
+    sec = np.array([corners[i] + (corners[(i + 1) % 4] - corners[i]) * j / 3 for i in range(4) for j in range(3)])
+    ns, nv = len(sec), 24
+    t = 2 * np.pi * np.arange(nv) / nv
+    V = np.array([[(10 + x) * np.cos(a), (10 + x) * np.sin(a), z] for a in t for x, z in sec])
+    Q = np.array([[j * ns + i, ((j + 1) % nv) * ns + i, ((j + 1) % nv) * ns + (i + 1) % ns, j * ns + (i + 1) % ns]
+                  for j in range(nv) for i in range(ns)])
+    S = np.array([[j * ns + i, ((j + 1) % nv) * ns + i] for i in range(0, ns, 3) for j in range(nv)])
+    cage = subd.Cage(V, Q, sharp=S)
+    H = subd.Hierarchy(cage, subd.LEVEL)
+    assert len(subd._folds(H, cage.V)) == 0
+    C = cage.V.copy()
+    C[ns * 5 + 7] += [0.0, 6.0, 0.0]
+    assert len(subd._folds(H, C)) > 0
+
+
+def test_a_crevice_narrower_than_the_process_prints_is_a_gap_not_a_miss():
+    # a 0.1 mm slot 3 mm deep: no cage follows it and no printer opens it,
+    # so the surface's miss there is reported as a closed gap
+    box = trimesh.creation.box([20.0, 20.0, 10.0])
+    slot = trimesh.creation.box([0.1, 30.0, 3.0]).apply_translation([0.0, 0.0, 3.6])
+    m = box.difference(slot)
+    cage = subd.quad_cage(m, 600)
+    data = subd._samples(m, 60_000)
+    check = subd._samples(m, 40_000, seed=1)
+    cage, H = subd.fit_cage(cage, m, data=data)
+    dev, (d1, d2, X) = subd.deviation(H, cage.V, m, data=check)
+    places, kind = subd.misses(H, cage.V, m, d1, d2, X, 0.3, 2.0)
+    deep = [p for p in places if p["miss"] > 1.0]
+    assert deep and all(p["kind"] == "gap" and p["width"] < 0.2 for p in deep), places[:4]

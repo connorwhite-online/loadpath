@@ -779,14 +779,22 @@ def _pcg(K, pre, B, X0, rtol=1e-7, maxiter=200):
 
 def _folds(H, C, cos=0.5):
     """Cage faces whose limit surface folds over: a fine quad turned more
-    than 60 degrees from the mean normal of its corners."""
+    than 60 degrees from its neighbours across smooth edges. Across a
+    crease the surface turns a corner on purpose: a quad beside one is
+    compared with its neighbours on its own side only (against the mean
+    normal of its corners, a quad at a crease corner of a boss's seat or a
+    bore's rim read as a fold, and every edit there was refused)."""
     P = H.M @ C
-    Q = H.fine.Q
+    F = H.fine
+    Q, QE = F.Q, F.QE
     fn = np.cross(P[Q[:, 2]] - P[Q[:, 0]], P[Q[:, 3]] - P[Q[:, 1]])
     fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-300)
-    Nv = _limit_normals(H, P)
-    d = np.einsum("ij,ij->i", fn, Nv[Q].mean(axis=1))
-    return np.unique(H.root[d < cos])
+    S = np.stack([np.bincount(QE.ravel(), weights=np.repeat(fn[:, k], 4), minlength=len(F.E)) for k in range(3)], 1)
+    smooth = ~F.crease[QE]                                  # (m, 4)
+    nb = ((S[QE] - fn[:, None, :]) * smooth[..., None]).sum(axis=1)
+    ln = np.linalg.norm(nb, axis=1)
+    d = np.einsum("ij,ij->i", fn, nb) / np.maximum(ln, 1e-300)
+    return np.unique(H.root[(ln > 1e-12) & (d < cos)])
 
 
 def _edge_for(mesh):
@@ -858,8 +866,11 @@ def misses(H, C, mesh, d1, d2, X, bound, min_hole, through=True):
     membrane's normals off its axis and those rays meet its wall, so with
     `through` a place is also a hole when its limit points are the mouth
     of one by `subdedit.holes` (a straight way through air to the
-    membrane over the other mouth). Returns (places, kind of each limit
-    point: 0 within, 1 surface miss, 2 hole), places worst first."""
+    membrane over the other mouth). A place whose missed mesh samples sit
+    in a slot of air narrower than `min_hole` (across along their own
+    normals) is a "gap": a crevice the printer closes too. Returns
+    (places, kind of each limit point: 0 within, 1 surface miss, 2 hole or
+    gap), places worst first."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     from scipy.spatial import cKDTree
@@ -903,10 +914,21 @@ def misses(H, C, mesh, d1, d2, X, bound, min_hole, through=True):
     for g in range(k):
         s = lab == g
         hole = bool(air[s].mean() > 0.5)
-        kind[li[s]] = 2 if hole else 1
+        # a crevice: the mesh samples the surface misses sit in a slot of
+        # air narrower than the process prints open (across, along their
+        # own normals, to the facing wall; a boss run into the corner of
+        # two walls leaves a wedge 0.001-0.1 mm wide and 1.3 mm deep on an
+        # optimized lid). The cage closes it as the printer would: it is
+        # reported, not chased with finer faces
+        w = across[s][np.isfinite(across[s])]
+        gap = not hole and len(w) > 0 and float(np.median(w)) < min_hole
+        kind[li[s]] = 2 if (hole or gap) else 1
         m = float(d[s].max())
         c = pts[s][np.argmax(d[s])]
-        pl = {"at": np.round(c, 2).tolist(), "miss": round(m, 3), "kind": "hole" if hole else "surface"}
+        pl = {"at": np.round(c, 2).tolist(), "miss": round(m, 3),
+              "kind": "hole" if hole else "gap" if gap else "surface"}
+        if gap:
+            pl["width"] = round(float(np.median(w)), 3)
         if hole:
             own = s[:len(i1)]
             w = across[s][np.isfinite(across[s])]
@@ -1394,10 +1416,11 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
     P = H.M @ cage.V
     surface = [p for p in places if p["kind"] == "surface"]
     holes = [p for p in places if p["kind"] == "hole"]
+    gaps = [p for p in places if p["kind"] == "gap"]
     worst = {"bound": round(bound, 4), "aim": round(aim, 4), "minHole": min_hole, "pulls": pulls, "insets": insets,
              "surfaceMax": round(float(max(d1[kind != 2].max(initial=0.0),
                                            d2[kind[cKDTree(P).query(Xc, workers=-1)[1]] != 2].max(initial=0.0))), 4),
-             "surfacePlaces": surface[:10], "holesClosed": holes[:20],
+             "surfacePlaces": surface[:10], "holesClosed": holes[:20], "gapsClosed": gaps[:20],
              "printableHolesClosed": int(sum(p["printable"] for p in holes)),
              "eulerNumber": {"mesh": int(mesh.euler_number), "cage": int(cage.n - len(cage.E) + len(cage.Q))}}
     worst["within"] = bool(not surface and not worst["printableHolesClosed"])

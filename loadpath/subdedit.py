@@ -547,6 +547,9 @@ def repair(cage, H, mesh, data, check, tol, bound, min_hole, level, dev, d1, d2,
         skip = np.zeros(len(d1), bool)
         for h in hs:
             skip[h["points"]] = True
+        # a crevice narrower than the process prints open (subd.misses
+        # "gap") is closed as the printer closes it: no finer faces for it
+        skip |= subd.misses(H, cage.V, mesh, d1, d2, X, bound, min_hole, through=False)[1] == 2
         cf, cm = coarse_faces(H, cage.V, d1, d2, X, skip, 2.0 * bound)
         return sl, [h for h in hs if h["diameter"] >= min_hole], cf, cm
 
