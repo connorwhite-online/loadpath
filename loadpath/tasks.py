@@ -229,6 +229,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     notes += _resting_supports(s)
     notes += _glued_faces(s, warnings)
     warnings += _glued_bores(s)
+    warnings += _turns_on_bearing(s, raw)
     warnings.extend(_split_shafts(s))
     w, n = _blind_bores(s)
     warnings += w
@@ -435,11 +436,21 @@ def _glued_bores(s) -> list[str]:
         for i, sp in enumerate(s.supports):
             if sp.region not in bores or sp.pin or getattr(sp, "push", None) is not None:
                 continue
-            if fits.get(sp.region) not in ("slip", "clearance"):
-                continue                     # only where the study says it slides or turns
             leaves = _leaves(bores[sp.region].shape)
             if len(leaves) != 1 or getattr(leaves[0], "kind", None) != "cylinder":
+                # a socket that is not round (a nut's hex, a D-shaft, a square key): what fills
+                # it drives the part by bearing on its walls, whatever the fit, unless pressed
+                if fits.get(sp.region) in ("press", "transition") or not all(sp.fix):
+                    continue
+                out.append(f"supports[{i}] holds keep-out {sp.region!r} fixed on every wall, as if glued to "
+                           "what fills it: a nut, a shaft with a flat or a key there only pushes on the walls it "
+                           "bears on, so a part that grips it on one side passes on a hold it does not have. Give "
+                           "the support \"push\": \"normal\" in place of fix (each wall then bears only where it "
+                           "is pressed, and a torque on the flats), with \"friction\" if nothing else stops it "
+                           "sliding out, unless it is bonded or pressed in (fit \"press\")")
                 continue
+            if fits.get(sp.region) not in ("slip", "clearance"):
+                continue                     # only where the study says it slides or turns
             ax = np.abs(np.asarray(leaves[0].axis, float))
             across = [a for a in range(3) if ax[a] < 0.9]
             if not all(sp.fix[a] for a in across):
@@ -450,6 +461,61 @@ def _glued_bores(s) -> list[str]:
                        "place of fix (it then bears only where it is pressed), with \"friction\" (about 0.3 for a "
                        "printed part on metal) if nothing else stops it sliding along or turning, unless it is "
                        "bonded or pressed in (fit \"press\")")
+    except Exception:  # noqa: BLE001 - a lint
+        return out
+    return out
+
+
+def _turns_on_bearing(s, raw) -> list[str]:
+    """A part held only by a bearing pressed into it (fit press or
+    transition: the outer race turns with the part) turns on it: a pulley,
+    an idler, a wheel. A load that stays where it is while the part turns
+    (a rope or belt over it, the ground under a wheel) then meets the part
+    at every angle round the axis, and a part designed for it at one angle
+    is designed for one instant of a turn (held-out batch 4: a rope pulley
+    came out a rim hung from its bearing by one stub, under the rope)."""
+    import numpy as np
+
+    out = []
+    try:
+        if not s.supports or not isinstance(raw, dict):
+            return out
+        fits = {f.get("id"): f.get("fit") for f in (s.fits or [])}
+        bores = {k.id: k for k in s.keep_out}
+        axes = []
+        for sp in s.supports:
+            if sp.region not in bores or fits.get(sp.region) not in ("press", "transition"):
+                return out                   # held by something else as well
+            leaves = _leaves(bores[sp.region].shape)
+            if len(leaves) != 1 or getattr(leaves[0], "kind", None) != "cylinder":
+                return out
+            axes.append(np.asarray(leaves[0].axis, float) / np.linalg.norm(leaves[0].axis))
+        ax = axes[0]
+        if any(abs(abs(float(a @ ax)) - 1.0) > 1e-3 for a in axes[1:]):
+            return out
+        big = int(np.argmax(np.abs(ax)))
+        plane = "".join(c for i, c in enumerate("xyz") if i != big) if np.abs(ax).max() > 0.999 else None
+        named = []
+        for rc in raw.get("loadCases") or []:
+            for rl in (rc.get("loads") or []) if isinstance(rc, dict) else []:
+                if not isinstance(rl, dict) or rl.get("direction") in ("any", plane):
+                    continue
+                f = np.asarray(rl.get("force") or [0, 0, 0], float)
+                if rl.get("mass"):
+                    from .spec import _axis_vector
+
+                    f = f + np.asarray(_axis_vector(rl.get("gravity", "-z"), ""), float)
+                if np.linalg.norm(f - (f @ ax) * ax) > 1e-9 * max(np.linalg.norm(f), 1e-300):
+                    named.append(str(rc.get("name")))
+                    break
+        if named:
+            where = (f"\"direction\": \"{plane}\" (every angle in the plane round the axis)" if plane else
+                     "the force at angles round the axis, a case each")
+            out.append(f"the part is held only on {', '.join(repr(sp.region) for sp in s.supports)}, a bearing "
+                       "pressed into it, so it turns on that bearing: a load that stays put while it turns (a rope "
+                       "or belt over it, the ground under a wheel) meets it at every angle round the axis, and "
+                       f"case(s) {', '.join(named)} load it at one. Give such a load {where}; leave a load "
+                       "that turns with the part (a handle, a crank pin) as it is")
     except Exception:  # noqa: BLE001 - a lint
         return out
     return out

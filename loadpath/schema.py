@@ -291,9 +291,12 @@ _SUPPORT = {
                                     "e.g. a bolt or bearing rating; reported always as report.reactions"},
         "maxMoment": {"type": "number", "exclusiveMinimum": 0,
                       "description": "N·mm: the most moment this support may carry about its centroid"},
-        "push": {"anyOf": [{"type": "string", "pattern": "^([+-]?[xyz]|radial)$"}, _VEC3],
+        "push": {"anyOf": [{"type": "string", "pattern": "^([+-]?[xyz]|radial|normal)$"}, _VEC3],
                  "description": "A seat: the face rests on a wall, a table or a mating part, which pushes the "
-                                "part this way ('+z' or a vector) and holds nothing else: no pull where the "
+                                "part this way ('+z' or a vector) and holds nothing else. 'radial' on a bore: "
+                                "a tube, shaft or pin in it pushes out where it bears. 'normal' on a keep-out "
+                                "something fills (a nut in a hex, a D-shaft, a leg in a socket): it pushes on "
+                                "each wall along that wall's normal, so a torque bears on the flats. As with any seat: no pull where the "
                                 "load lifts the face off, no sliding unless it has friction. Hold the fasteners "
                                 "with their own "
                                 "supports. A force of unknown direction is solved with the contact in "

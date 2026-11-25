@@ -67,6 +67,70 @@ FLOOR = 1e-7
 MAX_PATCHES = 48
 
 
+# A patch's unit push touches only its own nodes: on a fine tet mesh it is
+# kept as a sparse row (1 x n_dof), and its displacement on the sprung
+# stiffness in single precision (the solves' own tolerance is 1e-7). A seat
+# with friction on a large face is ~300 rows: dense, both lists took 13 GB
+# of a 15 GB box on a bed riser's 2.4M-dof check (held-out batch 4), and it
+# was killed. These read either kind.
+def _nz(p):
+    """(dofs, values) of a push, dense or a sparse row."""
+    import scipy.sparse as sp
+
+    if sp.issparse(p):
+        q = p.tocsr()
+        q.sum_duplicates()
+        return q.indices.astype(np.int64), q.data.astype(float)
+    p = np.asarray(p)
+    dof = np.nonzero(p)[0]
+    return dof, p[dof]
+
+
+def _size(p) -> int:
+    return int(p.shape[1]) if hasattr(p, "tocsr") else len(p)
+
+
+def _dense(p):
+    return np.asarray(p.toarray(), float).ravel() if hasattr(p, "tocsr") else p
+
+
+def _rows(ps):
+    """The pushes as one matrix (m x n_dof): sparse if any is."""
+    import scipy.sparse as sp
+
+    ps = list(ps)
+    if any(sp.issparse(p) for p in ps):
+        return sp.vstack([sp.csr_matrix(p.reshape(1, -1)) if not sp.issparse(p) else p for p in ps]).tocsr()
+    return np.array(ps)
+
+
+def _gram(p, w):
+    """p @ w.T (pushes x their answers). With sparse pushes, by gathering
+    the few columns they touch: scipy's product would first copy w to
+    double precision whole (3.3 GB on the bed riser)."""
+    if not hasattr(p, "tocsr"):
+        return np.asarray(p @ w.T, float)
+    p = p.tocsr()
+    out = np.zeros((p.shape[0], w.shape[0]))
+    for i in range(p.shape[0]):
+        a, b = p.indptr[i], p.indptr[i + 1]
+        if b > a:
+            out[i] = np.asarray(w[:, p.indices[a:b]], float) @ p.data[a:b]
+    return out
+
+
+def sparse_pushes(ps):
+    """`ps` (Patches) with each push a sparse row, rows kept."""
+    import scipy.sparse as sp
+
+    out = Patches()
+    for p in ps:
+        dof, v = _nz(p)
+        out.append(sp.csr_matrix((v, (np.zeros(len(dof), int), dof)), shape=(1, _size(p))))
+    out.rows = getattr(ps, "rows", None)
+    return out
+
+
 def _outline(pts, normal, most: int):
     """Indices of up to `most` of the points that span the face's outline:
     the corners of its convex hull across `normal`, fewest-area-lost first
@@ -217,18 +281,17 @@ def hold(ps, xyz, pitch: float):
 
     ks, rows, cols, vals = [], [], [], []
     for p in ps:
-        dof = np.nonzero(p)[0]
+        dof, v = _nz(p)
         nodes = np.unique(dof // 3)
         width = float(np.ptp(xyz[nodes], axis=0).max()) if len(nodes) > 1 else 0.0
         k = HOLD * max(width, pitch)
         ks.append(k)
-        v = p[dof]
         rows.append(np.repeat(dof, len(dof)))
         cols.append(np.tile(dof, len(dof)))
         vals.append(k * np.outer(v, v).ravel())
     if not ps:
         return np.zeros(0), None
-    n = len(ps[0])
+    n = _size(ps[0])
     s = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
     return np.array(ks), s
 
@@ -259,13 +322,14 @@ class Seat:
     the load is 2u: what the directions need (SeatedSpread)."""
 
     def __init__(self, ps, ws, ks, share=None, rows=None):
-        self.p = np.array(ps)
-        self.w = np.array(ws)
+        self.p = _rows(ps)
+        # single-precision displacements stay so (each use promotes): half the memory
+        self.w = ws if isinstance(ws, np.ndarray) and ws.ndim == 2 else np.array(ws)
         ks = np.asarray(ks, float)
         self.share = np.eye(len(ps)) if share is None else np.asarray(share, float)
         rows = rows if rows is not None else getattr(ps, "rows", None)
         self.rows = rows if rows is not None and len(rows.kind) == len(ps) else Rows.plain(len(ps))
-        c = self.p @ self.w.T
+        c = _gram(self.p, self.w)
         c = 0.5 * (c + c.T)
         self.a = np.linalg.pinv(c, hermitian=True)
         self.kd = (self.share * ks) @ self.share.T
@@ -296,10 +360,10 @@ class Seat:
             self._preload()
 
     def __len__(self):
-        return len(self.p)
+        return self.p.shape[0]
 
     def gaps(self, u):
-        return self.p @ u
+        return np.asarray(self.p @ u, float).ravel() if np.ndim(u) == 1 else np.asarray(self.p @ u, float)
 
     # -- the contact problem in the gaps -------------------------------------------------
     #
@@ -438,10 +502,10 @@ class Seat:
         on = [s for s in range(len(r.preload)) if r.preload[s] > 0]
         rows_of = [np.nonzero(self.normal & (r.seat == s))[0] for s in on]
         want = np.array([r.preload[s] for s in on])
-        zero = np.zeros(len(self.p))
+        zero = np.zeros(self.p.shape[0])
 
         def forces(ev):
-            self.e = np.zeros(len(self.p))
+            self.e = np.zeros(self.p.shape[0])
             for k, rr in enumerate(rows_of):
                 self.e[rr] = -ev[k]
             g = self._gaps(self.a @ zero, slip0=zero)
@@ -708,7 +772,7 @@ def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, stric
         raise ValueError(LIFTS + " A force of unknown direction lifts it in some direction.")
     q = SeatedSpread.coefficients(rows)
     norms = np.array([np.linalg.norm(case.basis()), *(np.linalg.norm(u) for u in case.ub),
-                      *np.linalg.norm(case.seat.w, axis=1)])
+                      *np.linalg.norm(case.seat.w, axis=1)], float)
     norms = np.maximum(norms, 1e-300)
     qs = q * norms
     a, s, bt = np.linalg.svd(qs, full_matrices=False)
@@ -770,6 +834,9 @@ def _split(p, xyz, more=()):
     directions: [(unit push of the piece, its share of the patch)]; with
     `more` (the patch's friction rows), [([pieces of p, then of each],
     share)], cut alike."""
+    sparse = hasattr(p, "tocsr")
+    if sparse:
+        p, more = _dense(p), [_dense(r) for r in more]
     dof = np.nonzero(p)[0]
     nodes = np.unique(dof // 3)
     if len(nodes) < 8:
@@ -791,8 +858,47 @@ def _split(p, xyz, more=()):
             q = np.zeros_like(r)
             q[own] = r[own] / frac
             qs.append(q)
+        if sparse:
+            import scipy.sparse as sp
+
+            qs = [sp.csr_matrix(q[None]) for q in qs]
         out.append((qs if more else qs[0], frac))
     return out if len(out) > 1 else []
+
+
+def _contact_front(ps, xyz, rows, head, bear) -> set:
+    """The bearing patches at the edge of the contact: beside a patch of
+    the same seat that is open in every case. Only there does a finer
+    patch change the answer (where the contact ends, a part tips about a
+    band, not a coarse patch's centre); a face pressed down all over has no
+    edge, and cutting its patches only adds solves (a bed riser on a floor
+    with friction: 192 more of the tet check's 336 right-hand sides)."""
+    keys = sorted(head)
+    if len(keys) < 2:
+        return set(keys)
+    tiny = 1e-6 * max(float(np.sum(bear)), 1e-300)
+    cen = []
+    for j in keys:
+        dof, _ = _nz(ps[j])
+        cen.append(xyz[np.unique(dof // 3)].mean(axis=0))
+    cen = np.asarray(cen)
+    seat = np.asarray([rows.seat[j] for j in keys])
+    out = set()
+    for si in np.unique(seat):
+        m = np.nonzero(seat == si)[0]
+        if len(m) < 2:
+            out.update(keys[i] for i in m if bear[keys[i]] > tiny)
+            continue
+        d = np.linalg.norm(cen[m][:, None] - cen[m][None], axis=2)
+        np.fill_diagonal(d, np.inf)
+        reach = 1.6 * float(np.median(d.min(axis=1)))
+        for a, i in enumerate(m):
+            if bear[keys[i]] <= tiny:
+                continue
+            near = m[d[a] <= reach]
+            if any(bear[keys[b]] <= tiny for b in near):
+                out.add(keys[i])
+    return out
 
 
 # rounds of cutting the patches that bear, and the most unit pushes a round may add
@@ -832,7 +938,8 @@ def solve_cases(inner, rhs, ps, ks, strict: bool = True, xyz=None, layout=None, 
     spreads = spreads or [None] * len(layout)
     stiff, us = inner(rhs + ps)
     us = list(us)
-    u0s, ws = us[:len(rhs)], us[len(rhs):]
+    # the cases' own answers in double precision (inner may keep the pushes' in single)
+    u0s, ws = [np.asarray(u, float) for u in us[:len(rhs)]], us[len(rhs):]
     share = np.eye(len(ps))
     normal = rows.kind == 0
 
@@ -866,12 +973,13 @@ def solve_cases(inner, rhs, ps, ks, strict: bool = True, xyz=None, layout=None, 
     for _ in range(REFINE_ROUNDS if xyz is not None else 0):
         groups = rows.groups()
         head = {g[0]: g for g in groups}
+        front = _contact_front(ps, xyz, rows, head, bear)
         cut = {}
         for j in np.argsort(-bear):
             j = int(j)
             if bear[j] <= 1e-6 * max(bear.sum(), 1e-300) or 4 * (len(cut) + 1) > REFINE_MOST:
                 break
-            if j not in head:
+            if j not in head or j not in front:
                 continue
             g = head[j]
             pieces = _split(ps[g[0]], xyz, [ps[r] for r in g[1:]])

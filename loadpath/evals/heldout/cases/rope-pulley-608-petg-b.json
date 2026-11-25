@@ -1,0 +1,172 @@
+{
+ "id": "rope-pulley-608-petg-b",
+ "batch": 4,
+ "brief": "A 60 mm rope pulley for a garage hoist, PETG on FDM, printed flat (layers along Z, the pulley's axis). It turns on a 608 bearing (22 mm OD, 7 mm wide) pressed into its hub from the top; the wheel is 60 mm across and 10 mm thick, z = -5 to 5, centred on the origin. The bearing seat runs from z = -3.5 up through the top, with a 1.5 mm lip under it and an 18 mm hole through the lip for the axle bolt and inner race. The 6 mm rope runs in a groove 6 mm wide (z = -3 to 3) whose floor is at r = 25; the groove's side flanges (r = 25 to 30) and a 1.5 mm floor under the rope must stay solid. The rope wraps half way round and both ends hang down (-Y): it lifts 15 kg, with a 2 g jerk, so each end pulls 294 N and the wheel takes 588 N down through the bottom of the groove; the rope can lead off up to 10 degrees out of the wheel's plane. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "pulley",
+  "bearing",
+  "rotating",
+  "fdm",
+  "spokes"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 10,
+    "r": 30
+   }
+  ],
+  "preserve": [
+   {
+    "id": "flanges",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        0,
+        4
+       ],
+       "axis": "z",
+       "length": 2,
+       "r": 30,
+       "rInner": 25
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        0,
+        -4
+       ],
+       "axis": "z",
+       "length": 2,
+       "r": 30,
+       "rInner": 25
+      }
+     ]
+    }
+   },
+   {
+    "id": "groove-floor",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "axis": "z",
+     "length": 10,
+     "r": 25,
+     "rInner": 23.5
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "groove",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "axis": "z",
+     "length": 6,
+     "r": 31,
+     "rInner": 25
+    }
+   },
+   {
+    "id": "bearing",
+    "fit": "press",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      1.25
+     ],
+     "axis": "z",
+     "length": 9.5,
+     "r": 11
+    }
+   },
+   {
+    "id": "axle",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "axis": "z",
+     "length": 12,
+     "r": 9
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "bearing"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "lift",
+    "loads": [
+     {
+      "shape": {
+       "type": "cylinder",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "axis": "z",
+       "length": 6,
+       "r": 25,
+       "rInner": 24.4
+      },
+      "force": [
+       0,
+       -588.6,
+       0
+      ],
+      "distribution": "bearing",
+      "direction": "xy"
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "rope-pulley-608-petg-b",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ },
+ "note": "Twin of the cold case, written after batch 4's first run: the wheel turns on its bearing, so the rope's pull meets it at every angle round the axis (direction xy, on the groove floor's half it presses); the 10 degree lead-off is left out (one uncertain direction per load)."
+}

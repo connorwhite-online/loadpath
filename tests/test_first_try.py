@@ -845,3 +845,85 @@ def test_a_tube_in_a_bore_bears_radially_and_a_glued_slip_bore_is_named():
     assert not c["ok"] and "'along'" in c["error"], c
     c = check_study(_socket({"fix": "all"}))
     assert c["ok"] and any("as if glued to what is in it" in w for w in c["warnings"]), c
+
+
+def _hex_socket(support):
+    """A 13 mm hex through a 40 x 40 x 8 block (a wrench's ring), turned by
+    20 N across its +x end."""
+    def side(a):
+        a = np.radians(a)
+        return {"type": "box", "center": [0, 0, 4], "size": [13.2, 40, 12],
+                "axes": [[np.cos(a), np.sin(a), 0], [-np.sin(a), np.cos(a), 0]]}
+    return {"designSpace": [_box([-20, -20, 0], [20, 20, 8])],
+            "keepOut": [{"id": "nut", "shape": {"type": "intersect", "shapes": [side(0), side(60), side(120)]}}],
+            "supports": [dict(support, region="nut")],
+            "loadCases": [{"name": "turn", "loads": [{"shape": _box([19, -20, 0], [20, 20, 8]),
+                                                      "force": [0, 20, 0]}]}],
+            "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.0}}
+
+
+def test_a_nut_in_a_hex_bears_on_its_flats_and_a_glued_socket_is_named():
+    """push 'normal' on a keep-out: its wall's nodes grouped by the way the
+    wall faces, each group pushing along its mean normal; a hex's six
+    flats are six seats, and the torque on them is held by bearing. Held
+    fixed on every wall, check names the glue."""
+    from loadpath.domain import build_domain, wall_seats
+    from loadpath.shapes import shape_from_spec
+
+    hexs = shape_from_spec(_hex_socket({"fix": "all"})["keepOut"][0]["shape"])
+    t = np.linspace(0, 2 * np.pi, 360, endpoint=False)
+    r = 6.6 / np.cos((t + np.pi / 6) % (np.pi / 3) - np.pi / 6)        # on the flats, apothem 6.6
+    pts = np.stack([r * np.cos(t), r * np.sin(t), np.full_like(t, 4.0)], axis=1)
+    groups = wall_seats(pts, hexs)
+    big = [(s, n) for s, n in groups if len(s) > 10]
+    assert len(big) == 6, [len(s) for s, _ in groups]
+    for sub, n in big:
+        assert abs(n[2]) < 1e-6 and abs(np.linalg.norm(n) - 1) < 1e-9
+        assert np.allclose(pts[sub] @ n, 6.6, atol=1e-3)               # each flat at the apothem along its normal
+    dom = build_domain(study_from_dict(_hex_socket({"push": "normal", "friction": 0.2})))
+    assert 6 <= len(dom.seats) <= 12
+    c = check_study(_hex_socket({"push": "normal", "friction": 0.2}))
+    assert c["ok"] and not any("as if glued" in w for w in c["warnings"]), c
+    c = check_study(_hex_socket({"fix": "all"}))
+    assert c["ok"] and any("fixed on every wall, as if glued" in w for w in c["warnings"]), c
+
+
+def test_a_fit_on_a_bore_with_a_flat_moves_every_wall_by_the_fits_clearance():
+    """A D-shaft's hole (a cylinder less a box) with fit slip: the fit is
+    the round member's, and the flat moves out by the same clearance."""
+    from loadpath.fits import expand_fits
+
+    d = {"designSpace": [_box([-20, -20, 0], [20, 20, 12])],
+         "keepOut": [{"id": "shaft", "fit": "slip", "shape": {"type": "subtract", "shapes": [
+             _cyl([0, 0, 4.5], "z", 11, 4), _box([3.5, -5, -2], [5, 5, 11])]}}],
+         "supports": [{"region": "shaft"}], "material": "pa12", "process": "sls",
+         "loadCases": [{"name": "turn", "loads": [{"shape": _box([19, -20, 0], [20, 20, 12]), "force": [0, 5, 0]}]}]}
+    e = expand_fits(d)
+    row = e["_fits"][0]
+    cyl, cut = e["keepOut"][0]["shape"]["shapes"]
+    g = 0.5 * row["designed"] - 4.0                           # the clearance on the radius
+    assert abs(cyl["r"] - (4.0 + g)) < 1e-4 and abs(cut["min"][0] - (3.5 + g)) < 1e-4
+    assert abs(row["inscribed"] - 2 * (3.5 + g)) < 1e-3       # the largest pin through it: the flat's
+    bad = dict(d, keepOut=[{"id": "nut", "fit": "slip", "shape": {"type": "intersect", "shapes": [
+        _box([-6.6, -20, -1], [6.6, 20, 13]), _box([-20, -6.6, -1], [20, 6.6, 13])]}}], supports=[{"region": "nut"}])
+    try:
+        expand_fits(bad)
+        raise AssertionError("a fit on a socket with no round member was taken")
+    except ValueError as exc:
+        assert "plain cylinders" in str(exc)
+
+
+def test_a_part_held_only_on_its_pressed_bearing_is_told_it_turns():
+    """A pulley on a 608 pressed into it: a rope's pull written at one
+    angle is named, a pull at every angle round the axis is not."""
+    st = {"designSpace": [_cyl([0, 0, 0], "z", 10, 30)],
+          "keepOut": [{"id": "bearing", "fit": "press", "shape": _cyl([0, 0, 0], "z", 12, 11)}],
+          "supports": [{"region": "bearing"}],
+          "loadCases": [{"name": "lift", "loads": [{"shape": _box([-5, -30, -5], [5, -29, 5]),
+                                                     "force": [0, -500, 0]}]}],
+          "material": "petg", "process": "fdm", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 1.5}}
+    c = check_study(st)
+    assert c["ok"] and any("turns on that bearing" in w and '"direction": "xy"' in w for w in c["warnings"]), c
+    st["loadCases"][0]["loads"][0]["direction"] = "xy"
+    c = check_study(st)
+    assert c["ok"] and not any("turns on that bearing" in w for w in c["warnings"]), c

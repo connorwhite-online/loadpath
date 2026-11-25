@@ -517,6 +517,58 @@ def radial_seats(pts, p0, ax, sectors: int = RADIAL_SECTORS) -> list:
     return out
 
 
+# a socket's seats (push "normal"): wall nodes grouped by their outward
+# normal, within 15 degrees of their group's mean (as a bore's sectors are)
+WALL_SEAT_COS = float(np.cos(np.radians(15.0)))
+
+
+def wall_normals(shape, pts, h: float = 0.02) -> np.ndarray:
+    """Unit outward normals of `shape`'s wall at points on or near it: the
+    gradient of its signed distance, by central differences."""
+    pts = np.asarray(pts, float)
+    g = np.empty_like(pts)
+    for a in range(3):
+        e = np.zeros(3)
+        e[a] = h
+        g[:, a] = (np.asarray(shape.sdf(pts + e)) - np.asarray(shape.sdf(pts - e))) / (2 * h)
+    n = np.linalg.norm(g, axis=1, keepdims=True)
+    return g / np.maximum(n, 1e-12)
+
+
+def wall_seats(pts, shape, cos_min: float = WALL_SEAT_COS) -> list:
+    """Whatever fills a keep-out (a nut in a wrench's hex, a D-shaft in a
+    hub, a square leg in a socket, a shaft in a bore) as seats
+    (supports[].push = "normal"): [(indices into pts, outward unit
+    normal)], the wall's nodes grouped by the direction their wall faces.
+    The body inside pushes out on the wall where it bears and nowhere
+    pulls; a torque on a hex is carried by its flats bearing, as a
+    wrench's is. Held "fix", the wall is glued to it all round, and a part
+    that grips a nut on two flats passes on that glue (held-out batch 4:
+    a box-end wrench came out a fork on one side of its nut)."""
+    nrm = wall_normals(shape, pts)
+    centres = []
+    for v in nrm:
+        if not centres or max(float(c @ v) for c in centres) < cos_min:
+            centres.append(v.copy())
+    c = np.asarray(centres)
+    for _ in range(2):                               # settle: assign to the nearest, re-centre
+        k = np.argmax(nrm @ c.T, axis=1)
+        c = np.asarray([nrm[k == j].sum(axis=0) if np.any(k == j) else c[j] for j in range(len(c))])
+        c /= np.maximum(np.linalg.norm(c, axis=1, keepdims=True), 1e-12)
+    k = np.argmax(nrm @ c.T, axis=1)
+    return [(np.nonzero(k == j)[0], c[j]) for j in range(len(c)) if np.any(k == j)]
+
+
+def seat_groups(push, pts, shape, label="supports"):
+    """A string push's seats: "radial" round a cylinder's axis, "normal"
+    along any keep-out wall's normal."""
+    if push == "normal":
+        return wall_seats(pts, shape)
+    if not hasattr(shape, "axis"):
+        raise ValueError(f"{label} needs a cylinder region (a bore keep-out or a cylinder) for its axis")
+    return radial_seats(pts, shape.p0, shape.axis)
+
+
 def _cylinder_of(study: Study, region, shape, label):
     sh = shape if shape is not None else study.region_shape(region)[0]
     if not hasattr(sh, "axis"):
@@ -584,8 +636,8 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         if s.push is not None:
             share = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)[idx].astype(float)
             if isinstance(s.push, str):
-                p0, ax = _cylinder_of(study, s.region, s.shape, label)
-                for sub, n in radial_seats(xyz[idx], p0, ax):
+                sh = s.shape if s.shape is not None else study.region_shape(s.region)[0]
+                for sub, n in seat_groups(s.push, xyz[idx], sh, label):
                     seats.append((idx[sub], n, share[sub] / share[sub].sum(), getattr(s, "friction", None),
                                   None))
                 continue

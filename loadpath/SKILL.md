@@ -231,7 +231,15 @@ buckling, printability) you can report to the user.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"push": "+x"` on the face it bears against
    (a seat: pressure only, and across only with `friction`).
-   A shaft in a bearing: support on the bore.
+   A shaft in a bearing: support on the bore. A bore or socket held `fix`
+   is glued to what is in it all round; what is really there only pushes
+   on the walls it bears on. A tube, shaft or pin that slides or turns in
+   a bore: `"push": "radial"` on the bore. A nut in a wrench's hex, a
+   D-shaft in a knob, a square leg in a socket, a key: `"push": "normal"`
+   on the keep-out (each wall pushes along its own normal, so a torque
+   bears on the flats). Add `"friction"` where nothing else stops it
+   sliding out. Keep `fix` for what is bonded or pressed in (fit
+   `press`); `check` names a socket held as if glued.
    A part that hangs on a rod, hook or peg bears only where it touches:
    support the strip of the hole that carries the weight (`fix` on a
    narrow box over its top), not the whole hole, or the model hides the

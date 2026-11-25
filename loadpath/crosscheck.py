@@ -761,9 +761,9 @@ def _seats_on(study, pts, surf, tol, faces):
             raise ValueError(f"supports[{i}] touches no surface node of the part")
         shares = _area_shares(pts, faces, vn)
         if isinstance(sup.push, str):
-            from .domain import radial_seats
+            from .domain import seat_groups
 
-            for sub, n in radial_seats(pts[vn], sh.p0, sh.axis):
+            for sub, n in seat_groups(sup.push, pts[vn], sh, f"supports[{i}]"):
                 out.append((vn[sub], n, shares[sub] / max(shares[sub].sum(), 1e-300), getattr(sup, "friction", None),
                             None))
             continue
@@ -785,7 +785,9 @@ def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, 
     from .directions import Spread
 
     n = len(nodes)
-    ps = pushseat.patches(seats, nodes, 3 * n)
+    # sparse pushes, single-precision answers (pushseat._nz): a seat with
+    # friction on a large face is ~300 rows of the mesh's dofs
+    ps = pushseat.sparse_pushes(pushseat.patches(seats, nodes, 3 * n))
     ks, _ = pushseat.hold(ps, nodes, size)
     ks = E * ks
     solver = solver_for((ps, ks))
@@ -808,12 +810,20 @@ def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, 
             sps.append(Spread(None, None, np.asarray(nominal, float), cos_half))
 
         def flat(f):
+            if hasattr(f, "tocsr"):
+                return pushseat._dense(f)
             v = np.zeros(3 * n)
             v[: f.size] = np.asarray(f, float).ravel()
             return v
 
         def inner(r):
-            return None, [u.ravel() for u in solver.solve([("", v.reshape(-1, 3), None) for v in r])]
+            # a batch at a time, kept in single precision: the pushes' answers are
+            # the bulk of the memory, and the CG reads them to 1e-7 anyway
+            out = []
+            for b0 in range(0, len(r), _BATCH):
+                for u in solver.solve([("", flat(v).reshape(-1, 3), None) for v in r[b0:b0 + _BATCH]]):
+                    out.append(u.ravel().astype(np.float32))
+            return None, out
 
         _, us, _, cases = pushseat.solve_cases(inner, [flat(f) for f in rhs], ps, ks, strict=True, xyz=nodes,
                                                layout=layout, spreads=sps)
@@ -822,7 +832,7 @@ def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, 
     out_u, dirs = [], []
     for ci, idx in enumerate(layout):
         if len(idx) == 1:
-            out_u.append(us[idx[0]].reshape(n, 3))
+            out_u.append(np.asarray(us[idx[0]], float).reshape(n, 3))
             dirs.append(None)
             continue
         sc = cases[ci]
@@ -1104,10 +1114,13 @@ def _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges, lowrank=N
     lump = []
     if lowrank is not None:
         rows_, kk = lowrank
+        from .pushseat import _nz
+
         for r_, k_ in zip(rows_, kk):
-            r_ = np.asarray(r_, float).reshape(-1, 3)
-            nz = np.nonzero(np.abs(r_).sum(axis=1))[0]
-            v = r_[nz]
+            dof, val = _nz(r_)
+            nz = np.unique(dof // 3)
+            v = np.zeros((len(nz), 3))
+            v[np.searchsorted(nz, dof // 3), dof % 3] = val
             sh = np.linalg.norm(v, axis=1)
             nn = v / np.maximum(sh, 1e-300)[:, None]
             lump.append((inv[nz], k_ * sh[:, None, None] * nn[:, :, None] * nn[:, None, :]))
@@ -1234,7 +1247,9 @@ def _exact_springs(lump, lowrank, held_q, qd, n):
         vv.append(blk.ravel())
     lumped = sp.csr_matrix((np.concatenate(vv), (np.concatenate(rr), np.concatenate(cc_))), shape=(3 * n, 3 * n))
     lumped = (sp.diags(free_q) @ lumped @ sp.diags(free_q)).tocsr()
-    rows = (sp.csr_matrix(np.asarray(lowrank[0], float))[:, qd] @ sp.diags(free_q)).tocsr()
+    from .pushseat import _rows
+
+    rows = (sp.csr_matrix(_rows(lowrank[0]))[:, qd] @ sp.diags(free_q)).tocsr()
     return lumped, rows, np.asarray(lowrank[1], float)
 
 
