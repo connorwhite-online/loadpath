@@ -1,6 +1,7 @@
 {
  "name": "enclosure-remote",
  "description": "A TV-style remote in rigid PA12 (SLS), split into a top and a bottom: board, IR LED out through the nose window, two AAA cells over the battery door; six 300 g drops, a 120 N squeeze, a 30 N thumb press.",
+ "hosted": false,
  "enclosure": {
   "product": "remote"
  },

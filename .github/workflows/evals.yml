@@ -4,7 +4,8 @@
 # scheduled run of 2026-11-23 and both dispatches of 2026-11-24), and lost
 # every result with it, since the scorecard is written at the end. Each case
 # uploads its own scorecard; the summary job joins them and fails when any
-# case failed.
+# case failed. Cases marked "hosted": false (the heavy enclosure products:
+# past 4 h or 16 GB on a hosted runner) run only when named.
 name: evals
 
 on:
@@ -30,13 +31,18 @@ jobs:
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
           import glob, json, os
-          names = sorted(os.path.splitext(os.path.basename(f))[0] for f in glob.glob("loadpath/evals/cases/*.json"))
+          files = sorted(glob.glob("loadpath/evals/cases/*.json"))
+          names = [os.path.splitext(os.path.basename(f))[0] for f in files]
           want = (os.environ.get("CASES") or "").split()
           if want:
               unknown = sorted(set(want) - set(names))
               if unknown:
                   raise SystemExit(f"unknown cases: {unknown}")
               names = [n for n in names if n in want]
+          else:
+              # a case marked "hosted": false outgrows a hosted runner (4 h,
+              # 16 GB): it runs by name, or on a bigger machine
+              names = [n for n, f in zip(names, files) if json.load(open(f)).get("hosted", True)]
           print("list=" + json.dumps(names))
           EOF
 
