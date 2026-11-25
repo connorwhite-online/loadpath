@@ -1904,9 +1904,52 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
         w = np.clip((6.0 * domain.pitch - d) / (3.0 * domain.pitch), 0.0, 1.0)[:, None]
         if w.any():
             iso.vertices = (1.0 - w) * np.asarray(iso.vertices, float) + w * v0
+    _unfold_smoothing(iso, v0, lap)
 
 
-EASE_SHARE = 0.5     # of an edge's length: the most a blend's weight step may move one end past the other
+UNFOLD_ROUNDS = 6    # passes of _unfold_smoothing, each undoing the smoothing one ring further out
+
+
+def _unfold_smoothing(iso, v0, lap):
+    """Undo the smoothing wherever it folded the surface through itself.
+
+    Marching cubes is sound by construction; smoothing is not. Each step
+    moves a vertex toward its neighbours' mean, and a feature smaller than
+    the smoothing's reach (25 steps diffuse about five edges) collapses
+    rather than rounds: the walls of a sub-cell tunnel or pocket pass
+    through each other. Such features come from a field that hovers on the
+    level over a weak gradient, where its ripples (a few hundredths of a
+    density unit) put the 0.5 crossing on either side by turns. The caster
+    fork's parts had them on a grey band at the wheel's clearance, 0.2-0.5
+    mm across: the 25 steps folded 9 to 13 faces there, every part read
+    unsound, and the 16 g designs were never delivered. The surface the
+    field gives there is the right one; the smoothing only has nothing to
+    round. So the faces that cross go back to their marching-cubes place,
+    two rings round them easing back (_ease_over_shift, so the blend itself
+    cannot fold), a ring further out each pass until none cross. Where
+    nothing folds (every eval part) nothing moves."""
+    from .crease import crossing_faces
+
+    f = np.asarray(iso.faces)
+    v = np.asarray(iso.vertices, float)
+    seed = np.zeros(len(v))
+    rings = 2
+    for _ in range(UNFOLD_ROUNDS):
+        x = crossing_faces(v, f, np.arange(len(f)))
+        if not len(x):
+            break
+        seed[f[x].ravel()] = 1.0
+        w = seed.copy()
+        for _ in range(rings):
+            w = np.maximum(w, (lap @ w > 0).astype(float))
+        seed = w
+        w = _ease_over_shift(w, lap, v, v0)
+        v = (1.0 - w[:, None]) * v + w[:, None] * v0
+        rings += 1
+    iso.vertices = v
+
+
+EASE_SHARE = 0.5    # of an edge's length: the most a blend's weight step may move one end past the other
 
 
 def _ease_over_shift(w, lap, a, b, share=EASE_SHARE):
