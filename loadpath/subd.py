@@ -1529,15 +1529,16 @@ def _inner(A, k, s):
     return [A[:, :, 1], A[:, s - 1, :], A[:, ::-1, s - 1], A[:, 1, ::-1]][k]
 
 
-def _ring_normals(cage, C):
+def _ring_normals(cage, C, faces=None):
     """Exact limit normals at the cage's vertices (Catmull-Clark tangent
-    masks, Halstead et al. 1993, over each vertex's ordered ring)."""
+    masks, Halstead et al. 1993, over each vertex's ordered ring); only
+    at the corners of `faces` when given."""
     Q = cage.Q
     m = len(Q)
     tq, tk = _twins(cage)
     N = np.zeros((cage.n, 3))
     done = np.zeros(cage.n, bool)
-    for q0 in range(m):
+    for q0 in (range(m) if faces is None else faces):
         for k0 in range(4):
             v = int(Q[q0, k0])
             if done[v]:
@@ -1569,12 +1570,14 @@ def _ring_normals(cage, C):
     return N
 
 
-def grid_normals(H, C):
+def grid_normals(H, C, faces=None):
     """Exact limit-surface normals at every sample of every face's grid
     (m, s+1, s+1, 3): away from the cage's vertices every fine vertex has
     four edges, and its limit tangents are the bicubic B-spline's on its
     3 x 3 neighbours (rows across a cage edge come from the face on the
-    other side); at the cage's vertices, the general tangent masks."""
+    other side); at the cage's vertices, the general tangent masks (only
+    at the corners of `faces` when given: the rest of their corners are
+    left at the grid's estimate)."""
     cage = H.cage
     G = H.G
     m, s1, _ = G.shape
@@ -1606,9 +1609,13 @@ def grid_normals(H, C):
         Tv += w[b] * (E[:, b:b + s1, 2:] - E[:, b:b + s1, :-2]) / 2
     N = np.cross(Tu, Tv)
     N /= np.maximum(np.linalg.norm(N, axis=-1, keepdims=True), 1e-300)
-    Nv = _ring_normals(cage, C)
+    Nv = _ring_normals(cage, C, faces)
     for k, (i, j) in enumerate([(0, 0), (s, 0), (s, s), (0, s)]):
         nv = Nv[cage.Q[:, k]]
+        if faces is not None:
+            have = np.zeros(m, bool)
+            have[faces] = True
+            nv[~have] = N[~have, i, j]
         # the masks' sign follows the ring's turning; the grid's next sample says which way is out
         ref = N[:, 1 if i == 0 else s - 1, 1 if j == 0 else s - 1]
         nv = nv * np.sign(np.einsum("ij,ij->i", nv, ref))[:, None]
