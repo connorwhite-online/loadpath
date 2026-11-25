@@ -80,10 +80,22 @@ def _direct(nodes, conn, fixed, loads):
     return out
 
 
-@pytest.mark.parametrize("coarse", ["factor", "amg"])
+@pytest.mark.parametrize("coarse", ["factor", "single", "amg"])
 def test_every_case_in_one_loop_matches_a_direct_solve(monkeypatch, coarse):
     if coarse == "amg":
         monkeypatch.setenv("LOADPATH_TET_COARSE", "amg")
+    if coarse == "single":
+        # the coarse factor in single precision (where double does not fit):
+        # a preconditioner's, so the same answer to CG's tolerance
+        from loadpath import nonlinear
+
+        if not nonlinear._have_pardiso():
+            pytest.skip("no PARDISO")
+
+        class Single(nonlinear._Pardiso):
+            def __init__(self, k, **kw):
+                super().__init__(k, **{**kw, "single": True})
+        monkeypatch.setattr(nonlinear, "_Pardiso", Single)
     nodes, conn, edges, nv, fixed, loads = _cantilever()
     us = cc._solve(nodes, conn, 2000.0, 0.35, fixed, None, loads, nv, edges)
     ref = _direct(nodes, conn, fixed, loads)
@@ -93,6 +105,26 @@ def test_every_case_in_one_loop_matches_a_direct_solve(monkeypatch, coarse):
     # each case's answer is its own CG's, whatever runs beside it
     alone = cc._solve(nodes, conn, 2000.0, 0.35, fixed, None, loads[1:], nv, edges)[0]
     assert np.linalg.norm(alone - us[1]) <= 1e-12 * np.linalg.norm(us[1])
+
+
+def test_node_graph_operators_have_the_csr_bits():
+    # Blocked on (numbers, node graph) — the CSR's indices dropped — gives
+    # the products and sweeps of the CSR itself, bit for bit
+    nodes, conn, *_ = _cantilever()
+    nptr, nind = cc._node_pattern(conn, len(nodes))
+    q, bounds = tetsolve.color_order(nptr, nind)
+    inv = np.empty_like(q)
+    inv[q] = np.arange(len(q))
+    k = cc._assemble(nodes[q], inv[conn], 2000.0, 0.35)
+    a = tetsolve.Blocked(k, bounds)
+    b = tetsolve.Blocked((k.data, *k.node_graph), bounds)
+    rng = np.random.default_rng(1)
+    x, rhs = rng.standard_normal((k.shape[0], 3)), rng.standard_normal((k.shape[0], 3))
+    assert np.array_equal(a.mv(x), b.mv(x))
+    xa, xb = x.copy(), x.copy()
+    a.sgs(xa, rhs)
+    b.sgs(xb, rhs)
+    assert np.array_equal(xa, xb)
 
 
 def test_a_solve_repeats_to_the_bit():

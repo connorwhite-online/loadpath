@@ -104,6 +104,12 @@ def element_size(study: Study) -> float:
 # 1.8 mm to fit a 15 GB box.
 _TETS_PER_VOLUME = 10.0
 _BYTES_PER_TET = 7_500
+# What the CG holds beside the coarse factor, a tet: the matrix's numbers
+# and node graph (its CSR indices dropped, tetsolve.Blocked), the vectors,
+# the prolongation. Upper arm (658k stuffed tets): 4.18 GB in the CG
+# without the factor (5.04 with the indices); the peak, 5.41 GB, is the
+# stress read after the factor is released.
+_CG_BYTES_PER_TET = 6_000
 
 
 def memory_budget(volume: float | None = None, size: float | None = None) -> float:
@@ -1042,6 +1048,7 @@ def _assemble(nodes, conn, E, nu, chunk=20_000, extra=()):
         indptr = indptr.astype(np.int32)
     k = sp.csr_matrix((data, indices, indptr), shape=(3 * n, 3 * n))
     k.has_sorted_indices = True
+    k.node_graph = (nptr, nind)       # (tetsolve.Blocked: the indices without storing them)
     return k
 
 
@@ -1141,6 +1148,12 @@ def _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges, lowrank=N
         part = (p[r0:r0 + step].T @ (k[r0:r0 + step] @ p)).tocsr()
         a1 = part if a1 is None else a1 + part
     a1 = a1.tocsr()
+    # the solve's operators on the node graph, and the matrix's column
+    # indices dropped before the coarse factor is made (a third of the
+    # matrix: 0.95 GB on the upper arm, room for its factor)
+    graph = getattr(k, "node_graph", None)
+    op = tetsolve.Blocked((k.data, *graph) if graph is not None else k, bounds)
+    del k
     coarse = _coarse_factor(a1, len(conn))
     if coarse is None:
         cn = np.nonzero(used)[0]
@@ -1157,7 +1170,6 @@ def _solver(nodes, conn, E, nu, fixed_dof, springs, n_vertices, edges, lowrank=N
                 out[:, j] = ml.solve(np.ascontiguousarray(c1[:, j]), maxiter=1, cycle="V", tol=1e-12)
             return out
     del a1
-    op = tetsolve.Blocked(k, bounds)
     mv = op.mv
     if lowrank is not None:
         # the operator is the stiffness with the patches' springs exactly:
@@ -1290,15 +1302,24 @@ def _coarse_factor(a1, n_tets):
 
     if not _have_pardiso() or os.environ.get("LOADPATH_TET_COARSE", "") == "amg":
         return None
-    room = memory_budget() - _BYTES_PER_TET * n_tets
+    room = memory_budget() - _CG_BYTES_PER_TET * n_tets
     free = _available_bytes()
     if free:
         room = min(room, 0.85 * free)
     if room <= 0:
         return None
-    try:
-        fac = _Pardiso(a1, budget=room)
-    except (MemoryError, RuntimeError):
+    fac = None
+    for single in (False, True):
+        # single precision where double does not fit: half the factor's
+        # numbers, and a preconditioner's solve needs no more digits
+        try:
+            fac = _Pardiso(a1, budget=room, single=single)
+            break
+        except MemoryError:
+            continue
+        except RuntimeError:
+            return None
+    if fac is None:
         return None
 
     def solve(c1):

@@ -21,6 +21,11 @@ factor solve serves all of them, and the Gauss-Seidel runs on every core:
 - `spmm` is the matrix times all cases at once (the matrix is read once
   for all of them).
 
+- `Blocked` keeps the matrix's numbers and its node graph, not its CSR
+  column indices: the graph says them (crosscheck._assemble lays rows out
+  node by node), a ninth of the memory (upper arm 0.95 GB -> 0.1 GB),
+  which leaves room for the coarse factor.
+
 Every kernel's arithmetic is independent of the number of threads, so a
 solve repeats to the bit. Indices go through uint64, as in amgfast.
 """
@@ -99,6 +104,74 @@ if nb is not None:
                         if diag != 0.0:
                             for r in range(k):
                                 X[ui, r] = acc[r] / diag
+
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _nsgs(nptr, nind, Ax, X, B, bounds):
+        # _sgs on the node layout (Blocked): node i's row d is 3 deg(i)
+        # numbers from 9 nptr[i] + 3 deg(i) d, columns 3 w + 0..2 for its
+        # neighbours w = nind[nptr[i]:nptr[i+1]] in order, as the CSR has
+        # them: the same numbers in the same order, the same bits
+        ncol = bounds.size - 1
+        k = X.shape[1]
+        for s in range(2 * ncol):
+            back = s >= ncol
+            c = 2 * ncol - 1 - s if back else s
+            lo = bounds[c]
+            hi = bounds[c + 1]
+            nch = 64
+            step = (hi - lo + nch - 1) // nch
+            for t in nb.prange(nch):
+                acc = np.empty(k)
+                for v in range(lo + t * step, min(hi, lo + (t + 1) * step)):
+                    n0 = U(nptr[v])
+                    deg = U(nptr[v + 1]) - n0
+                    for d in range(3):
+                        dd = 2 - d if back else d
+                        ui = U(3 * v + dd)
+                        for r in range(k):
+                            acc[r] = B[ui, r]
+                        diag = 0.0
+                        base = U(9) * n0 + U(3) * deg * U(dd)
+                        for q in range(deg):
+                            w = U(nind[n0 + U(q)])
+                            for cj in range(3):
+                                a = Ax[base + U(3 * q + cj)]
+                                j = U(3) * w + U(cj)
+                                if j == ui:
+                                    diag = a
+                                else:
+                                    for r in range(k):
+                                        acc[r] -= a * X[j, r]
+                        if diag != 0.0:
+                            for r in range(k):
+                                X[ui, r] = acc[r] / diag
+
+    @nb.njit(cache=True, parallel=True, nogil=True)
+    def _nspmm(nptr, nind, Ax, X, Y):
+        # _spmm on the node layout (see _nsgs): node by node, its 3 rows
+        n = nptr.size - 1
+        k = Y.shape[1]
+        nch = 256
+        step = (n + nch - 1) // nch
+        for c in nb.prange(nch):
+            acc = np.empty(k)
+            for v in range(c * step, min(n, (c + 1) * step)):
+                n0 = U(nptr[v])
+                deg = U(nptr[v + 1]) - n0
+                for d in range(3):
+                    ui = U(3 * v + d)
+                    for r in range(k):
+                        acc[r] = 0.0
+                    base = U(9) * n0 + U(3) * deg * U(d)
+                    for q in range(deg):
+                        w = U(nind[n0 + U(q)])
+                        for cj in range(3):
+                            a = Ax[base + U(3 * q + cj)]
+                            j = U(3) * w + U(cj)
+                            for r in range(k):
+                                acc[r] += a * X[j, r]
+                    for r in range(k):
+                        Y[ui, r] = acc[r]
 
     @nb.njit(cache=True, parallel=True, nogil=True)
     def _spmm(Ap, Aj, Ax, X, Y):
@@ -274,22 +347,32 @@ def stress_samples(nodes, conn, us, c, lams, edges):
 
 
 class Blocked:
-    """A node-blocked CSR matrix (3 rows per node, colours `bounds`) as
-    the solve's operators: `mv(X)` = K X and `sgs(X, B)` one symmetric
-    multicolour Gauss-Seidel sweep on K X = B, for X, B (dofs, cases)."""
+    """A node-blocked matrix (3 rows per node, colours `bounds`) as the
+    solve's operators: `mv(X)` = K X and `sgs(X, B)` one symmetric
+    multicolour Gauss-Seidel sweep on K X = B, for X, B (dofs, cases).
+
+    `k` is a CSR matrix, or (data, nptr, nind): the numbers of a CSR laid
+    out from the node graph (crosscheck._assemble), whose column indices
+    the graph says, so they are not kept. The upper arm's stiffness, 238M
+    numbers: its CSR indices are 0.95 GB, its node graph 0.1 GB; the same
+    products and sweeps to the bit."""
 
     def __init__(self, k, bounds):
-        self.k = k
         self.bounds = np.asarray(bounds, np.int64)
-        self._p, self._j = _u(k.indptr), _u(k.indices)
+        if isinstance(k, tuple):
+            self.data, nptr, nind = k
+            self._p, self._j, self._graph = _u(np.asarray(nptr, np.int64)), _u(nind), True
+        else:
+            self.data = k.data
+            self._p, self._j, self._graph = _u(k.indptr), _u(k.indices), False
 
     def mv(self, X):
         Y = np.empty_like(X)
-        _spmm(self._p, self._j, self.k.data, X, Y)
+        (_nspmm if self._graph else _spmm)(self._p, self._j, self.data, X, Y)
         return Y
 
     def sgs(self, X, B):
-        _sgs(self._p, self._j, self.k.data, X, B, self.bounds)
+        (_nsgs if self._graph else _sgs)(self._p, self._j, self.data, X, B, self.bounds)
 
 
 def cg(B, precond, mv, rtol=1e-7, maxiter=2000):

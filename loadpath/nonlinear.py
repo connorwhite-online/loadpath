@@ -511,7 +511,7 @@ class _Pardiso:
     # Newton iteration made one)
     _pool: list = []
 
-    def __init__(self, k, symmetric=True, budget=None, refine=True):
+    def __init__(self, k, symmetric=True, budget=None, refine=True, single=False):
         """`budget` (bytes): where the factor would take more, MemoryError
         before any of it is allocated. `refine` False: a Cholesky factor's
         solves skip PARDISO's iterative refinement (two steps by default,
@@ -525,6 +525,7 @@ class _Pardiso:
         self._s = None
         self.bytes = None           # what the factor holds, by PARDISO's analysis
         self._refine = refine
+        self._single = bool(single)
         on_mkl_thread(self._factor, k, symmetric, budget)
 
     def _factor(self, k, symmetric, budget=None):
@@ -538,12 +539,19 @@ class _Pardiso:
             a.sort_indices()
             s.set_matrix_type(mtype)
             _reproducible(s, mtype, threads)
+            if self._single:
+                s.iparm[27] = 1          # single precision: the factor in half the memory
+                s.iparm[7] = 0           # (a preconditioner's: no refinement steps)
             try:
                 need = None
                 if hasattr(s, "_check_A") and hasattr(s, "_call_pardiso"):
                     # analysis, then the numbers (pypardiso.factorize is both in one call)
                     b0 = np.zeros((a.shape[0], 1))
                     s._check_A(a)
+                    if self._single:
+                        a = sp.csr_matrix((a.data.astype(np.float32), a.indices, a.indptr), shape=a.shape)
+                        a.has_sorted_indices = True
+                        b0 = b0.astype(np.float32)
                     s.set_phase(11)
                     s._call_pardiso(a, b0)
                     need = 1024.0 * (float(s.get_iparm(16)) + float(s.get_iparm(17)))
@@ -552,6 +560,8 @@ class _Pardiso:
                         break
                     s.set_phase(22)
                     s._call_pardiso(a, b0)
+                elif self._single:
+                    raise RuntimeError("single precision needs pypardiso's phase calls")
                 else:
                     s.factorize(a)
             except Exception:  # noqa: BLE001 - not positive definite: try the next type
@@ -586,7 +596,7 @@ class _Pardiso:
         the layout alone, never the numbers: the order is the one a fresh
         analysis would find, and the factor and every solve come out the
         same to the bit."""
-        if getattr(self, "_s", None) is None or getattr(self, "_mtype", None) != 2:
+        if getattr(self, "_s", None) is None or getattr(self, "_mtype", None) != 2 or self._single:
             self.close()
             return False
         done = on_mkl_thread(self._refactor, k, budget)
@@ -651,8 +661,9 @@ class _Pardiso:
         mkl_threads(self._s)
         # straight to the solve phase: pypardiso.solve() hashes the matrix
         # every call to see whether it is factored already
-        x = self._s._call_pardiso(self._a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))
-        return np.asarray(x).reshape(b.shape)
+        dt = np.float32 if self._single else np.float64
+        x = self._s._call_pardiso(self._a, np.asfortranarray(b, dt) if b.ndim == 2 else np.ascontiguousarray(b, dt))
+        return np.asarray(x, np.float64).reshape(b.shape)
 
     @staticmethod
     def _release(s):

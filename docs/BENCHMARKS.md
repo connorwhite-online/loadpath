@@ -741,8 +741,15 @@ edge (4-5x the tets), within about 1% of the next refinement.
 - Stuffing makes about 1.25x fTetWild's tets at the same size, so the
   solve takes 0-30% longer. The upper arm is the exception: its CG takes
   31-35 iterations on the stuffed mesh against 16-19 (not the crease
-  snapping: 31-34 without it), so its solve doubles and the whole confirm
-  only drops 232 -> 206 s. Open lead.
+  snapping: 31-34 without it), so its solve doubled and the whole confirm
+  only dropped 232 -> 206 s. The cause was memory, not mesh quality: the
+  coarse (P1) level's factor, 1.99 GB, did not fit the 0.8 GB the solve
+  left, and its AMG fallback is weaker. Now the CG keeps the matrix's
+  numbers and node graph only (its CSR column indices, 0.95 GB, were
+  redundant with the graph; same bits), and the coarse factor goes to
+  single precision where double does not fit (1.18 GB): 19-21 iterations,
+  solve 157-195 -> 98 s, peak 6.26 -> 5.34 GB, the same safety factor.
+  On fTetWild's mesh: peak 4.27 GB (was 4.9).
 - `LOADPATH_TET_MESHER=tetwild` (with pytetwild installed) brings fTetWild
   back; `LOADPATH_STUFF_SCALE` scales the lattice edge.
 - Repeatability: the turret read 2.309 and 2.137 on two fTetWild meshes
