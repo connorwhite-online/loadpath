@@ -361,6 +361,12 @@ class _Analysis:
         mu0 = [st["mu"].get(i, np.zeros(len(ps))) if i in single else np.zeros(len(ps)) for i in range(len(loads))]
         fresh = st["ws"] is None or st["n"] % self.SEAT_EVERY == 0
         st["n"] += 1
+        if fresh:
+            # a seat pushes where the part touches it: each patch's push and
+            # hold spread over its nodes by the stiffness of the material
+            # there (_seat_patches), read again with the compliance
+            ps, ks = self._seat_patches(e)
+            pm = np.array(ps)
         pushed = [f + mu @ pm for f, mu in zip(loads, mu0)]
         # the reference pushes of the uncertain cases
         refs = [(ci, st["ref"][ci]) for ci, idx in enumerate(lay) if len(idx) > 1 and ci in st["ref"]]
@@ -401,6 +407,43 @@ class _Analysis:
                                               [us[i] for i in idx[1:]], spreads[ci], ref=ref_of.get(ci))
         st["cases"] = cases
         return us
+
+    def _seat_patches(self, e):
+        """The seats' patches (pushseat.patches) and their hold springs for
+        the design whose cell moduli are `e`: a node's push weighted by the
+        mean modulus of the cells round it. A seat is a face the part bears
+        on, and only material bears: spread by area alone, a patch over a
+        cell the design had emptied pressed on void at E_MIN, and the void
+        next to the seat took strains the material never sees (the held-out
+        pegboard holder's constrained run read 290 GPa there, at density
+        0.0007, against a 22 MPa limit, and chased it for 27 minutes). The
+        weights follow the design at the cadence its seat compliance is read
+        (SEAT_EVERY), so the pushes and the compliance stay one problem."""
+        from . import pushseat
+
+        d = self.domain
+        mesh = d.mesh
+        st = self._seat
+        cnt = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)
+        en = np.bincount(mesh.enode.ravel(), weights=np.repeat(np.asarray(e, float), mesh.enode.shape[1]),
+                         minlength=mesh.n_nodes) / np.maximum(cnt, 1)
+        seats = [(s_[0], s_[1], np.asarray(s_[2], float) * en[np.asarray(s_[0])], *s_[3:]) for s_ in d.seats]
+        ps = pushseat.patches(seats, mesh.node_xyz, mesh.n_dof)
+        # ... and a patch's spring by the modulus there, over its area: a
+        # patch the design emptied holds nothing (a spring stiffer than the
+        # void pinned the void's nodes while the material beside them moved)
+        geo = st.get("geo")
+        if geo is None:
+            geo = st["geo"] = [np.abs(p_) for p_ in pushseat.patches(d.seats, mesh.node_xyz, mesh.n_dof)]
+        en3 = np.repeat(en, 3)
+        scale = [float(g_ @ en3) / max(float(g_.sum()), 1e-300) for g_ in geo]
+        ks, held = pushseat.hold(ps, mesh.node_xyz, mesh.pitch, scale)
+        st["ps"], st["ks"] = ps, ks
+        self._springs = held if d.springs is None else (d.springs + held).tocsr()
+        if self._mg is not None:
+            # (its levels hold the springs: built again on the next multigrid solve)
+            self._mg = None
+        return ps, ks
 
     def seated_cases(self):
         """{case: pushseat.SeatedSpread} of the last solve: the cases whose

@@ -301,6 +301,36 @@ def test_the_optimizer_designs_a_part_that_stands_on_its_friction():
     assert np.isfinite(c) and c > 0
 
 
+def test_a_seat_pushes_only_where_the_design_has_material():
+    """A plate on a desk (a seat over its whole underside) with only its
+    left half of material: the seat's patches push and hold through the
+    material, none of them through the void over the right half. Spread by
+    area, a patch over emptied cells pressed on void at E_MIN, and the void
+    beside the seat read stresses thousands of times the limit in the
+    constrained method (the held-out pegboard holder)."""
+    from loadpath.domain import build_domain
+    from loadpath.simp import E_MIN, PENALTY, _Analysis
+
+    d = build_domain(study_from_dict({
+        "designSpace": [_box([0, 0, 0], [40, 10, 10])],
+        "supports": [{"shape": _box([0, 0, -0.5], [40, 10, 0.6]), "push": "+z"},
+                     {"shape": _box([-0.5, 0, 0], [0.6, 10, 10]), "fix": "xy"}],
+        "loads": [{"shape": _box([0, 0, 9.4], [20, 10, 10.5]), "force": [0, 0, -50]}],
+        "material": "petg", "process": "fdm", "goal": {"volumeFraction": 0.5}, "resolution": {"pitch": 2.0}}))
+    mesh = d.mesh
+    x = np.where(mesh.node_xyz[mesh.enode].mean(axis=1)[:, 0] < 20.0, 1.0, 1e-3)
+    fe = _Analysis(d, 0.35, 1e-8)
+    fe.solve(E_MIN + x ** PENALTY * (1 - E_MIN), x, [None], loads=d.loads)
+    right = np.repeat(mesh.node_xyz[:, 0] > 20.0, 3)
+    ks = fe._seat["ks"]
+    # what each patch holds by: its spring, over the part of its push that lands on the void
+    void = sum(k * float(np.abs(p[right]).sum()) for k, p in zip(ks, fe._seat["ps"]))
+    assert void < 1e-4 * float(np.sum(ks)), (void, float(np.sum(ks)))
+    lam = fe._seat["lam"][0]
+    push = (lam @ np.array(fe._seat["ps"])).reshape(-1, 3)[:, 2]
+    assert abs(push.sum() - 50.0) < 0.5, push.sum()
+
+
 def test_seats_hold_a_part_in_buckling_and_vibration_where_they_bear():
     """A column standing on a seat with friction buckles at the fixed base's
     load (the seat bears all across its foot and sticks); a bar held by a

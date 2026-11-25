@@ -280,17 +280,19 @@ def patches(seats, xyz, n_dof, most: int = MAX_PATCHES):
     return out
 
 
-def hold(ps, xyz, pitch: float):
+def hold(ps, xyz, pitch: float, scale=None):
     """The springs that hold the seats' patches for the solves, at unit
-    modulus: (k per patch in mm, sparse sum_j k_j p_j p_j')."""
+    modulus: (k per patch in mm, sparse sum_j k_j p_j p_j'). `scale`, per
+    patch, multiplies its spring (the modulus of the material on the patch
+    relative to the solid's, simp._Analysis._seat_patches)."""
     import scipy.sparse as sp
 
     ks, rows, cols, vals = [], [], [], []
-    for p in ps:
+    for j, p in enumerate(ps):
         dof, v = _nz(p)
         nodes = np.unique(dof // 3)
         width = float(np.ptp(xyz[nodes], axis=0).max()) if len(nodes) > 1 else 0.0
-        k = HOLD * max(width, pitch)
+        k = HOLD * max(width, pitch) * (1.0 if scale is None else float(scale[j]))
         ks.append(k)
         rows.append(np.repeat(dof, len(dof)))
         cols.append(np.tile(dof, len(dof)))
