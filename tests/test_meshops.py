@@ -172,7 +172,7 @@ def test_closest_is_exact_on_slivers_and_files_them_along_their_length():
     assert float(m.edges_unique_length.max()) > 40
     P = m.sample(20000) + rng.normal(0, 0.3, (20000, 3))
     q, n = _closest(m, P, edge=0.29)
-    d, fi, c = igl.point_mesh_squared_distance(P, np.asarray(m.vertices, float), np.asarray(m.faces, np.int64))
+    d, fi, _ = igl.point_mesh_squared_distance(P, np.asarray(m.vertices, float), np.asarray(m.faces, np.int64))
     assert np.abs(np.linalg.norm(P - q, axis=1) - np.sqrt(d)).max() < 1e-9
     assert (np.abs((n * m.face_normals[fi]).sum(1)) > 0.999).mean() > 0.99      # ties at edges aside
     grid = m._loadpath_closest[3]
