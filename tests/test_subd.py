@@ -376,6 +376,31 @@ def test_feature_remesh_keeps_the_lines_and_evens_the_triangles():
     assert cKDTree(S).query(D)[0].max() < 0.05
 
 
+def test_feature_remesh_presplit_grows_with_area_not_sliver_length_squared(monkeypatch):
+    # the split ahead of the remesh is the run's memory: a CAD flat's long
+    # slivers split to the remesh step go as (length / step)^2 each; split
+    # to four steps the remesh still comes out even, from 1/16 the triangles
+    import trimesh as tm
+
+    from loadpath import subdcrease
+
+    m = _pocket_plate()
+    seen = []
+    real = tm.remesh.subdivide_to_size
+
+    def spy(v, f, max_edge, **kw):
+        out = real(v, f, max_edge=max_edge, **kw)
+        seen.append((max_edge, len(out[1])))
+        return out
+    monkeypatch.setattr(tm.remesh, "subdivide_to_size", spy)
+    lines, _ = subdcrease.feature_lines(m, 0.1, 1.5)
+    r = subdcrease.feature_remesh(m, 0.25, 8 * 0.1 / 1.5, lines)
+    assert seen and abs(seen[0][0] - subdcrease.PRESPLIT * 0.25) < 1e-9
+    assert seen[0][1] < 2.0 * len(r.faces)                  # the split is not the peak
+    assert r.is_watertight and r.euler_number == m.euler_number
+    assert float(r.edges_unique_length.max()) < 0.75
+
+
 def test_feature_gap_is_the_narrowest_flat_between_creases():
     from loadpath import subdcrease
 

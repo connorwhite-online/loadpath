@@ -17,6 +17,8 @@ the line. A path that wanders (longer than the line by a third) or comes
 off it by more than half a face is not taken: that line stays rounded."""
 import numpy as np
 
+PRESPLIT = 4.0       # long triangles split to this many times the remesh step before it (feature_remesh)
+
 
 def feature_lines(mesh, tol, h, min_turn=None):
     """Chains of mesh edges where the surface turns by more than a face
@@ -646,7 +648,13 @@ def feature_remesh(mesh, step, theta, lines=None):
     feature lines' edges kept as constrained edges (split along the line,
     never flipped, collapsed only along it). The long triangles are split
     first (to `step`): from a few huge triangles the remesher's own splits
-    do not converge before its iterations end.
+    do not converge before its iterations end; split to four times `step`
+    they do (its splits halve every edge over 4/3 of the target each
+    iteration), and the split is the run's memory: a long sliver split to
+    a length L goes into (its length / L)^2 triangles (an optimized
+    fastened lid, 12000 mm^2 with 70 mm flats: some 12 million at a 0.25 mm
+    `step`, out of 15 GB, for 0.43 million remeshed; at four times `step`
+    1 million, 1.5 GB at the peak).
 
     `lines`: the feature lines as `feature_lines` returns them (computed at
     `theta` if not given). Returns a trimesh, cached on `mesh`."""
@@ -659,7 +667,7 @@ def feature_remesh(mesh, step, theta, lines=None):
     skey = round(float(step), 4)
     if skey not in cache:
         v, f = trimesh.remesh.subdivide_to_size(np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64),
-                                                max_edge=float(step))
+                                                max_edge=PRESPLIT * float(step))
         cache[skey] = trimesh.Trimesh(v, f, process=True)
     sub = cache[skey]
     fe = _edges_on(sub, lines, theta)
