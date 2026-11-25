@@ -69,6 +69,8 @@ class Domain:
     gravity: np.ndarray | None = None
     # per case, directions.Spread or None (see BoundaryConditions)
     spreads: list = field(default_factory=list)
+    # bearing loads through a rigid ring (insert.Insert; BoundaryConditions.inserts)
+    inserts: list = field(default_factory=list)
     # The study's thermal block on this mesh (thermal.StudyHeat), or None.
     thermal: object = None
     # buildSim warp design (WarpSpec: warpWeight and/or limits), or None.
@@ -767,7 +769,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     # loaded face. The share is the count of cells the node touches.
     tributary = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes).astype(float)
     loads, case_nodes, case_wet, imbalance, spreads = [], [], [], [], []
-    from .insert import applies as _insert_applies, plan as plan_insert
+    from .insert import applies as _insert_applies, plan as plan_insert, plan_spread
 
     inserts, insert_applies = [], _insert_applies(study.material)
     for ci, case in enumerate(study.load_cases):
@@ -800,6 +802,13 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                     basis.append(b)
                 cos_half = -1.0 if ld.direction == "any" else float(np.cos(np.radians(ld.cone)))
                 spread = (basis, force / size, cos_half)
+                if ld.distribution == "bearing" and insert_applies:
+                    # through the ring, solved per direction (insert.RingedSpread)
+                    _cylinder_of(study, ld.region, ld.shape, label)
+                    sh = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
+                    ring = plan_spread(ci, sh, pts, idx, share, size, force / size)
+                    if ring is not None:
+                        inserts.append(ring)
                 force = np.zeros(3)
             if ld.distribution == "bearing" and np.any(force):
                 # A shaft pushes on the half of the bore that faces the force,
@@ -861,7 +870,19 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
                              "a load applied where the part is held does nothing: load a region the supports "
                              "do not cover")
-        loads.append(f * float(getattr(study, "impact_scale", {}).get(case.name, 1.0)))
+        scale = float(getattr(study, "impact_scale", {}).get(case.name, 1.0))
+        if scale != 1.0:
+            # an impact's peak scales the whole case: its rings' loads with it
+            if spread is not None:
+                spread = Spread(spread.base * scale, [b * scale for b in spread.basis], spread.nominal, spread.cos_half)
+                spreads[-1] = spread
+            for ring in inserts:
+                if ring.case == ci:
+                    ring.force = ring.force * scale
+                    ring.fixed = ring.fixed * scale
+                    if ring.thrust is not None:
+                        ring.thrust = tuple(t * scale for t in ring.thrust)
+        loads.append(f * scale)
         case_nodes.append(cn)
         case_wet.append(cw)
         load_nodes |= cn
@@ -1950,6 +1971,7 @@ def _build_domain(study: Study, pitch: float, cut_walls: bool = False) -> Domain
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
                   springs=bc.springs, seats=bc.seats, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
+                  inserts=list(getattr(bc, "inserts", None) or []),
                   volume_weights=_wall_weights(_volume_weights(study, mesh, pres_el), mesh, wall_el),
                   center_of_mass=(None if getattr(getattr(study, "mass_properties", None), "com_target", None) is None
                                   else (study.mass_properties.com_target, study.mass_properties.com_tolerance)),

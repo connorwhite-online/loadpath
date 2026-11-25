@@ -151,9 +151,117 @@ def test_multigrid_takes_seat_springs_as_their_product():
     np.testing.assert_allclose(us[1], us[0], rtol=1e-6, atol=1e-9 * np.abs(us[0]).max())
 
 
+def test_contact_takes_the_rest_of_the_case():
+    """With other loads on the bore (g = P' u_rest) the patch forces still
+    minimize the complementary energy of the whole load."""
+    from scipy.optimize import minimize
+
+    rng = np.random.default_rng(5)
+    n = 10
+    q = rng.normal(size=(n, n))
+    c = q @ q.T + n * np.eye(n)
+    ang = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    wrench = np.zeros((n, 6))
+    wrench[:, 1], wrench[:, 2] = np.cos(ang), np.sin(ang)
+    load = np.array([0, 30.0, 10.0, 0, 0, 0])
+    g = rng.normal(size=n) * 20.0
+    basis = _rigid_basis(np.array([1.0, 0, 0]))
+    lam = contact(c, wrench, load, basis, g)
+    assert (lam >= -1e-12).all()
+    a, b = basis.T @ wrench.T, basis.T @ load
+    keep = np.abs(a).sum(axis=1) > 0
+    a, b = a[keep], b[keep]
+    np.testing.assert_allclose(a @ lam, b, atol=1e-6 * np.linalg.norm(b))
+
+    def energy(x):
+        return 0.5 * x @ c @ x + g @ x
+    ref = minimize(energy, np.full(n, 10.0), jac=lambda x: c @ x + g, bounds=[(0, None)] * n,
+                   constraints=[{"type": "eq", "fun": lambda x: a @ x - b, "jac": lambda x: a}], method="SLSQP",
+                   options={"ftol": 1e-14, "maxiter": 500})
+    assert energy(lam) <= energy(ref.x) + 1e-6 * abs(energy(ref.x))
+
+
+def _factored(st):
+    d = build_domain(st)
+    m = d.mesh
+    bc = boundary_conditions(st, m)
+    k = Stiffness(m, st.material.nu, bc.fixed).assemble(np.full(m.n_elem, st.material.E))
+    free = ~bc.fixed
+    lu = spla.splu(k[free][:, free].tocsc())
+
+    def solve(rhs):
+        out = []
+        for r in rhs:
+            u = np.zeros(m.n_dof)
+            u[free] = lu.solve(np.asarray(r)[free])
+            out.append(u)
+        return out
+    return d, bc, solve
+
+
+def test_optimizer_designs_against_the_ring():
+    """The optimizer's solve (simp._Analysis) with the ring is the checks'
+    (insert.redistribute) on the same design: exactly on a solve that reads
+    the ring's compliance, and after one that does not."""
+    from loadpath.simp import _Analysis
+
+    st = _block()
+    d, bc, solve = _factored(st)
+    ref = redistribute(solve, [bc.loads[0]], bc.inserts, lambda ci: ci, d.mesh.n_dof, d.mesh.node_xyz)[0]
+    u_ref = solve([ref])[0]
+    fe = _Analysis(d, st.material.nu, 1e-10)
+    e = np.full(d.mesh.n_elem, st.material.E)
+    for k in range(3):           # the first reads C, the next two use it
+        loads = list(d.loads)
+        us = fe.solve(e, np.ones(d.mesh.n_elem), [None], rtol=1e-10, loads=loads)
+        u = np.asarray(us[0]).ravel()
+        np.testing.assert_allclose(loads[0], ref, atol=1e-6 * np.abs(ref).max())
+        np.testing.assert_allclose(u, u_ref, atol=1e-6 * np.abs(u_ref).max())
+    assert abs(loads[0] @ u - ref @ u_ref) <= 1e-6 * abs(ref @ u_ref)
+
+
+def test_any_direction_bearing_through_the_ring():
+    """A bearing force of unknown direction (insert.RingedSpread): in each
+    direction it is the ring's answer to that force as written, and the
+    worst is no smaller than any axis'."""
+    from loadpath.directions import expand
+    from loadpath.insert import Rings, ringed_spreads
+
+    raw = {
+        "designSpace": {"type": "box", "min": [-4, -15, 0], "max": [4, 15, 24]},
+        "keepOut": [{"id": "bore", "shape": {"type": "cylinder", "center": [0, 0, 16], "axis": "x", "length": 12,
+                                              "r": 6}}],
+        "supports": [{"shape": {"type": "box", "min": [-4, -15, -0.5], "max": [4, 15, 0.3]}, "fix": "all"}],
+        "loadCases": [{"name": "any", "loads": [{"region": "bore", "force": [0, 0, 100], "direction": "any",
+                                                  "distribution": "bearing"}]}],
+        "material": "petg", "pitch": 1.0, "goal": {"safetyFactor": 2}}
+    st = study_from_dict(raw)
+    d, bc, solve = _factored(st)
+    assert len(bc.inserts) == 1 and bc.inserts[0].thrust is not None
+    rhs, layout = expand(bc.loads, bc.spreads)
+    us = solve(rhs)
+    rings = Rings(bc.inserts, d.mesh.node_xyz, d.mesh.n_dof)
+    case = ringed_spreads(solve, (rhs, us), layout, bc.spreads, rings)[0]
+    worst = case.samples(150)[-1]
+    for direction in ([0, 0, 1.0], [0, 1.0, 0], [0, -0.6, -0.8], [1.0, 0, 0]):
+        dvec = np.array(direction)
+        fixed = study_from_dict({**raw, "loadCases": [{"name": "w", "loads": [
+            {"region": "bore", "force": list(100 * dvec), "distribution": "bearing"}]}]})
+        b2 = boundary_conditions(fixed, d.mesh)
+        f = redistribute(solve, [b2.loads[0]], b2.inserts, lambda ci: ci, d.mesh.n_dof, d.mesh.node_xyz)[0]
+        u = solve([f])[0]
+        c_ring = case.at(dvec)[0]
+        np.testing.assert_allclose(c_ring, f @ u, rtol=1e-4)
+        np.testing.assert_allclose(case.u(dvec), u, atol=1e-4 * np.abs(u).max())
+        assert worst[1] >= c_ring * (1 - 1e-9)
+
+
 if __name__ == "__main__":
     test_contact_is_the_constrained_minimum()
     test_bearing_pressure_is_square_to_the_wall()
     test_ring_keeps_the_bore_round()
     test_multigrid_takes_seat_springs_as_their_product()
+    test_contact_takes_the_rest_of_the_case()
+    test_optimizer_designs_against_the_ring()
+    test_any_direction_bearing_through_the_ring()
     print("ok")

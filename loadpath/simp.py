@@ -137,6 +137,16 @@ class _Analysis:
             self._seat = {"n": 0, "ps": ps, "ks": ks, "ws": None, "lam": {}, "mu": {}, "ref": {}, "dir": {},
                           "cases": {}}
             self._springs = held if domain.springs is None else (domain.springs + held).tocsr()
+        # bearing loads through a rigid ring (insert.py): the optimizer
+        # designs against the contact the checks judge it with
+        self._ring = None
+        if getattr(domain, "inserts", None):
+            from .insert import Rings
+
+            rings = Rings(domain.inserts, domain.mesh.node_xyz, domain.mesh.n_dof)
+            if len(rings):
+                self._ring = {"R": rings, "n": 0, "w": None, "c": None, "ut": {}, "lam": {}, "ref": {}, "dir": {},
+                              "cases": {}}
         self.nu = nu
         self.rtol = rtol
         mesh = domain.mesh
@@ -310,7 +320,123 @@ class _Analysis:
         them depend on the design). `layout` (directions.expand): which of
         the loads are a case's uncertain force along each axis; with seats
         those cases are solved per direction (seated_cases), and a layout
-        given once holds for later calls with as many loads."""
+        given once holds for later calls with as many loads. With bearing
+        rings (_solve_ringed) a case's loads in `loads` are replaced by the
+        ring's, for what reads them after (the compliance f.u)."""
+        if self._ring is not None:
+            return self._solve_ringed(e, xp, us, rtol, loads, layout)
+        return self._solve_any(e, xp, us, rtol, loads, layout)
+
+    def _solve_ringed(self, e, xp, us, rtol, loads, layout):
+        """The cases with their bearing loads through a rigid ring
+        (insert.py), as the checks solve them: the ring's patches' compliance
+        C (and answers W) read every SEAT_EVERY solves, the case solved with
+        the ring's pressures of last time as loads, and the pressures
+        corrected against C in hand: exact on a solve that reads C (u + W
+        dlam), else one more solve of a case only when they moved. By the
+        envelope theorem (the contact minimizes the complementary energy
+        under constraints that do not depend on the design) the compliance's
+        sensitivity is the ordinary one of the displacement with the ring in.
+        A bearing force of unknown direction is an insert.RingedSpread on
+        the patches in hand and the thrusts, exact at the direction that was
+        worst last time (its push solved as one more load)."""
+        d = self.domain
+        st = self._ring
+        rings = st["R"]
+        seats = bool(getattr(d, "seats", None))
+        own = loads is None or loads is d.loads
+        loads = list(d.loads) if own else loads
+        if layout is not None:
+            self._ring_layout = layout
+        lay = getattr(self, "_ring_layout", None)
+        if lay is not None and sum(1 if len(i) == 1 else 3 + (i[0] is not None) for i in lay) != len(loads):
+            lay = None
+        if lay is None:
+            lay = [(i,) for i in range(len(loads))] if len(loads) == len(d.loads) else None
+        if lay is None:
+            return self._solve_any(e, xp, us, rtol, loads, layout)
+        single = {ci: lay[ci][0] for ci in rings.cases if ci < len(lay) and len(lay[ci]) == 1}
+        spreads = getattr(d, "spreads", None) or []
+        spread = [ci for ci in sorted(rings.spread) if not seats and ci < len(lay) and len(lay[ci]) > 1
+                  and ci < len(spreads) and spreads[ci] is not None]
+        if not single and not spread:
+            return self._solve_any(e, xp, us, rtol, loads, layout)
+        fresh = st["w"] is None or st["n"] % self.SEAT_EVERY == 0
+        st["n"] += 1
+        if fresh:
+            p = len(rings)
+            w = self._solve_safe(e, xp, list(st["w"]) if st["w"] is not None else [None] * p, rtol,
+                                 rings.dense(range(p)))
+            st["w"] = np.array([np.asarray(u).ravel() for u in w])
+            c = np.array([rings.gaps(u) for u in st["w"]])
+            st["c"] = 0.5 * (c + c.T)
+            for ci in spread:
+                st["ut"][ci] = [np.asarray(u).ravel() for u in
+                                self._solve_safe(e, xp, list(st["ut"].get(ci, [None, None])), rtol, rings.thrusts(ci))]
+        w, c = st["w"], st["c"]
+        pushed = list(loads)
+        own_idx, base = {}, {}
+        for ci, r in single.items():
+            idx = rings.patches_of(set(rings.cases[ci]))
+            own_idx[ci] = idx
+            base[ci] = rings.strip(loads[r], ci)
+            lam0 = st["lam"].get(ci)
+            if lam0 is None or len(lam0) != len(idx):
+                st["lam"][ci] = lam0 = np.zeros(len(idx))
+            pushed[r] = rings.add(base[ci], lam0, idx)
+        # the uncertain cases' reference pushes: last time's worst direction
+        refs = []
+        for ci in spread:
+            if ci in st["ref"] and not fresh:
+                from .insert import RingedSpread
+
+                dref, lref = st["ref"][ci]
+                b, _ = rings.spread[ci]
+                idx = rings.patches_of({b})
+                probe = RingedSpread(rings, ci, spreads[ci], None, None, rings.thrusts(ci), st["ut"][ci],
+                                     c[np.ix_(idx, idx)], w[idx], idx)
+                refs.append((ci, *probe.push(dref, lref)))
+        n = len(loads)
+        out = self._solve_any(e, xp, list(us) + [None] * len(refs), rtol, pushed + [f for _, f, _ in refs], layout)
+        us, ur = list(out[:n]), list(out[n:])
+        again = []
+        for ci, r in single.items():
+            idx = own_idx[ci]
+            lam0 = st["lam"][ci]
+            sub = c[np.ix_(idx, idx)]
+            g = rings.gaps(us[r], idx) - sub @ lam0
+            lam = rings.solve_case(ci, sub, idx, g)
+            st["lam"][ci] = lam
+            pushed[r] = rings.add(base[ci], lam, idx)
+            if fresh and not seats:
+                us[r] = np.asarray(us[r]).ravel() + (lam - lam0) @ w[idx]      # exact: C and W are this design's
+            elif np.abs(lam - lam0).sum() > 0.02 * max(np.abs(lam).sum(), 1e-12):
+                again.append((ci, r))
+        if again:
+            if seats:
+                us = list(self._solve_any(e, xp, us, rtol, pushed, layout))
+            else:
+                redo = self._solve_safe(e, xp, [us[r] for _, r in again], rtol, [pushed[r] for _, r in again])
+                for (_, r), u in zip(again, redo):
+                    us[r] = u
+        if not own:
+            loads[:] = pushed
+        from .insert import RingedSpread
+
+        ref_of = {ci: (q, u) for (ci, _, q), u in zip(refs, ur)}
+        cases = {}
+        for ci in spread:
+            b, _ = rings.spread[ci]
+            idx = rings.patches_of({b})
+            i0 = lay[ci][0]
+            cases[ci] = RingedSpread(rings, ci, spreads[ci], loads[i0] if i0 is not None else None,
+                                     np.asarray(us[i0]).ravel() if i0 is not None else None, rings.thrusts(ci),
+                                     st["ut"][ci], c[np.ix_(idx, idx)], w[idx], idx,
+                                     ref=None if fresh else ref_of.get(ci))
+        st["cases"] = cases
+        return us
+
+    def _solve_any(self, e, xp, us, rtol=None, loads=None, layout=None):
         if getattr(self.domain, "seats", None):
             if layout is not None:
                 self._layout = layout
@@ -419,6 +545,14 @@ class _Analysis:
             wc = case.worst(SMOOTH if smooth is None else smooth, start=st["dir"].get(ci))
             st["dir"][ci], st["ref"][ci] = case.last
             out[ci] = wc
+        rg = self._ring
+        if rg is not None:
+            # a bearing force of unknown direction through its ring (insert.RingedSpread)
+            for ci, case in rg["cases"].items():
+                wc = case.worst(SMOOTH if smooth is None else smooth, start=rg["dir"].get(ci))
+                rg["dir"][ci] = case.last[0]
+                rg["ref"][ci] = case.last
+                out[ci] = wc
         return out
 
     def _solve(self, e, xp, us, rtol=None, loads=None):

@@ -664,6 +664,16 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None,
                 spread = (basis, force / mag,
                           -1.0 if ld.direction == "any" else float(np.cos(np.radians(ld.cone))))
                 f[nodes] += force[None] * share[:, None]
+                if rings and ld.distribution == "bearing":
+                    # through the ring, solved per direction (insert.RingedSpread)
+                    from .domain import _cylinder_of
+                    from .insert import plan_spread
+
+                    _cylinder_of(study, ld.region, ld.shape, f"load in case {case.name!r}")
+                    wide = _region_nodes(study, shape, pts, max(tol, ring_reach or 0.0), surf)
+                    ring = plan_spread(ci, shape, pts[wide], wide, _area_shares(pts, faces, wide), mag, force / mag)
+                    if ring is not None:
+                        inserts.append(ring)
                 force = np.zeros(3)
             if ld.distribution == "bearing":
                 # as domain.py: the shaft pushes on the half of the bore facing
@@ -676,12 +686,13 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None,
                     if fb is not None:
                         f[nodes] += fb
                         radial = force - (force @ shape.axis) * shape.axis
-                        if rings and np.any(radial):
+                        if rings:
                             # the ring bears on the bore the mesh has, which a part or block
                             # made from the grid puts up to an element off the drawn keep-out
                             wide = _region_nodes(study, shape, pts, max(tol, ring_reach or 0.0), surf)
                             ring = plan_insert(ci, shape, pts[wide], wide, _area_shares(pts, faces, wide), force,
-                                               bearing_forces(shape, pts[nodes], share, radial))
+                                               bearing_forces(shape, pts[nodes], share, radial)
+                                               if np.any(radial) else 0 * pts[nodes])
                             if ring is not None:
                                 ring.at = nodes
                             if ring is not None:
@@ -702,7 +713,7 @@ def _load_vectors(study, pts, surf, tol, faces=None, spreads=None, inserts=None,
     return cases
 
 
-def _worst_directions(loads, spreads, solve, stress, counted):
+def _worst_directions(loads, spreads, solve, stress, counted, ringed=None, judge=None):
     """The displacement of every case, a force of unknown direction taken
     in the direction that stresses the part most: (displacements, the loads
     as judged, the directions or None).
@@ -717,7 +728,10 @@ def _worst_directions(loads, spreads, solve, stress, counted):
     worst one is found on the stresses themselves
     (directions.worst_stress_direction, over `counted` vertices).
     `solve(loads)` gives a displacement per load, `stress(us)` the stress
-    tensor at the vertices for each."""
+    tensor at the vertices for each. `ringed(ext, us, layout)`: the cases
+    whose bearing force goes through a ring ({case: insert.RingedSpread}),
+    judged with the contact solved per direction (pushseat.worst_stress,
+    read by `judge` where given)."""
     if not any(sp is not None for sp in spreads):
         return solve(loads), loads, [None] * len(loads)
     from .directions import Spread, worst_stress_direction
@@ -737,14 +751,25 @@ def _worst_directions(loads, spreads, solve, stress, counted):
         layout.append((i0, len(ext), len(ext) + 1, len(ext) + 2))
         ext.extend((name, b, ln) for b in basis)
     us = solve(ext)
-    need = sorted({i for idx in layout if len(idx) > 1 for i in idx if i is not None})
+    rs = ringed(ext, us, layout) if ringed is not None else {}
+    need = sorted({i for ci, idx in enumerate(layout) if len(idx) > 1 and ci not in rs for i in idx if i is not None})
     sig = dict(zip(need, stress([us[i] for i in need])))
     out_u, out_l, dirs = [], [], []
-    for (name, f, ln), sp, idx in zip(loads, spreads, layout):
+    for ci, ((name, f, ln), sp, idx) in enumerate(zip(loads, spreads, layout)):
         if sp is None:
             out_u.append(us[idx[0]])
             out_l.append((name, f, ln))
             dirs.append(None)
+            continue
+        if ci in rs:
+            from .pushseat import worst_stress
+
+            sc = rs[ci]
+            n = len(us[idx[1]])
+            d, mu, _ = worst_stress(sc, lambda v: stress([np.asarray(v).reshape(n, 3)])[0], counted, judge=judge)
+            out_u.append(sc.u(d, mu).reshape(n, 3))
+            out_l.append((name, sc.f(d).reshape(n, 3)[: len(f)], ln))
+            dirs.append(np.asarray(d, float))
             continue
         basis, nominal, cos_half = sp
         d, _ = worst_stress_direction(Spread(None, None, np.asarray(nominal, float), cos_half),
@@ -799,6 +824,32 @@ def _ringed(loads, spreads, inserts, nodes, solver):
     rhs = redistribute(lambda r: [u.ravel() for u in solver.solve([("", v.reshape(-1, 3), None) for v in r])], rhs,
                        inserts, lambda ci: None if spreads[ci] is not None else ci, 3 * n, nodes)
     return [(name, r.reshape(n, 3)[: len(f)], ln) for (name, f, ln), r in zip(loads, rhs)]
+
+
+def _spread_rings(spreads, inserts, nodes, solver):
+    """_worst_directions' `ringed`: the cases whose bearing force of
+    unknown direction goes through a ring (insert.RingedSpread), on
+    `solver`."""
+    if not any(ins.thrust is not None for ins in inserts):
+        return None
+    from .directions import Spread
+    from .insert import Rings, ringed_spreads
+
+    n = len(nodes)
+
+    def flat(f):
+        v = np.zeros(3 * n)
+        v[: np.asarray(f).size] = np.asarray(f, float).ravel()
+        return v
+
+    def inner(r):
+        return [u.ravel() for u in solver.solve([("", v.reshape(-1, 3), None) for v in r])]
+
+    def ringed(ext, us, layout):
+        sps = [None if sp is None else Spread(None, None, np.asarray(sp[1], float), sp[2]) for sp in spreads]
+        return ringed_spreads(inner, ([flat(e[1]) for e in ext], [flat(u) for u in us]), layout, sps,
+                              Rings(inserts, nodes, 3 * n))
+    return ringed
 
 
 def _seated(seats, loads, spreads, nodes, size, E, solver_for, stress, counted, judge=None, inserts=None):
@@ -1723,7 +1774,9 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
             solver = _solver(nodes, conn, mat.E, el, fixed_dof, springs, len(pts), edges)
             try:
                 loads = _ringed(loads, spreads, inserts, nodes, solver)
-                us, _, dirs = _worst_directions(loads, spreads, solver.solve, stress_of, far)
+                us, _, dirs = _worst_directions(loads, spreads, solver.solve, stress_of, far,
+                                                ringed=_spread_rings(spreads, inserts, nodes, solver),
+                                                judge=lambda sig: peak_of(equivalent_stress(sig, m_c))[0])
             finally:
                 solver.close()
         else:

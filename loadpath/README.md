@@ -192,8 +192,8 @@ is how a shaft pushes on a bore or a bolt holds a hole. Loads take a `force`
 a carried `mass` (kg, with `dynamic`, `gravity` and optional `at`, its centre
 in mm) becomes its weight along gravity and that weight's moment about the
 region; `"distribution": "bearing"` spreads a force over the half of a bore it pushes
-on, as a shaft does: square to the wall, and in the checks as a rigid ring that only
-pushes and keeps the bore round (insert.py). Supports take `"fix": "pin"` on a cylinder for a joint
+on, as a shaft does: square to the wall, and in the optimizer and the checks as a rigid ring
+that only pushes and keeps the bore round (insert.py; with a direction of "any", per direction). Supports take `"fix": "pin"` on a cylinder for a joint
 that turns: held radially and axially, free to rotate.
 
 A **pressure** acts in a keep-out, the fluid's volume:

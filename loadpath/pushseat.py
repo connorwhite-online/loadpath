@@ -692,6 +692,11 @@ class SeatedSpread:
     def coefficients(rows):
         return np.array([np.concatenate([[1.0], r[0], r[2]]) for r in rows])
 
+    def norms(self):
+        """The sizes of the basis' vectors (worst_stress weighs them by it)."""
+        return np.array([np.linalg.norm(self.basis()), *(np.linalg.norm(u) for u in self.ub),
+                         *np.linalg.norm(self.seat.w, axis=1)], float)
+
     def combine(self, q):
         """sum_k q_k basis_k without forming the basis."""
         q = np.asarray(q, float)
@@ -770,9 +775,8 @@ def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, stric
         rows.insert(0, (d, c, mu, lam, lifts))
     if strict and any(r[4] for r in rows):
         raise ValueError(LIFTS + " A force of unknown direction lifts it in some direction.")
-    q = SeatedSpread.coefficients(rows)
-    norms = np.array([np.linalg.norm(case.basis()), *(np.linalg.norm(u) for u in case.ub),
-                      *np.linalg.norm(case.seat.w, axis=1)], float)
+    q = case.coefficients(rows)
+    norms = case.norms()
     norms = np.maximum(norms, 1e-300)
     qs = q * norms
     a, s, bt = np.linalg.svd(qs, full_matrices=False)
@@ -813,7 +817,7 @@ def worst_stress(case: SeatedSpread, read, mask, scale=None, n: int = 300, stric
         c0, _, mu0, lam0, lf0 = case.at(nominal)          # the nominal direction itself, exactly
         rows = list(rows) + [(nominal, c0, mu0, lam0, lf0)]
         cand = sorted(set(np.argsort(-vall)[:12].tolist() + [bs, len(rows) - 1]))
-        qx = SeatedSpread.coefficients([rows[c] for c in cand])
+        qx = case.coefficients([rows[c] for c in cand])
         top = -np.inf
         for c, qc in zip(cand, qx):
             sg = read(case.combine(qc))

@@ -330,9 +330,10 @@ _LOAD = {
         "torque": {**_VEC3, "description": "Alias of moment."},
         "distribution": {"enum": ["uniform", "bearing"],
                          "description": "'bearing': a shaft, pin or bearing ring in the bore pushes on the half "
-                                        "of it the force faces, square to the wall (the checks solve it as a "
-                                        "rigid ring that only pushes, on a part a tenth as stiff as steel or "
-                                        "less); its axial part bears on the faces that face it"},
+                                        "of it the force faces, square to the wall (the optimizer and the checks "
+                                        "solve it as a rigid ring that only pushes, on a part a tenth as stiff "
+                                        "as steel or less, per direction for a force of unknown direction); its "
+                                        "axial part bears on the faces that face it"},
         "pressure": {"type": "number",
                      "description": "MPa gauge (1 bar = 0.1 MPa) inside the keepOut named by 'region' (the fluid's "
                                     "volume), on every wall lining it; negative is a vacuum. A study whose only "

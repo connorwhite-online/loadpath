@@ -2255,8 +2255,19 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             return stiff, us
         if bc.inserts and layout is not None:
             memo = {}
-            rings(lambda r: _solve_grid(study, g, study.elastic(mat), moduli, r, memo), rhs, layout)
-            return _solve_grid(study, g, study.elastic(mat), moduli, rhs, memo)
+
+            def inner(r):
+                return _solve_grid(study, g, study.elastic(mat), moduli, r, memo)
+            rings(inner, rhs, layout)
+            stiff, us = inner(rhs)
+            if into is not None:
+                # a bearing force of unknown direction: the ring solved per direction
+                from .insert import Rings, ringed_spreads
+
+                into.clear()
+                into.update(ringed_spreads(lambda r: inner(r)[1], (rhs, us), layout, spreads,
+                                           Rings(bc.inserts, hm.node_xyz, hm.n_dof)))
+            return stiff, us
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
 
     # Stress is read against strength as an average over the material's own
