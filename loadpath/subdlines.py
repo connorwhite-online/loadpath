@@ -270,6 +270,25 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     # motorcycle from a star point), so every rectangle beside the ring has
     # a corner there and none runs across the seam.
     seams = set()
+    # ---- lines: maximal straight runs of drawn edges
+    # A line that meets a crease stops there: the surface turns a corner
+    # at the crease, and one C2 curve laid on through it misses the turn
+    # (0.21-0.27 mm a face off an L-bracket's edges); a line along a crease
+    # goes on along it
+    shp = cage.sharpness
+    crs = cage.crease
+
+    def stops(v, e1, e2):
+        # a crease's free end (one crease edge, a dart) is smooth across:
+        # the line, and the rectangle side along it, run on through
+        return bool(evv[v] or v in seams or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
+    def halvings(v):
+        # knots halved toward each star point; one fewer at a star point on
+        # a crease, whose sectors are one-sided fans of a face or two: four
+        # halvings there swing (a 1.3 deg kink between rectangles at a
+        # plate's pocket corner). Per point: the lines and every rectangle
+        # round it agree
+        return 0 if not evv[v] else depth - 1 if shp[v] >= 2 else depth
     for _seam_round in range(4 * m + 1):
         ring = None
         # a rectangle that wraps round a member (two opposite sides share a
@@ -303,25 +322,6 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         if merged:
             pieces = find_pieces()
 
-        # ---- lines: maximal straight runs of drawn edges
-        # A line that meets a crease stops there: the surface turns a corner
-        # at the crease, and one C2 curve laid on through it misses the turn
-        # (0.21-0.27 mm a face off an L-bracket's edges); a line along a crease
-        # goes on along it
-        shp = cage.sharpness
-        crs = cage.crease
-
-        def stops(v, e1, e2):
-            # a crease's free end (one crease edge, a dart) is smooth across:
-            # the line, and the rectangle side along it, run on through
-            return bool(evv[v] or v in seams or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
-        def halvings(v):
-            # knots halved toward each star point; one fewer at a star point on
-            # a crease, whose sectors are one-sided fans of a face or two: four
-            # halvings there swing (a 1.3 deg kink between rectangles at a
-            # plate's pocket corner). Per point: the lines and every rectangle
-            # round it agree
-            return 0 if not evv[v] else depth - 1 if shp[v] >= 2 else depth
         line_of = {}                              # edge -> (line, index, same direction as the line)
         lines = []
         for q0 in range(m):
