@@ -438,6 +438,86 @@ cells. `LOADPATH_WALL_CONSTRAINED=0` keeps the refined whole-cell grid for
 it. Open: thermal studies (their expansion load is per whole cell); a
 midsurface shell for housings past the size above.
 
+### A fourth batch: hubs, sockets, a bearing that turns
+
+Six more everyday parts written cold and frozen on main 92b2ab1 before any
+run (`"batch": 4`): a ceiling plant hook, a handwheel on a D-shaft (SLS
+PA12), a bed-leg riser standing on the floor by friction alone, a strap
+joiner (MJF PA12), a rope pulley on a 608 bearing and a 13 mm box-end
+wrench. Four of the six hold something by its shape, not by a screw: a
+D-flat, a hex, a pressed bearing, a leg in a cup.
+
+| Part | Cold (main 92b2ab1) | After this round's fixes (main 7c9008c, 80c9c75) |
+|---|---|---|
+| ceiling plant hook (PETG) | **first try**, 9.9 g, SF 2.00 on tets, 23 min. The part carries its loads, but nothing keeps the hanger's wire on it: the study preserved no lip, so none was grown | not re-run |
+| handwheel on a D-shaft (PA12, SLS) | refused at check: "a fit needs a plain cylinder" (the D-bore is a cylinder minus a box) | the slip fit now opens every wall of a compound bore: check warns, truly, that the D-bore is held fixed on every wall, as if glued; passes 16.7 g, SF 2.27 on tets, 41 min. That pass is on a hold it does not have. Twin `-b` (bore as push "normal", friction 0.3): fails honestly in 17 min, the block reads 1.95 for 2 (97%), its peak at the D-flat's corner, where the shaft's flat bears on a 3.9 mm chord. Before two seat-budget fixes (main 80c9c75, f0cbfcb) it read every solve as lifting off its shaft, then put the turning moment on friction |
+| bed-leg riser (PLA, friction floor) | no report: killed for memory at 24 min in the tet check (2.45M dofs, 336 seat right-hand sides dense) | **first try**, 53.1 g, SF 3.06 on tets; 65 min, 29 of them the tet check (over the 40 min limit) |
+| strap joiner (PA12, MJF) | fails honestly in 71 s: the block reads 0.71 for 2, peak at the slot's end | not re-run (nothing changed it) |
+| rope pulley on a 608 (PETG) | passes, 12.0 g, voxel SF 2.29: a false pass. The bearing was pressed in and the only support, so the static rope load hung the rim by one stub off the bearing; tets read 0.59 and the voxel reading was delivered anyway | check now says the pulley turns on its bearing (a static load on a wheel is one angle of many). Twin `-b` (rope load in any direction in the wheel's plane, on the whole groove floor): passes 13.8 g, SF 2.62 on the fine grid, 43 min; check warns, truly, that the flanges print on supports |
+| 13 mm box-end wrench (PETG) | passes, 16.6 g, SF 2.58: a false pass, the hex fixed all round, so the part gripped the nut on one side | check warns the hex is held as if glued. Twin `-b` (hex as push "normal", friction 0.2): fails honestly in 7 min, the block reads 1.81 for 2 (91%), peak where the ring meets the handle at the envelope's corner |
+
+Counted by the runner: cold, first try 2 of 6, a passing part 3 of 6. Read
+as a user would, 1 and 1: the wrench and pulley passes were false and the
+handwheel never ran. After the fixes: first try 2 of 6 (hook, riser); a real passing part from
+the study or its twin 3 of 6 (hook, riser, pulley); three honest fails told
+what the envelope carries (strap joiner 35%, wrench 91%, handwheel 97%).
+The handwheel as written passes only glued, and check says so.
+
+What the batch showed:
+
+- **A socket that only pushes** (fixed). A nut in a wrench's hex, a
+  D-shaft in a hub, a leg in a cup: what fills the keep-out pushes on the
+  walls it bears on and pulls on none. Held "fix", the wall is glued to it
+  all round, and the wrench came out a fork on one side of its nut.
+  `supports[].push: "normal"` (`domain.wall_seats`) groups the keep-out's
+  wall nodes by the direction the wall faces (SDF gradient, 15 degree
+  groups, as a bore's radial sectors are) and makes each group a seat; a
+  torque is carried by the flats bearing. `check` names a non-round
+  keep-out held fixed on every wall unless it is pressed or bonded.
+- **A fit on a bore with a flat** (fixed). `fit` refused any keep-out
+  that was not a plain cylinder. A D-bore or keyed bore is a cylinder with
+  something added or taken; the fit now moves every wall of the compound
+  by the clearance of its one plain cylinder (boxes, cylinders and spheres
+  grown or shrunk by their polarity in the compound), and reports the
+  inscribed size it measures.
+- **A wheel loaded at one angle** (warned; open as a load). A pulley,
+  wheel or roller held only on its pressed bearing turns: the rope's pull
+  meets every part of the rim in turn. `check` now says so when every
+  support is a press-fit bore on one axis and a load is across it with a
+  fixed direction, and points to `direction: "xy"` (any direction in the
+  wheel's plane). Left: a load that moves round the rim as the part turns,
+  stated as one.
+- **A seated tet check out of memory** (fixed; slow, open). The riser's
+  confirm had 2.45M dofs and 336 right-hand sides (cases, and a unit push
+  and two friction rows per seat patch), dense, 6.5 GB, then a 3.3 GB
+  float64 copy, then PARDISO's own analysis of a factor that could not fit.
+  Now the pushes are sparse, the answers float32, the Gram products take
+  only the columns they need, PARDISO refuses a factor before its analysis
+  when even a fill of five times the matrix cannot fit, and patches are cut
+  finer only at the contact's front (a bearing patch beside an open one),
+  not over a face pressed down all over: 10.6 GB peak, SF 3.15, 27 min.
+  An active set on stiff springs instead of the patch rows was tried: CG
+  needed 276 to 875 iterations a solve over many rounds, dropped.
+- **Seats past the patch budget** (fixed, 80c9c75). A D-socket is ~35
+  seats (its round wall in 15 degree groups, the flat, the floor, and the
+  edges between); the 48-patch budget left one each, the outline's three
+  corners overran it, and the squares' size came out NaN, giving empty
+  patches: every solve of the handwheel twin read as lifting off its shaft
+  though check's statics held it. A seat with no room for its corners is
+  now one patch (two at the ends of its longest span), and past the
+  budget the seats share it by their size: one patch at a D-flat's centre
+  carries no torque about the shaft, and the twin's turning moment had all
+  gone to friction (2209 of 3000 N mm).
+- **A seated part's buckling read near zero** (open). One handwheel design
+  read a buckling factor of 0.0002 (others 2.2 to 12): a free motion the
+  linearized seats leave unheld reads as a buckling mode.
+- **The tet reading below the goal, delivered on voxel** (open). The cold
+  pulley's tet check read 0.59 and the voxel 2.29 went out. The tet step-back
+  rule (deliver the voxel reading within a band) should not cover a 4x gap.
+- **What the part is for, not said** (open). The hook carries its loads
+  and lets the wire slide off; a retention lip is function, not load, and
+  no study field says it.
+
 ## Gaps, ranked by how many users they hit
 
 "Hits" is the share of the held-out parts where the gap decided the
@@ -465,6 +545,12 @@ outcome on the cold run, plus a judgement of how often a new user meets it.
 | 12e | A screwed part held across its screws and pushed on a seat: nothing holds it off the wall | 1, 2 | 3 of 6 in the third batch, every part screwed to a wall | **Fixed**: a screw whose bore is a support holds the part by its head along the screw (`fasteners._screw_holds`); `check` solves the supports' rigid-body statics and refuses a load nothing holds in under a second |
 | 12f | A tube in a slip bore held fixed all round: a false pass, the part bonded to its tube | 2 | 1 of 6 in the third batch, every clamp, tee or socket on a tube | **Fixed**: `supports[].push: "radial"` (the bore pushes outward where it bears, friction carried over); `check` names a slip or clearance bore held fixed across its axis. The tee: 16.6 g glued, 59.0 g held as it is |
 | 12g | A seated part's check: 149 right-hand sides on CG, 84 min | 8 | 1 of 6 | **Fixed**: one factor for all of them, given more memory when there are many (97 s) |
+| 12h | A nut, D-shaft or leg in a non-round socket held fixed on every wall: a false pass, the part grips it on one side | 2 | 2 of 6 in the fourth batch (wrench, handwheel), every hub, socket and wrench | **Fixed**: `supports[].push: "normal"` (the wall's nodes grouped by the way they face, each group a seat); `check` names a non-round keep-out held as if glued. Wrench twin: 16.6 g glued, honest fail at 91% held as it is |
+| 12i | A fit on a bore with a flat or key refused | 1 | 1 of 6 in the fourth batch | **Fixed**: the fit moves every wall of a compound bore by its plain cylinder's clearance |
+| 12j | A wheel on its pressed bearing loaded at one angle: a false pass | 2 | 1 of 6 in the fourth batch, every pulley, roller and wheel | **Warned**: `check` says it turns and points to `direction: "xy"`; twin passes 13.8 g. Open: a load that travels round the rim |
+| 12k | A seated tet check out of memory or slow (2.45M dofs, 336 right-hand sides) | 8 | 1 of 6 in the fourth batch | **Partly**: sparse pushes, float32 answers, PARDISO refused before its analysis when it cannot fit, refinement only at the contact front: 10.6 GB, 27 min. Open: 27 min is over half a run's 40 |
+| 12l | A voxel pass delivered where the tet check reads far below the goal (0.59 against 2.29) | 6 | 1 of 6 in the fourth batch | **Open** |
+| 12m | What a part is for beyond its loads (a hook's lip that keeps the wire on) has no field | 7 | 1 of 6 in the fourth batch | **Open** |
 | 12d | Parts come out lumpy, beaded along edges and lopsided | 8 | all 12 rendered parts, worst on small ones | **Fixed** in four places, each found on development parts (see "Why parts looked misshapen" below) |
 | 13 | Physical ground truth | 9 | all | **Open**: calibration prints (calibration/) |
 
