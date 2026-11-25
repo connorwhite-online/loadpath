@@ -229,7 +229,7 @@ a printed part is held.
 
 | Part | Cold | After this round's fixes |
 |---|---|---|
-| pillow block 608 (PETG) | fails: the block meets "0% of the goal, a limit other than strength" | fails honestly: the solid envelope carries 93% of the side load at SF 2.5 (2.33), and the run says so |
+| pillow block 608 (PETG) | fails: the block meets "0% of the goal, a limit other than strength" | failed, read as honest: the solid envelope carried 93% of the side load at SF 2.5 (2.33). That reading was the load model's, not the envelope's (below). With the bearing as a steel ring that only pushes: **first try**, 11.0 g, SF 2.51 (fine grid 2.67, tets 2.47), 22 min |
 | pegboard hammer holder (PLA) | no report: killed at 37 min | **passes**, 12.6 g, SF 2.10, 40 min; check warns, truly, that its horizontal pegs print on supports |
 | tube tee 20 mm (PETG) | **first try**, 16.6 g, SF 3.5: a false pass, its rail bore glued all round | check warns the slip bore is held as if glued; twin `-b` holds the rail as a radial seat with friction: **first try**, 59.0 g, SF 2.56, 67 min: a sleeve round the rail, as a tee that cannot bond to its tube has to be |
 | laptop bracket (PLA) | fails: "0% of the goal" | **passes**, 6.4 g, SF 2.08, 42 min |
@@ -260,9 +260,37 @@ What the batch showed:
   bore that pushes outward on its wall where it bears (twelve seats round
   the axis, friction carried over), and check names a slip or clearance
   bore held fixed across its axis.
-- **The pillow block's limit is real**. Its bearing seat sits 6 mm from
-  the envelope's edge; the solid block reads SF 2.33 for 2.5. Before the
-  screw fix it read 0 for the wrong reason.
+- **The pillow block's limit was the load model's** (fixed). Its solid
+  block read SF 2.33 for 2.5, peaking in the shoulder beside the shaft's
+  hole, and the run called the envelope too small. Two things were wrong
+  with how a `"bearing"` load reached the part. It went on every node
+  within a cell of the seat keep-out, the shoulder face included, along the
+  force's direction: 31% of the side load pushed the shoulder sideways
+  beside the hole. And it was a fixed cosine on a bore free to go oval,
+  as if no ring were in it, where a 608's outer ring is ~17x as stiff in
+  ring bending as the 3 mm of PETG over it. Now the pressure is square to
+  the wall (`domain.bearing_forces`: a shoulder takes none of a radial
+  load, the thrust bears on the shoulder), and the checks (voxel, tets,
+  the solid block) solve the radial part as a rigid ring in frictionless
+  push-only contact (`insert.py`: patch compliances on the check's own
+  factor, a small QP with the ring's equilibrium, the ring free to tilt).
+  On P1 tets of the solid block the ring raised the shoulder 1.3-1.5 to
+  1.6-2.3 and the wall over the bore 1.7-2.5 to 3.6-4.5; the block reads
+  2.81 voxel, 3.07 tet. Checked on a part not in the set, a 6001 pillow
+  block in PLA with a 2 mm wall over its bore: short either way (tets 1.47
+  old, 1.50 new, at the same spot), so the ring is not a blanket gain. The
+  optimizer still designs against the fixed pressure (left: the ring in the
+  optimizer, a direction-unknown bearing load as a ring). The tet check
+  also caught a scattered few bore nodes on a grid-made bore (the block's
+  bore sat ~0.4 mm off the keep-out, tolerance 0.2); the ring takes the
+  bore's surface within an element.
+- **A seated fine check past ~100k cells ran out of memory** (fixed). The
+  seats' patch springs (k p p', (3n)^2 entries for a patch of n nodes)
+  went to the multigrid assembled, and its node-block layout padded them
+  9x: 32M entries, killed at 14 GB on the pillow block's 150k-cell
+  confirm. The multigrid now applies them as their product on every level
+  (`mg.GridElasticity(lowrank=)`), and pads a matrix only when that at
+  most doubles it: 6.8 min and 6 GB, the same safety factor to 1e-10.
 - **A part in two pieces** (open, gap 6). The Pi mount's board loads split
   evenly onto its four standoffs, and each screw carries the two on its
   side: no load needs the left half joined to the right, so the search
