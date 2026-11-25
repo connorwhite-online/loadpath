@@ -2008,7 +2008,12 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
         # and their edge stress grows without bound as the grid refines
         # (the tool grip's cover read 0.09 here and 5.5 in run's own check
         # of the same file, on the same solution)
-        vr = verify_part(study, mesh, max_cells=cells, contact_band=choose_pitch(study))
+        # (the run's own band, study.contact_band at the run's pitch: at one
+        # pitch here the desk hub read SF 1.30 at the board cradle's edge,
+        # 0.8 mm from its load, and 3.2 at the run's 1.6 mm, as its design
+        # was judged; every check of a part judges the same material)
+        from .study import contact_band
+        vr = verify_part(study, mesh, max_cells=cells, contact_band=contact_band(study, choose_pitch(study)))
         sf = study.goal.safety_factor if study.goal is not None else None
         out["verify"] = {k: vr[k] for k in ("safetyFactor", "keepOutIntrusion", "outsideDesignSpace",
                                             "preserveMissing", "bodies", "bucklingFactor", "thermal", "cases",

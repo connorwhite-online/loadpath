@@ -883,7 +883,7 @@ def optimizer_radius(study: Study, domain: Domain) -> float | None:
     return float(stress_radius(study, domain.pitch)[0])
 
 
-def contact_band(study: Study, domain: Domain) -> float:
+def contact_band(study: Study, domain: "Domain | float") -> float:
     """How far from an applied load or a support stress is left out of the
     peak, mm: nearer, the peak is the edge of an idealized rigid support or
     patch, not the part. One distance for every check of a study's parts
@@ -895,7 +895,7 @@ def contact_band(study: Study, domain: Domain) -> float:
     0.92 to 1.02 over seven designs.)"""
     from .crosscheck import element_size
 
-    return max(2.0 * element_size(study), 1.5 * domain.pitch)
+    return max(2.0 * element_size(study), 1.5 * float(domain.pitch if hasattr(domain, "pitch") else domain))
 
 
 def _travel_on_both(voxel_cases: list, tet_cases: list) -> list:
