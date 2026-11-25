@@ -223,7 +223,15 @@ def patches(seats, xyz, n_dof, most: int = MAX_PATCHES):
     mus = [float(s[3] or 0.0) if len(s) > 3 else 0.0 for s in seats]
     pre = [float(s[4] or 0.0) if len(s) > 4 else 0.0 for s in seats]
     per = max(1, most // max(len(seats), 1))
+    sizes = np.array([len(s[0]) for s in seats], float)
+    if per < 3 and sizes.sum() > 0:
+        # more seats than the budget gives each its outline (a socket's walls): the budget by
+        # the seats' sizes, so a flat that takes a torque keeps the ends it bears on
+        allow = np.maximum(1, np.floor(most * sizes / sizes.sum())).astype(int)
+    else:
+        allow = np.full(len(seats), per)
     for si, s in enumerate(seats):
+        per = int(allow[si])
         idx, n, w = s[0], s[1], s[2]
         idx, w = np.asarray(idx), np.asarray(w, float)
         n = np.asarray(n, float)
@@ -232,10 +240,16 @@ def patches(seats, xyz, n_dof, most: int = MAX_PATCHES):
         dirs = [n] + (list(_across(n)) if mus[si] > 0 else [])
         keys = np.full(len(idx), -1)
         if len(idx) > per and per < 3:
-            # no room for the outline's corners (a socket's walls are many seats): one patch, the
-            # face's push at its centre; a node's own push past the budget is what NaN patches were
+            # no room for the outline's corners: one patch at the face's centre, or two at the
+            # ends of its longest span (a strip twisted about its middle bears at its ends)
             keys[:] = 0
             corners = [0]
+            if per == 2:
+                q = xyz[idx] - xyz[idx].mean(axis=0)
+                q -= np.outer(q @ n, n)
+                lead = np.linalg.svd(q, full_matrices=False)[2][0] if len(idx) > 1 else n
+                keys[:] = (q @ lead > 0).astype(int)
+                corners = [0, 1]
         elif len(idx) > per:
             # a corner is its node and the nodes beside it: one node alone can hang off a sliver of a cut cell
             from scipy.spatial import cKDTree
