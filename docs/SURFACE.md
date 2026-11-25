@@ -329,8 +329,9 @@ corner there exactly (`loadpath/subdcrease.py`, on by default,
   shrinks it like a pulled string: a 4 mm hole's rim drew in 0.6-1.7 mm);
   the fairing also stops before it closes a hole the process prints. In
   the rectangles, a line stops where it crosses a crease, and the knots
-  toward a star point on a crease are halved three times, not four
-  (four swung there: a 1.3 deg kink beside a pocket corner).
+  toward a star point on a crease are halved four times, as elsewhere
+  (three left rectangles folded beside star points on a many-hole lid's
+  creases; see below).
 - **Own test parts (tol 0.1, not the held-out set):**
 
   | | smooth STEP faces | p99 / max mm | creased STEP faces | p99 / max mm |
@@ -345,6 +346,60 @@ corner there exactly (`loadpath/subdcrease.py`, on by default,
 ![plate: input, smooth STEP, creased STEP](images/surface/plate-creases.png)
 
 ![L-bracket: input, smooth STEP, creased STEP](images/surface/lbracket-creases.png)
+
+## Many-hole optimized parts (2026-11-25)
+
+A topology-optimized part with many holes (a box cover, 23 holes; a
+fastened lid, genus 15; a wrist link, genus 34) ran out of 15 GB at 0.1 mm
+or came out as thousands of face-by-face patches that did not sew. Root
+causes, each fixed where it starts:
+
+- **Memory.** The feature remesh split every long CAD triangle down to the
+  remesh step before Botsch-Kobbelt, a quadtree that makes (L/step)^2
+  triangles per sliver (12M on the lid). It now splits to four steps and
+  lets the remesh do the rest (1.5 GB). The closest-point search split the
+  mesh the same way and answered from 16 nearest centroids (up to 0.07 mm
+  wrong); it now files each triangle in a uniform grid by points no more
+  than half a cell from any point of it and searches rings of cells until
+  no nearer triangle can exist: exact, 0.13 GB, 0.85 s per 760k points.
+- **A crease right round a hole's rim** with no star point on it closed a
+  line on itself; the ring is opened at a seam (the vertex most lines
+  meet) with lines drawn out from it.
+- **Folds at creases** were read where a quad was compared with normals
+  averaged across the crease; each quad is now compared with its
+  neighbours across smooth edges only. **A crevice narrower than the
+  process prints** (a 0.1-0.5 mm wedge where a boss meets two walls) is a
+  closed gap, not a miss to chase with finer faces.
+- **The rectangles.** A line stops at a crease corner even where it runs
+  straight on; the rectangle beside it had the stop mid-side, so a line is
+  drawn out from every stop. A crease that turns at a regular vertex, three
+  or more creases meeting, and a crease's free end (a dart) give a limit
+  that is no bicubic (0.03-0.11 mm a face off): those vertices are stops
+  and get star points' knots. If the rectangles still meet at more than
+  KINK (1 deg) but face-by-face patches do not sew, the rectangles are kept.
+
+| tol 0.1 | before | after |
+|---|---|---|
+| fastened lid (dev) | 12k face patches, 66 free edges, 10.5 GB | 779 faces, valid, p99 0.083 mm, 9.5 min, 7.6 GB |
+| wrist link (dev) | 10,012 face patches, 18 free edges | 1,400 faces, valid, p99 0.075 mm, 8.5 min, 7.6 GB |
+| box cover (held out, measured once) | out of memory; capped: 12,910 faces, 39 free edges, p99 0.17, 18/27 lines | 858 faces, valid, p99 0.070 mm, max 1.14 mm, 26/27 lines, 16.5 min, 8.4 GB |
+
+**Holes the printer closes.** Instant Meshes drops a handle narrower than
+its faces and the fit spans it. Whether that is right is the process's
+call: a hole under the smallest the process prints open (FDM 2 mm) closes
+on the printer anyway, so the printed part has it filled, and filling only
+adds material, which never makes a linear-elastic part more compliant (the
+check still holds); opening it to the minimum would take material out of
+the members round it that the check never saw. So such holes are filled,
+and the report says so: `worst.topology` gives the genus in and out, each
+hole filled with its diameter and the reason, and handles lost where no
+place misses (a membrane within the bound all round: narrower than twice
+it). A printable hole closed, a handle the cage made up, or a loss it
+cannot account for fails the run's `within`. Fastened lid: genus 15 in,
+12 out, a 0.71 mm hole and two under 0.54 mm filled. The box cover's cage
+filled four (genus 23 in, 19 out).
+
+![box cover: input, STEP, bolt seat and web openings](images/surface/box-cover-many-holes.png)
 
 ## Not yet
 
@@ -379,9 +434,7 @@ corner there exactly (`loadpath/subdcrease.py`, on by default,
 - Zebra stripes still wobble on large flats of field parts: the fit follows
   the marching-cubes mesh's small ripples within the tolerance.
 - Sharp creases on an organic body (a generated mesh's hard rim) are
-  rounded to within the tolerance, not kept as creases. The held-out box
-  cover has not been re-measured with the feature-preserving remesh (its
-  run did not finish here).
+  rounded to within the tolerance, not kept as creases.
 - A hole through a web thinner than the faces over it (the wrist link's
   2.6 mm hole in a 1.1 mm web) is cut or not depending on the cage
   Instant Meshes lays: on one lay the two faces over its mouths are a
