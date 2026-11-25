@@ -110,47 +110,118 @@ class Surf:
 
 
 
-def _closest(mesh, P, edge=0.5, k=16):
-    """Closest points on a mesh to P and the normals there: trimesh's
-    closest_point gathers candidates by triangle bounding boxes, and an
-    exact boolean's slivers (a bore wall the length of the bore) make every
-    point a candidate of all of them, minutes on a part; here the mesh is
-    split to `edge` and each point tries the k nearest centroids."""
-    import trimesh
-    from scipy.spatial import cKDTree
+def _reps(tri, s):
+    """Points on every triangle no farther than `s` from any point of it
+    (a lattice of spacing s in the triangle's own frame, kept inside it,
+    and every side sampled at s), and the triangle each belongs to. A
+    sliver L long gets about 2 L / s of them where splitting it into
+    triangles no longer than s gives (L / s)^2."""
+    # a triangle within s of its centroid is that one point
+    cen = tri.mean(axis=1)
+    small = np.linalg.norm(tri - cen[:, None], axis=2).max(axis=1) <= s
+    if small.all():
+        return cen, np.arange(len(tri))
+    big = np.flatnonzero(~small)
+    R, t = _reps(tri[big], s) if small.any() else (None, None)
+    if small.any():
+        return np.vstack([cen[small], R]), np.concatenate([np.flatnonzero(small), big[t]])
+    a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+    # the frame along the longest side
+    sides = np.stack([b - a, c - b, a - c], 1)
+    ln = np.linalg.norm(sides, axis=2)
+    r = np.argmax(ln, axis=1)
+    o = tri[np.arange(len(tri)), r]
+    e = sides[np.arange(len(tri)), r]
+    opp = tri[np.arange(len(tri)), (r + 2) % 3]
+    L = np.maximum(np.linalg.norm(e, axis=1), 1e-300)
+    u = e / L[:, None]
+    w = (opp - o) - ((opp - o) * u).sum(1)[:, None] * u
+    Hh = np.linalg.norm(w, axis=1)
+    w = w / np.maximum(Hh, 1e-300)[:, None]
+    nx = np.ceil(L / s).astype(np.int64) + 1
+    ny = np.ceil(Hh / s).astype(np.int64) + 1
+    cnt = nx * ny
+    t = np.repeat(np.arange(len(tri)), cnt)
+    k = np.arange(int(cnt.sum())) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+    ix, iy = k % nx[t], k // nx[t]
+    x = ix * (L / np.maximum(nx - 1, 1))[t]
+    y = iy * (Hh / np.maximum(ny - 1, 1))[t]
+    # inside: y no more than the triangle's height at x
+    xo = ((opp - o) * u).sum(1)
+    top = np.where(x <= xo[t], y * np.maximum(xo[t], 1e-300) <= Hh[t] * x + 1e-9,
+                   y * np.maximum(L[t] - xo[t], 1e-300) <= Hh[t] * (L[t] - x) + 1e-9)
+    R = o[t] + x[:, None] * u[t] + y[:, None] * w[t]
+    R, t = R[top], t[top]
+    # the sides
+    m = np.ceil(ln / s).astype(np.int64) + 1                  # (n, 3)
+    st = np.repeat(np.arange(3 * len(tri)), m.ravel())
+    kk = np.arange(int(m.sum())) - np.repeat(np.cumsum(m.ravel()) - m.ravel(), m.ravel())
+    f = (kk / np.maximum(m.ravel() - 1, 1)[st])[:, None]
+    sv = tri.reshape(-1, 3)[st]                                 # side start: corner (st % 3)
+    sd = sides.reshape(-1, 3)[st]
+    S = sv + f * sd
+    return np.vstack([R, S]), np.concatenate([t, st // 3])
 
-    from .fields import _closest_on_triangles
+
+def _closest(mesh, P, edge=0.5, k=16):
+    """Closest points on a mesh to P and the normals there, exact: a
+    uniform grid of `edge` mm cells, each triangle filed in the cells its
+    `_reps` fall in (a sliver in the cells along it, not in its bounding
+    box), searched ring by ring out from each point until no unsearched
+    cell can hold a closer triangle (closestjit.Grid); the rare point that
+    is still unsure after 64 rings is asked of an AABB tree. (It used to
+    split the mesh to `edge` and try the k nearest centroids: an exact
+    boolean's or a CAD flat's slivers split as a quadtree, (length /
+    edge)^2 triangles each, 6.8 million and a gigabyte on an optimized
+    lid, and the nearest centroids missed the closest triangle by up to
+    0.07 mm.) `k` is no longer used."""
+    from . import closestjit
 
     cache = getattr(mesh, "_loadpath_closest", None)
     if cache is None or cache[0] != edge:
-        v, f = trimesh.remesh.subdivide_to_size(np.asarray(mesh.vertices, float),
-                                                np.asarray(mesh.faces, np.int64), max_edge=edge, max_iter=16)
-        tri = v[f]
+        tri = np.asarray(mesh.vertices, float)[np.asarray(mesh.faces, np.int64)]
         nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
         nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-300)
-        cache = (edge, tri, nrm, cKDTree(tri.mean(axis=1)))
+        size = np.ptp(tri.reshape(-1, 3), axis=0)
+        cell = max(float(edge), float(np.prod(np.maximum(size, 1e-9)) / 4e6) ** (1 / 3), 1e-6)
+        grid = closestjit.Grid(tri, cell, _reps(tri, 0.5 * cell)) if closestjit.available() else None
+        cache = (edge, tri, nrm, grid)
         mesh._loadpath_closest = cache
-    _, tri, nrm, tree = cache
+    _, tri, nrm, grid = cache
     P = np.asarray(P, float).reshape(-1, 3)
-    k = min(k, len(tri))
-    out, nout = np.empty_like(P), np.empty_like(P)
+    if grid is not None:
+        out, best, done = grid.closest(P)
+        todo = np.flatnonzero(~done)
+    else:
+        out, best = np.empty_like(P), np.zeros(len(P), np.int64)
+        todo = np.arange(len(P))
+    if len(todo):
+        import igl
+        _, fi, cp = igl.point_mesh_squared_distance(P[todo], np.asarray(mesh.vertices, float),
+                                                    np.asarray(mesh.faces, np.int64))
+        out[todo], best[todo] = cp, fi
+    return out, nrm[best]
+
+
+def _closest_cand(P, tri, cand):
     from . import closestjit
     if closestjit.available():
-        cand = tree.query(P, k=k, workers=-1)[1].reshape(len(P), k)
-        out, best = closestjit.closest_k(P, tri, cand)
-        return out, nrm[best]
+        return closestjit.closest_k(P, tri, np.ascontiguousarray(cand))
+    from .fields import _closest_on_triangles
+    out, best = np.empty_like(P), np.zeros(len(P), np.int64)
+    k = cand.shape[1]
     for j in range(0, len(P), 100_000):
         q = P[j:j + 100_000]
-        cand = tree.query(q, k=k)[1].reshape(len(q), k)
-        T = tri[cand]
+        c = cand[j:j + 100_000]
+        T = tri[c]
         Q = np.repeat(q[:, None], k, axis=1).reshape(-1, 3)
         C = _closest_on_triangles(Q, T[:, :, 0].reshape(-1, 3), T[:, :, 1].reshape(-1, 3),
                                   T[:, :, 2].reshape(-1, 3)).reshape(len(q), k, 3)
         b = np.argmin(np.sum((C - q[:, None]) ** 2, axis=2), axis=1)
         r = np.arange(len(q))
         out[j:j + len(q)] = C[r, b]
-        nout[j:j + len(q)] = nrm[cand[r, b]]
-    return out, nout
+        best[j:j + len(q)] = c[r, b]
+    return out, best
 
 def _shape_surfaces(shape, out):
     from .shapes import Box, Cylinder, Shell, Sphere, Union

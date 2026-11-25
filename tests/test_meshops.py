@@ -153,3 +153,27 @@ def test_nearest_on_triangles_matches_numpy():
         b2, s = meshops.nearest_on_triangles(P, cand, T, nrm, 1e-18, parallel=parallel)
         np.testing.assert_allclose(b2, best, rtol=1e-12, atol=1e-14)
         assert (s != side).mean() < 1e-3
+
+
+def test_closest_is_exact_on_slivers_and_files_them_along_their_length():
+    # a CAD flat's long slivers fanned from a corner (and a few tiny
+    # triangles beside them): the closest point and its normal exact (an
+    # AABB tree's), and the grid holds a sliver in the cells along it, not
+    # its length squared
+    import igl
+    import trimesh
+
+    from loadpath.brep import _closest
+
+    rng = np.random.default_rng(3)
+    box = trimesh.creation.box([70.0, 50.0, 1.6])
+    hole = trimesh.creation.cylinder(radius=0.4, height=3.0, sections=200)
+    m = box.difference(hole.apply_translation([20.0, 10.0, 0.0]))
+    assert float(m.edges_unique_length.max()) > 40
+    P = m.sample(20000) + rng.normal(0, 0.3, (20000, 3))
+    q, n = _closest(m, P, edge=0.29)
+    d, fi, c = igl.point_mesh_squared_distance(P, np.asarray(m.vertices, float), np.asarray(m.faces, np.int64))
+    assert np.abs(np.linalg.norm(P - q, axis=1) - np.sqrt(d)).max() < 1e-9
+    assert (np.abs((n * m.face_normals[fi]).sum(1)) > 0.999).mean() > 0.99      # ties at edges aside
+    grid = m._loadpath_closest[3]
+    assert len(grid.items) < 3 * m.area / grid.cell ** 2          # about one filing per cell of surface
