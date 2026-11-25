@@ -973,7 +973,7 @@ def use_cut_cells(study, cut_cells=None) -> bool:
     return not any(ld.pressure for case in getattr(study, "load_cases", ()) for ld in case.loads)
 
 
-def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs, memo=None):
+def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs, memo=None, lowrank=None):
     """Solve the cut-cell model (cutcell.CutGrid) for each right-hand side:
     the shared-matrix cells as usual, the cut cells' own matrices added
     (assembled), or as the multigrid's extra operator, which its Galerkin
@@ -987,10 +987,16 @@ def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs, memo=None):
     if _use_mg(hm.n_elem):
         from .mg import GridElasticity
 
-        extra = cg.cut_operator(moduli)
+        cut = cg.cut_operator(moduli)
+        extra = cut
         if springs is not None:
             extra = (extra + e_mat * springs).tocsr()
-        stiff = GridElasticity(hm, nu, fixed, springs=extra, rtol=1e-6, maxiter=3000)
+        lr = None
+        if lowrank is not None and springs is not None:
+            # the seats' patch springs as the product they are (mg.GridElasticity `lowrank`)
+            rest = cut if lowrank[0] is None else (cut + e_mat * lowrank[0]).tocsr()
+            lr = (rest, lowrank[1], e_mat * np.asarray(lowrank[2], float))
+        stiff = GridElasticity(hm, nu, fixed, springs=extra, rtol=1e-6, maxiter=3000, lowrank=lr)
         stiff.set_moduli(cg.full_moduli(moduli))
     else:
         from . import direct
@@ -1663,7 +1669,7 @@ def _solve_grid(study: Study, g, nu, moduli, rhs, memo=None):
     if memo is not None and "stiff" in memo:
         return memo["stiff"], _memo_solve(memo, rhs)
     if g.cg is not None:
-        return _solve_cut(g.cg, nu, fixed, bc.springs, mat.E, moduli, rhs, memo)
+        return _solve_cut(g.cg, nu, fixed, bc.springs, mat.E, moduli, rhs, memo, getattr(g, "lowrank", None))
     if g.fill is not None:
         # a part-filled cell is that share as stiff; its stress stays
         # the material's (nodal_stress at the full modulus)
@@ -1675,8 +1681,11 @@ def _solve_grid(study: Study, g, nu, moduli, rhs, memo=None):
         # carries .mesh and .nu, which is all the stress recovery reads.
         from .mg import GridElasticity
 
+        lr = getattr(g, "lowrank", None)
+        if lr is not None:
+            lr = (mat.E * lr[0] if lr[0] is not None else None, lr[1], mat.E * np.asarray(lr[2], float))
         stiff = GridElasticity(hm, nu, fixed, springs=mat.E * bc.springs if bc.springs is not None else None,
-                               rtol=1e-6, maxiter=3000)
+                               rtol=1e-6, maxiter=3000, lowrank=lr)
         stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
         stiff.stress_mask = getattr(g, "stress_mask", None)
         if memo is not None:
@@ -2220,7 +2229,10 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
             ps = pushseat.patches(bc.seats, hm.node_xyz, hm.n_dof)
             ks, held = pushseat.hold(ps, hm.node_xyz, g.pitch)
             sprung = held if bc.springs is None else (bc.springs + held).tocsr()
-            gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=sprung)})
+            import scipy.sparse as _sp
+
+            gs = SimpleNamespace(**{**vars(g), "bc": replace(bc, springs=sprung),
+                                    "lowrank": (bc.springs, _sp.vstack([_sp.csr_matrix(p) for p in ps]).tocsr(), ks)})
             # one matrix for the cases, the patches and the patches cut finer: factored once
             memo = {}
             rings(lambda r: _solve_grid(study, gs, study.elastic(mat), moduli, r, memo), rhs, layout)

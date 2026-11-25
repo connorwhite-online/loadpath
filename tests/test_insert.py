@@ -116,8 +116,44 @@ def test_ring_keeps_the_bore_round():
     assert b_fixed > 0 and b_ring < 0.6 * b_fixed, (b_fixed, b_ring)
 
 
+
+def test_multigrid_takes_seat_springs_as_their_product():
+    """A seat's patch springs (pushseat.hold: k p p') given to the multigrid
+    as rows and k (mg.GridElasticity `lowrank`) solve as the assembled ones:
+    the 608 pillow block's fine check held 32M assembled entries."""
+    import scipy.sparse as sp
+
+    from loadpath.fem import HexMesh
+    from loadpath.mg import GridElasticity
+
+    ijk = np.stack(np.meshgrid(np.arange(16), np.arange(6), np.arange(6), indexing="ij"), -1).reshape(-1, 3)
+    m = HexMesh(ijk, 1.0, np.zeros(3))
+    fixed = np.zeros(m.n_dof, bool)
+    end = np.flatnonzero(m.node_xyz[:, 0] < 1e-9)
+    fixed[3 * end] = fixed[3 * end + 1] = fixed[3 * end + 2] = True
+    rows = []
+    for lo, hi in ((10, 13), (13, 16.1)):                      # two patches on the top face, pushing along z
+        on = np.flatnonzero((m.node_xyz[:, 2] > 5.9) & (m.node_xyz[:, 0] >= lo) & (m.node_xyz[:, 0] < hi))
+        p = np.zeros(m.n_dof)
+        p[3 * on + 2] = 1.0 / len(on)
+        rows.append(p)
+    r = sp.csr_matrix(np.array(rows))
+    k = np.array([300.0, 500.0])
+    held = (r.T @ sp.diags(k) @ r).tocsr()
+    f = np.zeros(m.n_dof)
+    f[3 * np.flatnonzero(m.node_xyz[:, 0] > 15.9) + 1] = 1.0
+    e = np.full(m.n_elem, 1000.0)
+    us = []
+    for lr in (None, (None, r, k)):
+        g = GridElasticity(m, 0.3, fixed, springs=held, rtol=1e-10, maxiter=3000, coarse_cells=50, lowrank=lr)
+        g.set_moduli(e)
+        us.append(g.solve_many([f])[0])
+    np.testing.assert_allclose(us[1], us[0], rtol=1e-6, atol=1e-9 * np.abs(us[0]).max())
+
+
 if __name__ == "__main__":
     test_contact_is_the_constrained_minimum()
     test_bearing_pressure_is_square_to_the_wall()
     test_ring_keeps_the_bore_round()
+    test_multigrid_takes_seat_springs_as_their_product()
     print("ok")

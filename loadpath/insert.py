@@ -78,7 +78,13 @@ class Insert:
 
 
 def applies(material) -> bool:
-    """Whether a steel ring is rigid against `material` (RIGID_BELOW)."""
+    """Whether a steel ring is rigid against `material` (RIGID_BELOW).
+    LOADPATH_RING=0 turns the ring off (the fixed pressure everywhere),
+    for comparing the two."""
+    import os
+
+    if os.environ.get("LOADPATH_RING") == "0":
+        return False
     e = getattr(material, "E", None)
     return e is not None and float(e) < RIGID_BELOW
 

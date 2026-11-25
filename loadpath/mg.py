@@ -276,6 +276,19 @@ class _Level:
         return out
 
     def _add_extra(self, u, out):
+        parts = self.__dict__.get("parts")
+        if parts is not None:
+            rest, rows, k = parts
+            uf = u.reshape(-1).astype(np.float64)
+            out += (rows.T @ (k * (rows @ uf))).astype(out.dtype).reshape(out.shape)
+            if rest is None:
+                return
+            pre = self.__dict__.get("_rest_rows")
+            if pre is None or pre[0] is not rest:
+                pre = self._rest_rows = (rest, _mgops.csr_rows(rest))
+            if not _mgops.add_csr(pre[1], u, out):
+                out += (rest @ uf).astype(out.dtype).reshape(out.shape)
+            return
         pre = self.__dict__.get("_extra_rows")
         if pre is None or pre[0] is not self.extra:
             pre = self._extra_rows = (self.extra, _mgops.csr_rows(self.extra))
@@ -413,7 +426,7 @@ class GridElasticity:
     LOADPATH_DEVICE."""
 
     def __init__(self, mesh, nu, fixed, springs=None, rtol=1e-6, maxiter=500, coarse_cells=2000,
-                 degree=2, dtype=np.float32, lu_max_dofs=60_000, device=None):
+                 degree=2, dtype=np.float32, lu_max_dofs=60_000, device=None, lowrank=None):
         self.mesh = mesh
         self.nu = nu
         self.rtol = rtol
@@ -439,6 +452,22 @@ class GridElasticity:
         self.springs = None
         if springs is not None:
             self.springs = self._to_grid_sparse(sp.csr_matrix(springs))
+        # `lowrank` (rest, rows, k): `springs` is rest + rows' diag(k) rows, a
+        # seat's patch springs (pushseat.hold) beside the rest. The fine
+        # level applies the patches as the product they are: assembled, a
+        # patch of n nodes is (3n)^2 entries (32M on the 608 pillow block's
+        # fine check, minutes of every solve). The coarse levels and the
+        # smoother's diagonal take the assembled matrix.
+        self._parts = None
+        if lowrank is not None and springs is not None:
+            rest, rows, k = lowrank
+            g = np.empty(rows.shape[1], np.int64)
+            for i in range(3):
+                g[i::3] = i * self.nn + self.node_flat
+            r = sp.csr_matrix(rows).tocoo()
+            rg = sp.csr_matrix((r.data, (r.row, g[r.col])), shape=(rows.shape[0], 3 * self.nn))
+            self._parts = (self._to_grid_sparse(sp.csr_matrix(rest)) if rest is not None else None, rg,
+                           np.asarray(k, float))
         self.levels = []
         self.strict = False
         self.last_iters = 0
@@ -504,6 +533,7 @@ class GridElasticity:
         l0.ke = self.ke.astype(np.float64)
         l0.e = self.cell_grid(e)
         l0.extra = self.springs
+        l0.parts = self._parts
         d0 = l0.diagonal()
         alive = d0 > 1e-300
         l0.mask = (alive & ~self.fixed_grid).astype(np.float64)
@@ -515,6 +545,7 @@ class GridElasticity:
         self._l0s.ke = self.ke.astype(dt)
         self._l0s.e = l0.e.astype(dt)
         self._l0s.extra = self.springs
+        self._l0s.parts = self._parts
         self._l0s.mask = l0.mask.astype(dt)
         self._l0s.dinv = l0.dinv.astype(dt)
         fine = l0
@@ -633,7 +664,16 @@ class GridElasticity:
                     k[:, :, a // 2:a // 2 + shp[0], :shp[1], :shp[2]] += \
                         np.moveaxis(t, 2, 1).reshape((24, 24) + shp).astype(dt)
             lv.k = k
+        self._extra_p = None
         lv.extra = self._coarse_extra(fine, cdims, mask_fine)
+        parts = fine.__dict__.get("parts")
+        if parts is not None and self._extra_p is not None:
+            # a patch's spring on this level is the same product: its rows
+            # prolonged (the patch's push P' p), as low rank as on the fine
+            p = self._extra_p
+            rest, rows, k = parts
+            lv.parts = (None if rest is None else (p.T @ rest @ p).tocsr(), (rows @ p).tocsr(), k)
+        self._extra_p = None
         return lv
 
     def _coarse_extra(self, fine, cdims, mask_fine):
@@ -662,6 +702,7 @@ class GridElasticity:
         # empty): the same products, in the same order, without taking s
         # apart into its touched rows and columns first
         p = sp.csr_matrix((vals, (dofs[pr.row], cols)), shape=(s.shape[0], 3 * nn_c))
+        self._extra_p = p
         return (p.T @ s @ p).tocsr()
 
     def _build_coarse(self, lv):

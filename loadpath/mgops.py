@@ -516,12 +516,31 @@ def add_csr(prepared, u, out) -> bool:
     return True
 
 
+# Padding to whole node blocks may grow a matrix this much and no more. A
+# seat's springs (pushseat.hold: k p p' over a patch pushing along z) touch
+# one dof of each node: padded, 9x the entries. The 608 pillow block's fine
+# check held 32M of them and padding took it past 14 GB; as it stands the
+# matrix takes the plain rows below.
+_PAD_GROWTH = 2.0
+
+
+def _padded_size(a) -> int:
+    """Entries `a` would hold padded to whole node blocks (_padded_blocks)."""
+    import scipy.sparse as sp
+
+    nn = a.shape[0] // 3
+    c = a.tocoo()
+    g = sp.csr_matrix((np.ones(c.nnz, np.int8), (c.row % nn, c.col % nn)), shape=(nn, nn))
+    g.sum_duplicates()
+    return 9 * int(g.nnz)
+
+
 def csr_rows(a):
     """(rows with entries, indptr, indices, data) of a scipy sparse matrix, for add_csr."""
     a = a.tocsr()
     if available() and a.shape[0] == a.shape[1] and a.shape[0] % 3 == 0 and a.nnz:
         blocks = _node_blocks(a)
-        if blocks is None and a.has_canonical_format:
+        if blocks is None and a.has_canonical_format and _padded_size(a) <= _PAD_GROWTH * a.nnz:
             blocks = _node_blocks(_padded_blocks(a))
         if blocks is not None:
             return blocks
