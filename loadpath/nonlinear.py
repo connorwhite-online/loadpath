@@ -528,8 +528,23 @@ class _Pardiso:
         self._single = bool(single)
         on_mkl_thread(self._factor, k, symmetric, budget)
 
+    # A sparse Cholesky factor of a 3D mesh's stiffness holds many times the
+    # matrix (a solid block's: 35x its upper triangle's bytes). Where even
+    # FILL_FLOOR times would pass the budget, PARDISO is not asked: its own
+    # analysis, which says how much the factor needs, takes gigabytes on a
+    # few million dofs (a bed riser's 2.4M-dof tet check: 5 to past 13 GB
+    # in the analysis of a factor allowed 1.5 GB, and the run was killed).
+    FILL_FLOOR = 5.0
+
     def _factor(self, k, symmetric, budget=None):
         import pypardiso
+
+        if budget is not None:
+            upper = 0.5 * (k.nnz + k.shape[0])
+            floor = self.FILL_FLOOR * upper * (4.0 if self._single else 8.0)
+            if floor > budget:
+                raise MemoryError(f"a factorization of these {k.shape[0]} dofs would hold over "
+                                  f"{floor / 1e9:.1f} GB ({budget / 1e9:.1f} GB allowed)")
 
         s = _Pardiso._pool.pop() if _Pardiso._pool else pypardiso.PyPardisoSolver()
         threads = mkl_threads(s)

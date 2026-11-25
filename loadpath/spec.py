@@ -175,7 +175,7 @@ class Support:
     max_moment: float | None = None
     # A seat (pushseat.py): the unit direction this support pushes the part in,
     # and nothing else. It holds no pull, and no sliding unless it has friction.
-    push: tuple[float, float, float] | str | None = None   # or "radial" (a bore)
+    push: tuple[float, float, float] | str | None = None   # or "radial" (a bore), "normal" (a socket)
     # A seat's Coulomb friction coefficient (None: it holds nothing across)
     # and the force it is pressed on with before the loads (N: a clamp's
     # screw; None: none).
@@ -1720,12 +1720,19 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                     raise ValueError(f"supports[{i}]: push 'radial' needs a cylinder (a bore keep-out or a "
                                      "cylinder shape)")
                 push = "radial"
+            elif s["push"] == "normal":
+                # whatever fills a keep-out (a nut in a hex, a D-shaft, a leg in a socket) pushes
+                # out on its walls where it bears, along each wall's normal (domain.wall_seats)
+                if region is None and shape is None:
+                    raise ValueError(f"supports[{i}]: push 'normal' needs a region (the keep-out it fills) "
+                                     "or a shape")
+                push = "normal"
             else:
                 try:
                     push = tuple(float(v) for v in _axis_vector(s["push"], ""))
                 except ValueError:
                     raise ValueError(f"supports[{i}].push is the way the seat pushes the part: 'x', '-z', a "
-                                     "vector [x, y, z], or 'radial' in a bore") from None
+                                     "vector [x, y, z], 'radial' in a bore, or 'normal' in a socket") from None
             fix_t = (False, False, False)
         extra = {}
         for key, unit in (("friction", "a Coulomb coefficient, like 0.3"), ("preload", "N")):

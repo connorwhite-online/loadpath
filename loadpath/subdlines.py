@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import numpy as np
 
-DEPTH = 4            # knots halved this many times toward a star point (1/2 ... 1/16 of the edge)
+DEPTH = None         # knots halved toward a star point down to the samples' spacing (1/32 of the edge)
 TANGENT = 3.0        # weight of the tangent-plane rows against position rows (subd.TANGENT)
 PIN = 1e4            # weight that holds a line on the limit point at every cage vertex
 
@@ -97,7 +97,128 @@ def _halves(n, start, end):
     return np.unique(np.asarray(br, float))
 
 
-def _one_sided(H, XG, NG):
+def _rowkron(P, Q):
+    """Row-wise Kronecker product of two B-spline basis matrices (each row
+    at most four nonzeros), sparse: row i is kron(P[i], Q[i])."""
+    sp = _sp()
+    n, nq = len(P), Q.shape[1]
+    ip = np.sort(np.argsort(-np.abs(P), axis=1)[:, :4], axis=1)
+    iq = np.sort(np.argsort(-np.abs(Q), axis=1)[:, :4], axis=1)
+    r = np.arange(n)[:, None]
+    val = (P[r, ip][:, :, None] * Q[r, iq][:, None, :]).reshape(n, -1)
+    col = (ip[:, :, None] * nq + iq[:, None, :]).reshape(n, -1)
+    return sp.csr_matrix((val.ravel(), (np.repeat(np.arange(n), 16), col.ravel())), shape=(n, P.shape[1] * nq))
+
+
+def _bicubic_finer(Xq):
+    """A face's samples (s+1, s+1, 3) one level finer, (2s+1, 2s+1, 3)
+    points and normals, when its limit is one bicubic (a face whose ring
+    of cage faces is regular): the bicubic through the samples, exact to
+    round-off there. None when it is not one (the samples miss it)."""
+    s = Xq.shape[0] - 1
+    t = np.arange(s + 1) / s
+    V = np.vander(t, 4, increasing=True)
+    Vi = np.linalg.pinv(V)                                   # (4, s+1)
+    c = np.einsum("ai,bj,ijk->abk", Vi, Vi, Xq)
+    fit = np.einsum("ia,jb,abk->ijk", V, V, c)
+    if np.abs(fit - Xq).max() > 1e-9 * max(1.0, float(np.ptp(Xq.reshape(-1, 3), axis=0).max())):
+        return None
+    t2 = np.arange(2 * s + 1) / (2 * s)
+    V2 = np.vander(t2, 4, increasing=True)
+    D2 = np.c_[np.zeros(len(t2)), np.ones(len(t2)), 2 * t2, 3 * t2 ** 2]
+    X2 = np.einsum("ia,jb,abk->ijk", V2, V2, c)
+    N2 = np.cross(np.einsum("ia,jb,abk->ijk", D2, V2, c), np.einsum("ia,jb,abk->ijk", V2, D2, c))
+    N2 /= np.maximum(np.linalg.norm(N2, axis=2, keepdims=True), 1e-300)
+    return X2, N2
+
+
+def finer_grids(H, C, faces, rings=3, batch=64):
+    """The limit surface one level finer than H on the cage faces `faces`:
+    {face: (points (2s+1, 2s+1, 3), one-sided normals)}, the same (u, v)
+    as H.G, every other sample H's own.
+
+    Toward a star point the limit is not a bicubic and a rectangle's knots
+    halve down to the samples' spacing. At H's (1/16 of an edge) the
+    smallest spans have their two ends and nothing between: one halving
+    fewer leaves the fit free to fold (1.5 deg between rectangles beside a
+    star point on a crease on an optimized lid), one more is singular.
+    With these samples the knots halve to 1/32 and the spans are fixed. The whole cage one level finer does not fit in memory (a 12k
+    cage is 3.1M faces at H's level), so each face is subdivided once more
+    on its own: H's fine faces on it and `rings` rings round them (a fine
+    limit point reads two rings of the level before), the open patch
+    closed by a mirrored copy glued along its rim, the rim a crease. The
+    copy only changes points within two rings of the rim."""
+    from scipy.sparse import csr_matrix
+
+    from .subd import Cage, Hierarchy, grid_normals
+
+    F = H.fine
+    Pf = H.Pm @ C
+    nf, s = len(F.Q), H.G.shape[1] - 1
+    vf = csr_matrix((np.ones(F.Q.size), (F.Q.ravel(), np.repeat(np.arange(nf), 4))), shape=(F.n, nf))
+    fsharp = F.crease
+    out = {}
+    faces = np.asarray(sorted(set(int(q) for q in faces)), np.int64)
+    by_root = np.argsort(H.root, kind="stable")
+    start = np.searchsorted(H.root[by_root], np.arange(len(H.cage.Q) + 1))
+    for b0 in range(0, len(faces), batch):
+        roots = faces[b0:b0 + batch]
+        core = np.concatenate([by_root[start[r]:start[r + 1]] for r in roots])
+        sel = np.zeros(nf, bool)
+        sel[core] = True
+        for _ in range(rings):
+            vs = np.unique(F.Q[sel])
+            sel[np.unique(vf[vs].indices)] = True
+        fs = np.flatnonzero(sel)
+        Qs = F.Q[fs]
+        used, Ql = np.unique(Qs, return_inverse=True)
+        Ql = Ql.reshape(-1, 4)
+        # the rim: edges with one face in the patch
+        e = np.sort(np.stack([Ql, np.roll(Ql, -1, axis=1)], -1).reshape(-1, 2), axis=1)
+        key = e[:, 0] * len(used) + e[:, 1]
+        uk, cnt = np.unique(key, return_counts=True)
+        rim = uk[cnt == 1]
+        on_rim = np.zeros(len(used), bool)
+        on_rim[rim // len(used)] = True
+        on_rim[rim % len(used)] = True
+        twin = np.where(on_rim, np.arange(len(used)), len(used) + np.cumsum(~on_rim) - 1)
+        Vp = np.r_[Pf[used], Pf[used[~on_rim]]]
+        Qp = np.r_[Ql, twin[Ql][:, ::-1]]
+        # creases: the part's own (both copies) and the rim
+        fe = F.E[fsharp]
+        loc = np.full(F.n, -1)
+        loc[used] = np.arange(len(used))
+        fe = loc[fe]
+        fe = fe[(fe >= 0).all(1)]
+        sh = np.r_[fe, twin[fe], np.stack([rim // len(used), rim % len(used)], 1)]
+        try:
+            P = Cage(Vp, Qp, sharp=sh)
+        except ValueError:
+            # a rim that touches itself (a pinch): these faces stay at H's level
+            continue
+        H1 = Hierarchy(P, 1)
+        X1 = (H1.M @ P.V)[H1.G]
+        # normals only on the core's faces (H1's faces are P's, in P's order)
+        pos = np.searchsorted(fs, core)
+        N1 = grid_normals(H1, P.V, pos)
+        if P.crease.any():
+            N1 = _one_sided(H1, X1, N1, pos)
+        for r in roots:
+            js = by_root[start[r]:start[r + 1]]
+            Xr = np.full((2 * s + 1, 2 * s + 1, 3), np.nan)
+            Nr = np.full_like(Xr, np.nan)
+            pj = np.searchsorted(fs, js)
+            h = np.arange(3) / 2
+            ij = np.rint((H.o[js, None, None] + H.au[js, None, None] * h[:, None, None]
+                          + H.av[js, None, None] * h[None, :, None]) * 2 * s).astype(int)
+            Xr[ij[..., 0], ij[..., 1]] = X1[pj]
+            Nr[ij[..., 0], ij[..., 1]] = N1[pj]
+            if not np.isnan(Xr).any():
+                out[int(r)] = (Xr, Nr)
+    return out
+
+
+def _one_sided(H, XG, NG, faces=None):
     """Normals on the grids of faces beside a crease taken from the face's
     own side: across a crease the limit surface turns a corner, and the
     two-sided masks give the mean of the two sides' normals there."""
@@ -105,6 +226,8 @@ def _one_sided(H, XG, NG):
     Q, QE = cage.Q, cage.QE
     sh = cage.sharpness
     on = cage.crease[QE].any(axis=1) | (sh[Q] > 0).any(axis=1)
+    if faces is not None:
+        on &= np.isin(np.arange(len(Q)), faces)
     s = XG.shape[1] - 1
     NG = NG.copy()
     for q in np.flatnonzero(on):
@@ -172,7 +295,7 @@ def motorcycles(cage):
     return cut
 
 
-def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=True):
+def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=True, finer=True):
     """The cage's limit surface as rectangles along its lines: (surfaces,
     report) or (None, report) when the layout does not come out. A
     surface is ("nurbs", poles (nu, nv, 3), u breakpoints, v breakpoints)
@@ -194,7 +317,37 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     tq, tk = tq.reshape(-1, 4), tk.reshape(-1, 4)
     evv = cage.valence != 4
     evf = evv[Q].any(axis=1)
+    # a vertex where a crease turns, where three or more creases meet (the
+    # corner rule), or where a crease ends (a dart): the limit round it is
+    # no bicubic either (up to 0.034 mm a face off on an optimized lid's
+    # boss seats, 0.11 mm beside a wrist link's darts, where star points'
+    # faces were 0.11), so the curves and rectangles treat it as a star
+    # point: a stop, knots halved toward it, every sample row in its faces
+    ce_at = np.bincount(cage.E[cage.crease].ravel(), minlength=cage.n)
+    cq = cage.crease[QE]
+    turn = np.zeros(cage.n, bool)
+    turn[Q[cq & np.roll(cq, 1, axis=1)]] = True
+    irr = evv | (ce_at == 1) | (ce_at >= 3) | ((ce_at == 2) & turn)
+    irf = irr[Q].any(axis=1)
     cut = motorcycles(cage)
+    # the limit one level finer than H round irregular vertices, and the
+    # knots halved toward them down to its spacing (`finer_grids`)
+    fine = finer_grids(H, C, np.flatnonzero(irf)) if finer and irf.any() else {}
+    if depth is None:
+        depth = int(np.log2(2 * s if finer else s))
+
+    def finer_at(q):
+        """Face q one level finer: from `fine`, else the bicubic through H's
+        samples (exact on a face with four regular corners), else its own
+        open patch. None without `finer`."""
+        if not finer:
+            return None
+        if q not in fine:
+            got = _bicubic_finer(XG[q]) if not irf[q] else None
+            if got is None:
+                got = finer_grids(H, C, [q]).get(q)
+            fine[q] = got
+        return fine[q]
 
     def cont(q, k):
         q2, k2 = int(tq[q, (k + 1) % 4]), int(tk[q, (k + 1) % 4])
@@ -270,6 +423,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     # motorcycle from a star point), so every rectangle beside the ring has
     # a corner there and none runs across the seam.
     seams = set()
+    keep = np.zeros(len(cut), bool)                # lines drawn from stops
     # ---- lines: maximal straight runs of drawn edges
     # A line that meets a crease stops there: the surface turns a corner
     # at the crease, and one C2 curve laid on through it misses the turn
@@ -279,16 +433,16 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     crs = cage.crease
 
     def stops(v, e1, e2):
-        # a crease's free end (one crease edge, a dart) is smooth across:
-        # the line, and the rectangle side along it, run on through
-        return bool(evv[v] or v in seams or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
+        return bool(irr[v] or v in seams or shp[v] >= 3 or (shp[v] == 2 and not (crs[e1] and crs[e2])))
     def halvings(v):
-        # knots halved toward each star point; one fewer at a star point on
-        # a crease, whose sectors are one-sided fans of a face or two: four
-        # halvings there swing (a 1.3 deg kink between rectangles at a
-        # plate's pocket corner). Per point: the lines and every rectangle
-        # round it agree
-        return 0 if not evv[v] else depth - 1 if shp[v] >= 2 else depth
+        # knots halved toward each star point (and each irregular crease
+        # vertex), the same number on a crease: one fewer there once kept a
+        # plate's pocket corner within a degree, but on a many-hole lid's
+        # boss seats it left rectangles folded beside star points on
+        # creases (50 deg between neighbours; 1.5 deg with all four, and the
+        # plate still 60 faces, valid). Per point: the lines and every
+        # rectangle round it agree
+        return depth if irr[v] else 0
     for _seam_round in range(4 * m + 1):
         ring = None
         # a rectangle that wraps round a member (two opposite sides share a
@@ -318,7 +472,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                     wrapped += 1
             if not wrapped:
                 break
-        merged = _merge(cage, cut, find_pieces, rect, evv) if merge else 0
+        merged = _merge(cage, cut, find_pieces, rect, evv, keep) if merge else 0
         if merged:
             pieces = find_pieces()
 
@@ -366,8 +520,13 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                 break
 
         if ring is None:
-            break
-        if not _cut_seam(ring, cut, seams, cage, evv, cont):
+            ends = {(start(*hs[0]), int(QE[hs[0]])) for hs in lines} | \
+                {(int(Q[hs[-1][0], (hs[-1][1] + 1) % 4]), int(QE[hs[-1]])) for hs in lines}
+            if not _open_stops([ve for ve in ends if not evv[ve[0]]], cut, cage, twin, cont, keep):
+                break
+            line_of, lines = {}, []
+            continue
+        if not _cut_seam(ring, cut, seams, cage, evv, cont, keep):
             return None, {"layout": "a line closes on itself"}
         line_of, lines = {}, []
     # ---- fit every line once
@@ -378,11 +537,19 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         v1 = int(Q[hs[-1][0], (hs[-1][1] + 1) % 4])
         br = _halves(n, halvings(v0), halvings(v1))
         # a span beside a face with a star point corner is two cubics: a knot at its middle
-        mids = [i + 0.5 for i, (q, k) in enumerate(hs) if evf[q] or evf[int(tq[q, k])]]
+        mids = [i + 0.5 for i, (q, k) in enumerate(hs) if irf[q] or irf[int(tq[q, k])]]
         br = np.unique(np.r_[br, mids])
         t, P, N, near = [], [], [], []
         for i, (q, k) in enumerate(hs):
             from .subd import _side
+            if irf[q] and finer_at(q) is not None:
+                # the face's samples one level finer (`finer_grids`)
+                Xf, Nf = finer_at(q)
+                t.append(i + np.arange(2 * s + 1) / (2 * s))
+                P.append(_side(Xf[None], k, 2 * s)[0])
+                N.append(_side(Nf[None], k, 2 * s)[0])
+                near.append(np.full(2 * s + 1, (i == 0 and evv[v0]) or (i == n - 1 and evv[v1])))
+                continue
             t.append(i + np.arange(s + 1) / s)
             P.append(_side(XG[q:q + 1], k, s)[0])
             N.append(_side(NG[q:q + 1], k, s)[0])
@@ -432,7 +599,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                 X[i * s:i * s + s + 1, j * s:j * s + s + 1] = np.rot90(XG[q], k)
                 NX[i * s:i * s + s + 1, j * s:j * s + s + 1] = np.rot90(NG[q], k)
                 Gr[i * s:i * s + s + 1, j * s:j * s + s + 1] = np.rot90(G[q], k)
-                if not evf[q]:
+                if not irf[q]:
                     Rg[i * s:i * s + s + 1, j * s:j * s + s + 1] = True
         # the four sides: (half-edges in order along +u / +v, the rectangle's parameter)
         sides = {
@@ -457,7 +624,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                 return None, {"layout": "a rectangle's side leaves its line"}
         cv = {"00": _vert(Q, R[0][0], 0), "a0": _vert(Q, R[0][-1], 1),
               "ab": _vert(Q, R[-1][-1], 2), "0b": _vert(Q, R[-1][0], 3)}
-        corner_ev = {k: evv[v] for k, v in cv.items()}
+        corner_ev = {k: irr[v] for k, v in cv.items()}
         dep = {k: halvings(v) for k, v in cv.items()}
 
         def mapped(key, n):
@@ -487,6 +654,42 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
         poles[:, -1] = edge_poles("v1", a, bu)
         poles[0, :] = edge_poles("u0", b, bv)
         poles[-1, :] = edge_poles("u1", b, bv)
+        # samples between H's where the knots are halved toward a star point
+        # (the faces round it and the rows and columns of faces the halved
+        # knots run through): its smallest spans need points inside them
+        extra = None
+        hu = (max(dep["00"], dep["0b"]), max(dep["a0"], dep["ab"]))
+        hv = (max(dep["00"], dep["a0"]), max(dep["0b"], dep["ab"]))
+        if finer and any(hu + hv):
+            X2 = np.full((2 * a * s + 1, 2 * b * s + 1, 3), np.nan)
+            N2 = np.full_like(X2, np.nan)
+            use = np.zeros(X2.shape[:2], bool)
+            # on the strips' regular faces the halved spans (the first
+            # 1/s of the strip) are all that lack points
+            if hu[0]:
+                use[:3] = True
+            if hu[1]:
+                use[-3:] = True
+            if hv[0]:
+                use[:, :3] = True
+            if hv[1]:
+                use[:, -3:] = True
+            for j, row in enumerate(R):
+                for i, (q, r) in enumerate(row):
+                    strip = (i == 0 and hu[0]) or (i == a - 1 and hu[1]) or (j == 0 and hv[0]) or (j == b - 1 and hv[1])
+                    fq = finer_at(q) if strip or irf[q] else None
+                    if fq is not None:
+                        k = _oriented(G, q, r)
+                        sl2 = (slice(2 * i * s, 2 * i * s + 2 * s + 1), slice(2 * j * s, 2 * j * s + 2 * s + 1))
+                        X2[sl2] = np.rot90(fq[0], k)
+                        N2[sl2] = np.rot90(fq[1], k)
+                        if irf[q]:
+                            use[sl2] = True
+            pi, pj = np.nonzero(use & ~np.isnan(X2[..., 0]) & ~((np.arange(X2.shape[0])[:, None] % 2 == 0) &
+                                                          (np.arange(X2.shape[1])[None, :] % 2 == 0)))
+            if len(pi):
+                extra = (pi / (2 * s), pj / (2 * s), X2[pi, pj], N2[pi, pj],
+                         (pi == 0) | (pi == 2 * a * s) | (pj == 0) | (pj == 2 * b * s))
         # rows: every sample in a face at a star point corner, four a face
         # elsewhere (a cubic span is fixed by four points; the fit there is exact)
         gap = max(1, s // 4)
@@ -528,6 +731,20 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
                     Dk, Di = Dr[:, kidx], Dr[:, ~kidx]
                     blocks.append(sp.diags(wgt) @ sp.hstack([sp.diags(Nn[:, c]) @ Di for c in range(3)]))
                     rhs.append(-wgt * np.einsum("ij,ij->i", Nn, Dk @ pk))
+            if extra is not None:
+                eu, ev, Xe, Ne, ee = extra
+                Bue, Due = basis(bu, eu, der=True)
+                Bve, Dve = basis(bv, ev, der=True)
+                rk = _rowkron
+                Ae = rk(Bue, Bve)
+                pk = poles.reshape(-1, 3)[kidx]
+                blocks.append(sp.kron(sp.identity(3), Ae[:, ~kidx]))
+                rhs.append((Xe - Ae[:, kidx] @ pk).T.ravel())
+                we = tangent * np.where(ee, 1.0, 0.3)
+                for Dm in (rk(Due, Bve), rk(Bue, Dve)):
+                    Dk, Di = Dm[:, kidx], Dm[:, ~kidx]
+                    blocks.append(sp.diags(we) @ sp.hstack([sp.diags(Ne[:, c]) @ Di for c in range(3)]))
+                    rhs.append(-we * np.einsum("ij,ij->i", Ne, Dk @ pk))
             xs = _solve(sp.vstack(blocks).tocsr(), np.concatenate(rhs))
             poles.reshape(-1, 3)[~kidx] = xs.reshape(3, ni).T
         Bu, Du = basis(bu, np.arange(a * s + 1) / s, der=True)
@@ -573,7 +790,7 @@ def lay_out(H, C, tolerance, depth=DEPTH, tangent=TANGENT, progress=None, merge=
     return out, rep
 
 
-def _merge(cage, cut, find_pieces, rect, evv):
+def _merge(cage, cut, find_pieces, rect, evv, keep=None):
     """Rectangles side by side that together make one rectangle become one:
     the stretch of line between them is taken out (`cut` changed in place).
     The motorcycle graph runs every line on until it meets another, so a
@@ -582,9 +799,13 @@ def _merge(cage, cut, find_pieces, rect, evv):
     neighbours along one side). A stretch touching a star point stays: a
     star point is a corner of every surface round it. A union whose
     opposite sides meet (wrapped round a member) is not taken. Returns the
-    number of merges."""
+    number of merges. A line drawn from a stop (`keep`: a seam's or a
+    crease corner's) stays too: the stop is a corner of the rectangles
+    beside it, and taking the line out puts it back mid-side."""
     Q, QE = cage.Q, cage.QE
     star_edge = evv[cage.E].any(axis=1) | getattr(cage, "crease", np.zeros(len(cage.E), bool))
+    if keep is not None:
+        star_edge = star_edge | keep
     merges = 0
     for _ in range(64):
         pieces = find_pieces()
@@ -626,7 +847,7 @@ def _merge(cage, cut, find_pieces, rect, evv):
     return merges
 
 
-def _cut_seam(ring, cut, seams, cage, evv, cont):
+def _cut_seam(ring, cut, seams, cage, evv, cont, keep=None):
     """Open a ring of drawn edges with no stop on it (`lay_out`): pick the
     vertex on it where most other lines meet it, make it a stop, and draw
     a line straight out from it on each side until it meets another line
@@ -654,11 +875,48 @@ def _cut_seam(ring, cut, seams, cage, evv, cont):
             w = int(Q[h[0], (h[1] + 1) % 4])
             on_line = deg[w] > 0
             cut[e] = True
+            if keep is not None:
+                keep[e] = True
             deg[E[e]] += 1
             if on_line or evv[w] or cut[QE[cont(*h)]]:
                 break
             h = cont(*h)
     return True
+
+
+def _open_stops(ends, cut, cage, twin, cont, keep=None):
+    """Give every rectangle a corner where a line ends (`lay_out`). A line
+    stops at a crease corner or a seam even where it runs straight on, and
+    a face there with only the line's last side drawn has the stop
+    in the middle of a rectangle's side: that side runs along two curves
+    and no one curve bounds it. Draw a line straight out from the stop
+    along the face's other side, until it meets another line or a star
+    point. True if any line was drawn."""
+    Q, QE, E = cage.Q, cage.QE, cage.E
+    evv = cage.valence != 4
+    deg = np.bincount(E[cut].ravel(), minlength=cage.n)
+    drawn = False
+    for v, last in ends:                    # a line's end and its edge there
+        qs, ks = np.nonzero(Q == v)
+        for q, k in zip(qs.tolist(), ks.tolist()):
+            a, b = bool(cut[QE[q, k]]), bool(cut[QE[q, (k + 3) % 4]])
+            if a == b or last not in (int(QE[q, k]), int(QE[q, (k + 3) % 4])):
+                continue
+            h = (q, k) if not a else twin(q, (k + 3) % 4)
+            for _ in range(len(Q) * 4):
+                e = int(QE[h])
+                if cut[e]:
+                    break
+                w = int(Q[h[0], (h[1] + 1) % 4])
+                cut[e] = True
+                if keep is not None:
+                    keep[e] = True
+                deg[E[e]] += 1
+                drawn = True
+                if deg[w] > 1 or evv[w]:
+                    break
+                h = cont(*h)
+    return drawn
 
 
 def _wraps(Q, R):

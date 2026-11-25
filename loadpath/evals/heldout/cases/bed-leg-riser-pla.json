@@ -1,0 +1,195 @@
+{
+ "id": "bed-leg-riser-pla",
+ "batch": 4,
+ "brief": "A riser that lifts one leg of a bed by 50 mm, PLA on FDM, printed standing up (layers along Z). It stands on a wooden floor (the plane z = 0) and stays inside x = -40 to 40, y = -40 to 40, z = 0 to 60. The bed's 50 x 50 mm square leg sits in a socket in its top: the socket is 51 x 51 mm, 10 mm deep (its floor at z = 50), open at the top, corners rounded 2 mm. Each leg carries a quarter of 300 kg (bed, mattress, two people), and 2 g when someone drops onto the bed; with the plain weight on it, a 150 N shove sideways (along X or along Y) when the bed is pushed. Nothing screws it down: it stays put by friction on the floor (about 0.3). Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "furniture",
+  "compression",
+  "friction",
+  "fdm",
+  "push-support",
+  "no-fasteners"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -40,
+     -40,
+     0
+    ],
+    "max": [
+     40,
+     40,
+     60
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "socket",
+    "shape": {
+     "type": "box",
+     "min": [
+      -25.5,
+      -25.5,
+      50
+     ],
+     "max": [
+      25.5,
+      25.5,
+      62
+     ],
+     "radius": 2
+    }
+   }
+  ],
+  "supports": [
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -40,
+      -40,
+      -0.5
+     ],
+     "max": [
+      40,
+      40,
+      0.3
+     ]
+    },
+    "push": "+z",
+    "friction": 0.3
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "drop-on",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -25,
+        -25,
+        49.5
+       ],
+       "max": [
+        25,
+        25,
+        50
+       ]
+      },
+      "mass": 75,
+      "dynamic": 2,
+      "gravity": "-z"
+     }
+    ]
+   },
+   {
+    "name": "shove-x",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -25,
+        -25,
+        49.5
+       ],
+       "max": [
+        25,
+        25,
+        50
+       ]
+      },
+      "mass": 75,
+      "dynamic": 1,
+      "gravity": "-z"
+     },
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        25.5,
+        -24,
+        52
+       ],
+       "max": [
+        26.1,
+        24,
+        60
+       ]
+      },
+      "force": [
+       150,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "shove-y",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -25,
+        -25,
+        49.5
+       ],
+       "max": [
+        25,
+        25,
+        50
+       ]
+      },
+      "mass": 75,
+      "dynamic": 1,
+      "gravity": "-z"
+     },
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -24,
+        25.5,
+        52
+       ],
+       "max": [
+        24,
+        26.1,
+        60
+       ]
+      },
+      "force": [
+       0,
+       150,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "bed-leg-riser-pla",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

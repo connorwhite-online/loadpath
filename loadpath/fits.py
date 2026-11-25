@@ -314,6 +314,39 @@ def _pressurized(d: dict) -> set:
     return out
 
 
+def _members(sh: dict, sign: int = 1) -> list:
+    """A compound shape's primitives with the side they are on: +1 where
+    they add space (a union's, the first of a subtract, an intersect's),
+    -1 where they take it away (a subtract's cutters)."""
+    t = sh.get("type")
+    if t in ("union", "intersect"):
+        return [x for c in sh["shapes"] for x in _members(c, sign)]
+    if t == "subtract":
+        first, *rest = sh["shapes"]
+        return _members(first, sign) + [x for c in rest for x in _members(c, -sign)]
+    return [(sh, sign)]
+
+
+def _offset_members(members: list, delta: float) -> None:
+    """Every wall of a compound keep-out moved out by delta (mm, in place):
+    space-adding members grown, cutters shrunk. Exact on the flat and round
+    walls; a corner between them stays sharp where the true offset rounds."""
+    for m, sign in members:
+        g = sign * delta
+        t = m.get("type")
+        if t in ("cylinder", "tube"):
+            m["r"] = round(float(m["r"]) + g, 5)
+        elif t == "box" and "min" in m:
+            m["min"] = [round(float(v) - g, 5) for v in m["min"]]
+            m["max"] = [round(float(v) + g, 5) for v in m["max"]]
+        elif t == "box":
+            m["size"] = [round(float(v) + 2 * g, 5) for v in m["size"]]
+        elif t == "sphere":
+            m["r"] = round(float(m["r"]) + g, 5)
+        else:
+            raise ValueError(f"a fit on a compound keep-out moves boxes, cylinders and spheres; it has a {t!r}")
+
+
 def expand_fits(d: dict) -> dict:
     """The study with each fitted bore's keep-out resized to the hole the
     process should be given, and the fits recorded in d["_fits"] (the
@@ -352,9 +385,26 @@ def expand_fits(d: dict) -> dict:
         sh = k.get("shape") or {}
         if fit == "none" or k.get("bore", True) is False or k.get("id") in press:
             continue
-        if sh.get("type") not in ("cylinder", "tube") or sh.get("rInner"):
+        whole = sh
+        members = None
+        if sh.get("type") in ("union", "subtract", "intersect"):
+            if fit is None:
+                continue
+            # a bore with a flat or a key (a D-shaft's hole: a cylinder less a box): the fit is
+            # the round member's, and the clearance it sets lines every wall the same distance
+            members = _members(sh)
+            round_ = [m for m, sign in members if sign > 0 and m.get("type") in ("cylinder", "tube")
+                      and not m.get("rInner")]
+            if len(round_) != 1:
+                raise ValueError(f"keepOut {k.get('id')!r}: a fit sizes a round bore, and this keep-out has "
+                                 f"{len(round_)} plain cylinders to take the fit's diameter from; draw a "
+                                 "socket that is not round (a hex, a square) at the mating part's size plus "
+                                 "its clearance and leave out fit")
+            sh = round_[0]
+        elif sh.get("type") not in ("cylinder", "tube") or sh.get("rInner"):
             if fit is not None:
-                raise ValueError(f"keepOut {k.get('id')!r}: a fit needs a plain cylinder (no rInner)")
+                raise ValueError(f"keepOut {k.get('id')!r}: a fit needs a cylinder, or a cylinder with a flat "
+                                 "or key (union, subtract) for its diameter; a tube (rInner) cannot take one")
             continue
         if fit is None:
             if kind is None:
@@ -434,7 +484,16 @@ def expand_fits(d: dict) -> dict:
         designed = max(designed, 0.2 * mate)
         row["designed"] = round(designed, 4)
         r_old, r_new = float(sh["r"]), 0.5 * designed
-        sh["r"] = round(r_new, 5)
+        if members is not None:
+            _offset_members(members, r_new - r_old)
+            # what measure_bore reads on the part is the largest pin through it, which the flat
+            # or key sets: the same reading on the drawn hole, to compare like with like
+            from .shapes import shape_from_spec
+
+            mid = 0.5 * (p0 + p1)
+            row["inscribed"] = round(-2.0 * float(shape_from_spec(whole).sdf(mid[None])[0]), 4)
+        else:
+            sh["r"] = round(r_new, 5)
         # bosses and seat rings drawn round the old bore follow it
         for pr in d.get("preserve") or []:
             ps = (pr or {}).get("shape") or {}
@@ -513,6 +572,10 @@ def fits_report(study, mesh) -> list:
                 for x in _bias(holes, np.asarray(r["axis"], float), build, r["target"]))
         try:
             m = measure_bore(mesh, r["p0"], r["p1"], 0.5 * r["designed"])
+            if r.get("inscribed") is not None and m.get("measured") is not None:
+                # a bore with a flat: read as the round hole the flat's pin would mean
+                m["measuredPin"] = m["measured"]
+                m["measured"] = round(m["measured"] + r["designed"] - r["inscribed"], 4)
         except Exception as exc:                          # a measurement must not sink a run
             m = {"measured": None, "error": str(exc)}
         r.update(m)

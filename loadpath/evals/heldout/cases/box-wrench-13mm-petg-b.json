@@ -1,0 +1,201 @@
+{
+ "id": "box-wrench-13mm-petg-b",
+ "batch": 4,
+ "brief": "A box-end wrench for a 13 mm hex nut, PETG on FDM, printed flat (layers along Z). The nut's hex (13.2 mm across flats with clearance, flats facing +-X at 0, 60 and 120 degrees) goes right through the ring end, centred on the origin; the wrench is 8 mm thick (z = 0 to 8), the ring end stays inside a 36 mm circle round the nut and the handle inside x = 0 to 120, y = -9 to 9. A hand pushes 60 N on the last 25 mm of the handle, sideways (along Y), either way, tightening and loosening. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "wrench",
+  "hand-tool",
+  "torsion",
+  "hex",
+  "fdm"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     4
+    ],
+    "axis": "z",
+    "length": 8,
+    "r": 18
+   },
+   {
+    "type": "box",
+    "min": [
+     0,
+     -9,
+     0
+    ],
+    "max": [
+     120,
+     9,
+     8
+    ]
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "nut",
+    "shape": {
+     "type": "intersect",
+     "shapes": [
+      {
+       "type": "box",
+       "center": [
+        0,
+        0,
+        4.0
+       ],
+       "size": [
+        13.2,
+        40,
+        10
+       ],
+       "axes": [
+        [
+         1.0,
+         0.0,
+         0
+        ],
+        [
+         -0.0,
+         1.0,
+         0
+        ]
+       ]
+      },
+      {
+       "type": "box",
+       "center": [
+        0,
+        0,
+        4.0
+       ],
+       "size": [
+        13.2,
+        40,
+        10
+       ],
+       "axes": [
+        [
+         0.5,
+         0.866025,
+         0
+        ],
+        [
+         -0.866025,
+         0.5,
+         0
+        ]
+       ]
+      },
+      {
+       "type": "box",
+       "center": [
+        0,
+        0,
+        4.0
+       ],
+       "size": [
+        13.2,
+        40,
+        10
+       ],
+       "axes": [
+        [
+         -0.5,
+         0.866025,
+         0
+        ],
+        [
+         -0.866025,
+         -0.5,
+         0
+        ]
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "nut",
+    "push": "normal",
+    "friction": 0.2
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "tighten",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        95,
+        -9,
+        0
+       ],
+       "max": [
+        120,
+        9,
+        8
+       ]
+      },
+      "force": [
+       0,
+       60,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "loosen",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        95,
+        -9,
+        0
+       ],
+       "max": [
+        120,
+        9,
+        8
+       ]
+      },
+      "force": [
+       0,
+       -60,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "box-wrench-13mm-petg-b",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ },
+ "note": "Twin of the cold case, written after batch 4's first run: the nut held as it is, bearing on the hex's walls (push normal, friction 0.2 on steel), not glued to it."
+}

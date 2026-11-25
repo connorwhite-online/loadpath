@@ -1,0 +1,150 @@
+{
+ "id": "handwheel-dshaft-pa12",
+ "batch": 4,
+ "brief": "A 70 mm handwheel for the 8 mm D-shaft of a bench vise screw, SLS PA12. The wheel is a disc 70 mm across and 12 mm thick, axis Z, z = 0 to 12, centred on the origin. The shaft (8 mm, with a flat 0.5 mm deep on its +X side) slides into a blind bore from the bottom, 10 mm deep, and a hand grips the rim, which must stay solid from r = 30 to 35 over the full thickness. Turning it hard takes 3 N\u00b7m either way; someone also leans 150 N straight down on the top of the rim at one side. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "handwheel",
+  "torsion",
+  "shaft",
+  "sls",
+  "rim"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     6
+    ],
+    "axis": "z",
+    "length": 12,
+    "r": 35
+   }
+  ],
+  "preserve": [
+   {
+    "id": "rim",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      0,
+      6
+     ],
+     "axis": "z",
+     "length": 12,
+     "r": 35,
+     "rInner": 30
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "shaft",
+    "fit": "slip",
+    "shape": {
+     "type": "subtract",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        0,
+        0,
+        4.5
+       ],
+       "axis": "z",
+       "length": 11,
+       "r": 4
+      },
+      {
+       "type": "box",
+       "min": [
+        3.5,
+        -5,
+        -2
+       ],
+       "max": [
+        5,
+        5,
+        11
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "shaft"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "turn-ccw",
+    "loads": [
+     {
+      "region": "rim",
+      "moment": [
+       0,
+       0,
+       3000
+      ]
+     }
+    ]
+   },
+   {
+    "name": "turn-cw",
+    "loads": [
+     {
+      "region": "rim",
+      "moment": [
+       0,
+       0,
+       -3000
+      ]
+     }
+    ]
+   },
+   {
+    "name": "lean",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        30,
+        -5,
+        11.5
+       ],
+       "max": [
+        35,
+        5,
+        12
+       ]
+      },
+      "force": [
+       0,
+       0,
+       -150
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "handwheel-dshaft-pa12",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

@@ -940,6 +940,67 @@ def misses(H, C, mesh, d1, d2, X, bound, min_hole, through=True):
     return out, kind
 
 
+def _genus(n_vertices, F, euler):
+    """Handles of a closed surface: (2 * components - Euler number) / 2."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    F = np.asarray(F, np.int64)
+    k = F.shape[1]
+    a = F.ravel()
+    b = np.roll(F, -1, axis=1).ravel()
+    nc, lab = connected_components(coo_matrix((np.ones(len(a)), (a, b)), shape=(n_vertices,) * 2), directed=False)
+    used = np.unique(F)
+    comps = len(np.unique(lab[used]))
+    return (2 * comps - int(euler)) // 2, comps
+
+
+def topology(mesh, cage, holes, min_hole, bound=None):
+    """What surfacing did to the part's holes, said out loud.
+
+    Instant Meshes drops a handle narrower than its faces, and the fit
+    then spans it with a membrane (`misses` finds it as a "hole" place).
+    Whether that is right is the process's call, not the cage's: a hole
+    under the process's smallest printable hole (`min_hole`) is closed by
+    the printer anyway (its wall's perimeters meet), so the part as
+    printed has it filled; and filling only adds material, which never
+    makes a linear-elastic part more compliant, so the checked part stays
+    within its check. Opening it to the minimum instead takes material out
+    of the members round it, which the check never saw. So such a hole is
+    filled, and listed. A handle lost where no place misses by more than
+    `bound` is spanned by a membrane within `bound` of the mesh all round:
+    a hole narrower than twice that (the fastened lid: genus 15 in, 12
+    out, one 0.71 mm hole found), filled for the same reason, counted, and
+    vouched for only while 2 `bound` is under `min_hole`. A printable hole
+    closed is a miss (repair cuts it open), and a handle the cage has and
+    the mesh has not is never right: any of these and `kept` is False."""
+    gm, cm = _genus(len(mesh.vertices), mesh.faces, mesh.euler_number)
+    gc, cc = _genus(cage.n, cage.Q, cage.n - len(cage.E) + len(cage.Q))
+    filled = [dict(p, decision="filled: under the process's smallest hole "
+                               f"({min_hole:g} mm), the printer closes it") for p in holes if not p["printable"]]
+    lost = gm - gc
+    unseen = max(0, lost - len(holes))
+    out = {"meshGenus": int(gm), "cageGenus": int(gc), "meshParts": int(cm), "cageParts": int(cc),
+           "handlesLost": int(lost), "holesFilled": filled[:20], "filledCount": len(filled) + unseen,
+           "filledUnseen": int(unseen),
+           "printableClosed": int(sum(p["printable"] for p in holes))}
+    why = []
+    if gc > gm:
+        why.append(f"the cage has {gc - gm} handle(s) the mesh has not")
+    if cc != cm:
+        why.append(f"{cm} part(s) in, {cc} out")
+    if out["printableClosed"]:
+        why.append(f"{out['printableClosed']} printable hole(s) closed")
+    if unseen and (bound is None or 2.0 * bound >= min_hole):
+        why.append(f"{lost} handle(s) lost, {len(holes)} closed hole(s) found")
+    elif unseen:
+        out["filledUnseenUnder"] = round(2.0 * bound, 3)
+    out["kept"] = not why
+    if why:
+        out["why"] = "; ".join(why)
+    return out
+
+
 def noise(mesh, n=20000, rings=2):
     """The scatter the mesh carries at its own sampling scale, mm: the
     median RMS distance of vertices' neighbourhoods (`rings` edges out
@@ -1423,7 +1484,11 @@ def surface_mesh(mesh, tolerance=None, faces=None, max_faces=12000, rounds=6, le
              "surfacePlaces": surface[:10], "holesClosed": holes[:20], "gapsClosed": gaps[:20],
              "printableHolesClosed": int(sum(p["printable"] for p in holes)),
              "eulerNumber": {"mesh": int(mesh.euler_number), "cage": int(cage.n - len(cage.E) + len(cage.Q))}}
-    worst["within"] = bool(not surface and not worst["printableHolesClosed"])
+    worst["topology"] = topo = topology(mesh, cage, holes, min_hole, aim)
+    if progress and (topo["filledCount"] or not topo["kept"]):
+        progress(f"holes: genus {topo['meshGenus']} in, {topo['cageGenus']} out; {topo['filledCount']} hole(s) "
+                 f"under {min_hole:g} mm filled (the printer closes them)" + ("" if topo["kept"] else f"; {topo['why']}"))
+    worst["within"] = bool(not surface and not worst["printableHolesClosed"] and worst["topology"]["kept"])
     rep = {"bending": fair, "fairing": fairs, "folds": int(len(_folds(H, cage.V))), "tolerance": round(tol, 4),
            "noise": round(nz, 5), "tolerancePicked": why, "cageFaces": len(cage.Q),
            "irregularVertices": int((cage.valence != 4).sum()), "creaseEdges": int(cage.crease.sum()),
@@ -1464,15 +1529,16 @@ def _inner(A, k, s):
     return [A[:, :, 1], A[:, s - 1, :], A[:, ::-1, s - 1], A[:, 1, ::-1]][k]
 
 
-def _ring_normals(cage, C):
+def _ring_normals(cage, C, faces=None):
     """Exact limit normals at the cage's vertices (Catmull-Clark tangent
-    masks, Halstead et al. 1993, over each vertex's ordered ring)."""
+    masks, Halstead et al. 1993, over each vertex's ordered ring); only
+    at the corners of `faces` when given."""
     Q = cage.Q
     m = len(Q)
     tq, tk = _twins(cage)
     N = np.zeros((cage.n, 3))
     done = np.zeros(cage.n, bool)
-    for q0 in range(m):
+    for q0 in (range(m) if faces is None else faces):
         for k0 in range(4):
             v = int(Q[q0, k0])
             if done[v]:
@@ -1504,12 +1570,14 @@ def _ring_normals(cage, C):
     return N
 
 
-def grid_normals(H, C):
+def grid_normals(H, C, faces=None):
     """Exact limit-surface normals at every sample of every face's grid
     (m, s+1, s+1, 3): away from the cage's vertices every fine vertex has
     four edges, and its limit tangents are the bicubic B-spline's on its
     3 x 3 neighbours (rows across a cage edge come from the face on the
-    other side); at the cage's vertices, the general tangent masks."""
+    other side); at the cage's vertices, the general tangent masks (only
+    at the corners of `faces` when given: the rest of their corners are
+    left at the grid's estimate)."""
     cage = H.cage
     G = H.G
     m, s1, _ = G.shape
@@ -1541,9 +1609,13 @@ def grid_normals(H, C):
         Tv += w[b] * (E[:, b:b + s1, 2:] - E[:, b:b + s1, :-2]) / 2
     N = np.cross(Tu, Tv)
     N /= np.maximum(np.linalg.norm(N, axis=-1, keepdims=True), 1e-300)
-    Nv = _ring_normals(cage, C)
+    Nv = _ring_normals(cage, C, faces)
     for k, (i, j) in enumerate([(0, 0), (s, 0), (s, s), (0, s)]):
         nv = Nv[cage.Q[:, k]]
+        if faces is not None:
+            have = np.zeros(m, bool)
+            have[faces] = True
+            nv[~have] = N[~have, i, j]
         # the masks' sign follows the ring's turning; the grid's next sample says which way is out
         ref = N[:, 1 if i == 0 else s - 1, 1 if j == 0 else s - 1]
         nv = nv * np.sign(np.einsum("ij,ij->i", nv, ref))[:, None]
@@ -2079,11 +2151,16 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
         rep["cage"] = str(cage_path)
     Hp = Hierarchy(Cage(cage.V, cage.Q, sharp=cage.sharp), LEVEL + 1)
     b = None
+    kinked = None
     if layout == "lines":
         # rectangles along the cage's own lines, star points at their corners
         from .subdlines import lay_out
         b, q = lay_out(Hp, cage.V, rep["tolerance"], progress=progress)
         if b is not None and q["edgeAngle"]["max"] > KINK:
+            # kept: face-by-face patches round many star points on creases
+            # can fail to sew (an optimized lid: 66 free edges, 9,905 faces),
+            # and a kink of a degree or two at a point beats no solid
+            kinked = (b, dict(q))
             b, q["layout"] = None, f"rectangles meet at up to {q['edgeAngle']['max']:.2f} deg"
         if b is not None:
             band = [x for x in b if x[0] == "band"]
@@ -2115,10 +2192,31 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
     # the written patches sit within patchToLimit of the limit surface, so
     # their worst point away from closed holes is within this
     w = rep["worst"]
+    within0 = w["within"]
     w["patchesMax"] = round(w["surfaceMax"] + rep["patches"]["patchToLimit"]["max"], 4)
     w["within"] = bool(w["within"] and w["patchesMax"] <= w["bound"])
     shape, free = to_brep(b)
     valid = bool(BRepCheck_Analyzer(shape).IsValid())
+    if kinked is not None and (free or not valid):
+        kb, kq = kinked
+        band = [x for x in kb if x[0] == "band"]
+        kb = [x for x in kb if x[0] != "band"]
+        if band:
+            bs, lay = patches(Hp, cage.V, degree, irregular=7, refine=0)
+            keep = set(band[0][1].tolist())
+            sel = [k for k, c in enumerate(lay) if c[0] in keep]
+            kb += pack(Hp, cage.V, [bs[k] for k in sel], [lay[k] for k in sel])
+        kshape, kfree = to_brep(kb)
+        if not kfree and BRepCheck_Analyzer(kshape).IsValid():
+            if progress:
+                progress(f"face-by-face patches sew with {free} free edges; the rectangles kept "
+                         f"(they meet at up to {kq['edgeAngle']['max']:.2f} deg)")
+            kq["patches"] = len(kb)
+            kq["kinkKept"] = True
+            rep["patches"] = kq
+            b, shape, free, valid = kb, kshape, 0, True
+            w["patchesMax"] = round(w["surfaceMax"] + kq["patchToLimit"]["max"], 4)
+            w["within"] = bool(within0 and w["patchesMax"] <= w["bound"])
     # points as OpenCascade writes them: rounding the poles of a degree-7
     # patch to 10 nm moves it off its own edges, and a reader cannot mesh it
     wrote = write_step(shape, path, verify=True, decimals=None) if valid and not free else None
@@ -2143,7 +2241,7 @@ def export_surface(mesh, path, tolerance=None, faces=None, degree=3, progress=No
         valid = bool(BRepCheck_Analyzer(shape).IsValid())
         w["patchesMax"] = round(w["surfaceMax"] + q["patchToLimit"]["max"], 4)
         w["within"] = bool(not w["surfacePlaces"] and not w["printableHolesClosed"]
-                           and w["patchesMax"] <= w["bound"])
+                           and w.get("topology", {}).get("kept", True) and w["patchesMax"] <= w["bound"])
     if wrote is None:
         wrote = write_step(shape, path, verify=valid, decimals=None)
     rep.update({"path": str(path), "bytes": os.path.getsize(path), "stepFaces": int(len(b)), "freeEdges": free,
