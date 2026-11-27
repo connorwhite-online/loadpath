@@ -6,7 +6,7 @@
    "mode": "net tension",
    "source": "hertel2024",
    "voxel": {
-    "peak": 92.18,
+    "peak": 92.47,
     "at": [
      70.0,
      2.92,
@@ -14,24 +14,24 @@
     ],
     "fromHole": -0.25,
     "angle": 90.0,
-    "predicted": 477.3,
-    "overMeasured": 0.359,
+    "predicted": 475.8,
+    "overMeasured": 0.358,
     "pitch": 0.65
    },
    "banded": {
-    "peak": 49.51,
+    "peak": 49.41,
     "at": [
-     75.2,
-     0.32,
-     1.3
+     72.6,
+     4.22,
+     0.0
     ],
-    "fromHole": 2.04,
-    "angle": 3.6,
-    "predicted": 888.7,
-    "overMeasured": 0.669
+    "fromHole": 1.79,
+    "angle": 58.4,
+    "predicted": 890.6,
+    "overMeasured": 0.671
    },
    "length": {
-    "peak": 34.41,
+    "peak": 34.38,
     "at": [
      68.7,
      3.57,
@@ -39,8 +39,8 @@
     ],
     "fromHole": 0.63,
     "angle": 110.0,
-    "predicted": 1278.9,
-    "overMeasured": 0.963,
+    "predicted": 1279.9,
+    "overMeasured": 0.964,
     "radius": 4.6
    },
    "tet": {
@@ -63,32 +63,32 @@
    "mode": "net tension",
    "source": "hertel2024",
    "voxel": {
-    "peak": 94.01,
+    "peak": 91.94,
     "at": [
-     95.35,
+     94.7,
      2.92,
      0.0
     ],
     "fromHole": -0.23,
-    "angle": 83.2,
-    "predicted": 468.0,
-    "overMeasured": 0.34,
+    "angle": 95.9,
+    "predicted": 478.6,
+    "overMeasured": 0.348,
     "pitch": 0.65
    },
    "banded": {
-    "peak": 50.93,
+    "peak": 53.53,
     "at": [
-     98.6,
-     3.57,
+     99.9,
+     0.32,
      0.0
     ],
-    "fromHole": 1.9,
-    "angle": 44.8,
-    "predicted": 863.9,
-    "overMeasured": 0.628
+    "fromHole": 1.74,
+    "angle": 3.8,
+    "predicted": 822.0,
+    "overMeasured": 0.597
    },
    "length": {
-    "peak": 35.07,
+    "peak": 34.72,
     "at": [
      94.05,
      3.57,
@@ -96,8 +96,8 @@
     ],
     "fromHole": 0.52,
     "angle": 104.9,
-    "predicted": 1254.5,
-    "overMeasured": 0.912,
+    "predicted": 1267.4,
+    "overMeasured": 0.921,
     "radius": 4.6
    },
    "tet": {
@@ -120,7 +120,7 @@
    "mode": "net tension or shear-out",
    "source": "hertel2024",
    "voxel": {
-    "peak": 91.16,
+    "peak": 90.65,
     "at": [
      107.05,
      2.92,
@@ -128,24 +128,24 @@
     ],
     "fromHole": -0.22,
     "angle": 98.7,
-    "predicted": 482.7,
-    "overMeasured": 0.389,
+    "predicted": 485.4,
+    "overMeasured": 0.391,
     "pitch": 0.65
    },
    "banded": {
-    "peak": 51.47,
+    "peak": 50.9,
     "at": [
      111.6,
      2.92,
-     1.3
+     0.0
     ],
     "fromHole": 1.86,
     "angle": 35.5,
-    "predicted": 854.9,
-    "overMeasured": 0.689
+    "predicted": 864.4,
+    "overMeasured": 0.697
    },
    "length": {
-    "peak": 34.26,
+    "peak": 34.01,
     "at": [
      107.05,
      3.57,
@@ -153,8 +153,8 @@
     ],
     "fromHole": 0.43,
     "angle": 97.2,
-    "predicted": 1284.2,
-    "overMeasured": 1.036,
+    "predicted": 1293.8,
+    "overMeasured": 1.043,
     "radius": 4.6
    },
    "tet": {
@@ -177,32 +177,32 @@
    "mode": "bearing",
    "source": "hertel2024",
    "voxel": {
-    "peak": 96.8,
+    "peak": 93.36,
     "at": [
-     127.85,
-     -2.93,
+     127.2,
+     2.92,
      0.0
     ],
     "fromHole": -0.23,
-    "angle": 83.2,
-    "predicted": 454.5,
-    "overMeasured": 0.536,
+    "angle": 95.9,
+    "predicted": 471.3,
+    "overMeasured": 0.556,
     "pitch": 0.65
    },
    "banded": {
-    "peak": 54.36,
+    "peak": 52.78,
     "at": [
-     131.1,
-     -3.58,
+     129.8,
+     4.22,
      0.0
     ],
-    "fromHole": 1.9,
-    "angle": 44.8,
-    "predicted": 809.5,
-    "overMeasured": 0.955
+    "fromHole": 1.64,
+    "angle": 61.4,
+    "predicted": 833.6,
+    "overMeasured": 0.983
    },
    "length": {
-    "peak": 35.95,
+    "peak": 35.64,
     "at": [
      126.55,
      -2.93,
@@ -210,8 +210,8 @@
     ],
     "fromHole": -0.1,
     "angle": 108.0,
-    "predicted": 1224.0,
-    "overMeasured": 1.443,
+    "predicted": 1234.7,
+    "overMeasured": 1.456,
     "radius": 4.6
    },
    "tet": {
@@ -234,7 +234,7 @@
    "mode": "net tension",
    "source": "hertel2024",
    "voxel": {
-    "peak": 92.18,
+    "peak": 92.47,
     "at": [
      70.0,
      2.92,
@@ -242,24 +242,24 @@
     ],
     "fromHole": -0.25,
     "angle": 90.0,
-    "predicted": 477.3,
-    "overMeasured": 0.434,
+    "predicted": 475.8,
+    "overMeasured": 0.433,
     "pitch": 0.65
    },
    "banded": {
-    "peak": 49.51,
+    "peak": 49.41,
     "at": [
-     75.2,
-     0.32,
-     1.3
+     72.6,
+     4.22,
+     0.0
     ],
-    "fromHole": 2.04,
-    "angle": 3.6,
-    "predicted": 888.7,
-    "overMeasured": 0.808
+    "fromHole": 1.79,
+    "angle": 58.4,
+    "predicted": 890.6,
+    "overMeasured": 0.81
    },
    "length": {
-    "peak": 34.41,
+    "peak": 34.38,
     "at": [
      68.7,
      3.57,
@@ -267,8 +267,8 @@
     ],
     "fromHole": 0.63,
     "angle": 110.0,
-    "predicted": 1278.9,
-    "overMeasured": 1.163,
+    "predicted": 1279.9,
+    "overMeasured": 1.164,
     "radius": 4.6
    },
    "tet": {
@@ -291,7 +291,7 @@
    "mode": "net tension",
    "source": "hertel2024",
    "voxel": {
-    "peak": 91.16,
+    "peak": 90.65,
     "at": [
      107.05,
      2.92,
@@ -299,24 +299,24 @@
     ],
     "fromHole": -0.22,
     "angle": 98.7,
-    "predicted": 482.7,
-    "overMeasured": 0.428,
+    "predicted": 485.4,
+    "overMeasured": 0.43,
     "pitch": 0.65
    },
    "banded": {
-    "peak": 51.47,
+    "peak": 50.9,
     "at": [
      111.6,
      2.92,
-     1.3
+     0.0
     ],
     "fromHole": 1.86,
     "angle": 35.5,
-    "predicted": 854.9,
-    "overMeasured": 0.758
+    "predicted": 864.4,
+    "overMeasured": 0.766
    },
    "length": {
-    "peak": 34.26,
+    "peak": 34.01,
     "at": [
      107.05,
      3.57,
@@ -324,8 +324,8 @@
     ],
     "fromHole": 0.43,
     "angle": 97.2,
-    "predicted": 1284.2,
-    "overMeasured": 1.138,
+    "predicted": 1293.8,
+    "overMeasured": 1.147,
     "radius": 4.6
    },
    "tet": {
@@ -348,7 +348,7 @@
    "mode": "between lines",
    "source": "hertel2024",
    "voxel": {
-    "peak": 92.18,
+    "peak": 92.47,
     "at": [
      70.0,
      2.92,
@@ -356,24 +356,24 @@
     ],
     "fromHole": -0.25,
     "angle": 90.0,
-    "predicted": 477.3,
-    "overMeasured": 0.76,
+    "predicted": 475.8,
+    "overMeasured": 0.758,
     "pitch": 0.65
    },
    "banded": {
-    "peak": 49.51,
+    "peak": 49.41,
     "at": [
-     75.2,
-     0.32,
-     1.3
+     72.6,
+     4.22,
+     0.0
     ],
-    "fromHole": 2.04,
-    "angle": 3.6,
-    "predicted": 888.7,
-    "overMeasured": 1.415
+    "fromHole": 1.79,
+    "angle": 58.4,
+    "predicted": 890.6,
+    "overMeasured": 1.418
    },
    "length": {
-    "peak": 34.41,
+    "peak": 34.38,
     "at": [
      68.7,
      3.57,
@@ -381,8 +381,8 @@
     ],
     "fromHole": 0.63,
     "angle": 110.0,
-    "predicted": 1278.9,
-    "overMeasured": 2.036,
+    "predicted": 1279.9,
+    "overMeasured": 2.038,
     "radius": 4.6
    },
    "tet": {
@@ -405,32 +405,32 @@
    "mode": "between lines",
    "source": "hertel2024",
    "voxel": {
-    "peak": 96.8,
+    "peak": 93.36,
     "at": [
-     127.85,
-     -2.93,
+     127.2,
+     2.92,
      0.0
     ],
     "fromHole": -0.23,
-    "angle": 83.2,
-    "predicted": 454.5,
-    "overMeasured": 0.706,
+    "angle": 95.9,
+    "predicted": 471.3,
+    "overMeasured": 0.732,
     "pitch": 0.65
    },
    "banded": {
-    "peak": 54.36,
+    "peak": 52.78,
     "at": [
-     131.1,
-     -3.58,
+     129.8,
+     4.22,
      0.0
     ],
-    "fromHole": 1.9,
-    "angle": 44.8,
-    "predicted": 809.5,
-    "overMeasured": 1.257
+    "fromHole": 1.64,
+    "angle": 61.4,
+    "predicted": 833.6,
+    "overMeasured": 1.294
    },
    "length": {
-    "peak": 35.95,
+    "peak": 35.64,
     "at": [
      126.55,
      -2.93,
@@ -438,8 +438,8 @@
     ],
     "fromHole": -0.1,
     "angle": 108.0,
-    "predicted": 1224.0,
-    "overMeasured": 1.901,
+    "predicted": 1234.7,
+    "overMeasured": 1.917,
     "radius": 4.6
    },
    "tet": {
@@ -462,41 +462,41 @@
    "mode": "net tension",
    "source": "khosravani2023",
    "voxel": {
-    "peak": 31.53,
+    "peak": 25.11,
     "at": [
-     119.62,
-     4.4,
+     116.68,
+     -5.87,
      0.37
     ],
-    "fromHole": -0.88,
-    "angle": 59.3,
-    "predicted": 1617.4,
-    "overMeasured": 0.45,
+    "fromHole": -0.12,
+    "angle": 93.1,
+    "predicted": 2030.9,
+    "overMeasured": 0.565,
     "pitch": 0.7340817246614291
    },
    "banded": {
-    "peak": 16.18,
+    "peak": 15.66,
     "at": [
-     119.62,
-     7.34,
-     0.37
+     122.56,
+     5.87,
+     -0.37
     ],
-    "fromHole": 1.79,
-    "angle": 70.4,
-    "predicted": 3151.2,
-    "overMeasured": 0.877
+    "fromHole": 2.08,
+    "angle": 46.6,
+    "predicted": 3256.9,
+    "overMeasured": 0.906
    },
    "length": {
-    "peak": 14.41,
+    "peak": 13.88,
     "at": [
-     119.62,
-     4.4,
-     -2.57
+     118.15,
+     5.14,
+     2.57
     ],
-    "fromHole": -0.88,
-    "angle": 59.3,
-    "predicted": 3538.4,
-    "overMeasured": 0.984,
+    "fromHole": -0.73,
+    "angle": 77.4,
+    "predicted": 3673.3,
+    "overMeasured": 1.022,
     "radius": 4.6
    },
    "tet": {
@@ -519,41 +519,41 @@
    "mode": "bearing",
    "source": "khosravani2023",
    "voxel": {
-    "peak": 39.3,
+    "peak": 31.77,
     "at": [
-     118.82,
-     1.85,
-     0.37
+     117.34,
+     -2.58,
+     -0.37
     ],
-    "fromHole": -0.41,
-    "angle": 45.4,
-    "predicted": 1297.9,
-    "overMeasured": 0.403,
+    "fromHole": -0.39,
+    "angle": 82.4,
+    "predicted": 1605.2,
+    "overMeasured": 0.499,
     "pitch": 0.7384266251576952
    },
    "banded": {
-    "peak": 22.27,
+    "peak": 18.62,
     "at": [
      121.77,
-     0.37,
+     1.11,
      0.37
     ],
-    "fromHole": 1.79,
-    "angle": 4.4,
-    "predicted": 2289.7,
-    "overMeasured": 0.712
+    "fromHole": 1.9,
+    "angle": 13.1,
+    "predicted": 2738.5,
+    "overMeasured": 0.851
    },
    "length": {
-    "peak": 10.67,
+    "peak": 10.64,
     "at": [
-     117.34,
-     4.06,
+     116.61,
+     3.32,
      2.58
     ],
-    "fromHole": 1.08,
-    "angle": 85.2,
-    "predicted": 4781.0,
-    "overMeasured": 1.486,
+    "fromHole": 0.35,
+    "angle": 96.8,
+    "predicted": 4793.6,
+    "overMeasured": 1.49,
     "radius": 4.6
    },
    "tet": {
@@ -576,32 +576,32 @@
    "mode": "bearing",
    "source": "khosravani2023",
    "voxel": {
-    "peak": 52.74,
+    "peak": 38.98,
     "at": [
-     118.88,
+     118.14,
      0.37,
-     0.37
+     -0.37
     ],
-    "fromHole": -0.09,
-    "angle": 11.1,
-    "predicted": 967.1,
-    "overMeasured": 0.339,
+    "fromHole": -0.8,
+    "angle": 18.0,
+    "predicted": 1308.4,
+    "overMeasured": 0.459,
     "pitch": 0.7392256467901298
    },
    "banded": {
-    "peak": 25.84,
+    "peak": 21.99,
     "at": [
-     120.35,
-     1.85,
+     121.09,
+     -0.37,
      -0.37
     ],
-    "fromHole": 1.83,
-    "angle": 28.9,
-    "predicted": 1974.0,
-    "overMeasured": 0.693
+    "fromHole": 2.11,
+    "angle": 5.2,
+    "predicted": 2319.7,
+    "overMeasured": 0.814
    },
    "length": {
-    "peak": 11.11,
+    "peak": 10.75,
     "at": [
      114.44,
      0.37,
@@ -609,8 +609,8 @@
     ],
     "fromHole": 0.59,
     "angle": 171.8,
-    "predicted": 4592.0,
-    "overMeasured": 1.611,
+    "predicted": 4744.3,
+    "overMeasured": 1.665,
     "radius": 4.6
    },
    "tet": {
@@ -633,7 +633,7 @@
    "mode": "bearing",
    "source": "khosravani2023",
    "voxel": {
-    "peak": 38.1,
+    "peak": 37.82,
     "at": [
      117.42,
      1.11,
@@ -641,21 +641,21 @@
     ],
     "fromHole": -0.32,
     "angle": 69.4,
-    "predicted": 1338.5,
-    "overMeasured": 0.485,
+    "predicted": 1348.4,
+    "overMeasured": 0.488,
     "pitch": 0.7395048963977263
    },
    "banded": {
-    "peak": 21.59,
+    "peak": 21.58,
     "at": [
      120.37,
-     -0.37,
-     0.37
+     0.37,
+     -0.37
     ],
     "fromHole": 1.89,
     "angle": 6.3,
-    "predicted": 2361.9,
-    "overMeasured": 0.855
+    "predicted": 2363.6,
+    "overMeasured": 0.856
    },
    "length": {
     "peak": 11.19,
@@ -666,7 +666,7 @@
     ],
     "fromHole": 1.07,
     "angle": 171.7,
-    "predicted": 4555.8,
+    "predicted": 4557.0,
     "overMeasured": 1.65,
     "radius": 4.6
    },
@@ -690,41 +690,41 @@
    "mode": "cleavage",
    "source": "khosravani2023",
    "voxel": {
-    "peak": 31.78,
+    "peak": 25.04,
     "at": [
-     119.62,
-     4.4,
+     116.68,
+     -5.87,
      0.37
     ],
-    "fromHole": -0.88,
-    "angle": 59.3,
-    "predicted": 1048.0,
-    "overMeasured": 0.287,
+    "fromHole": -0.12,
+    "angle": 93.1,
+    "predicted": 1329.8,
+    "overMeasured": 0.365,
     "pitch": 0.7340817246614291
    },
    "banded": {
-    "peak": 16.22,
+    "peak": 15.67,
     "at": [
-     119.62,
-     7.34,
+     122.56,
+     5.87,
      0.37
     ],
-    "fromHole": 1.79,
-    "angle": 70.4,
-    "predicted": 2053.5,
-    "overMeasured": 0.563
+    "fromHole": 2.08,
+    "angle": 46.6,
+    "predicted": 2124.5,
+    "overMeasured": 0.583
    },
    "length": {
-    "peak": 14.43,
+    "peak": 13.87,
     "at": [
-     119.62,
-     4.4,
-     -2.57
+     118.15,
+     5.14,
+     2.57
     ],
-    "fromHole": -0.88,
-    "angle": 59.3,
-    "predicted": 2307.6,
-    "overMeasured": 0.633,
+    "fromHole": -0.73,
+    "angle": 77.4,
+    "predicted": 2401.3,
+    "overMeasured": 0.659,
     "radius": 4.6
    },
    "tet": {
@@ -747,41 +747,41 @@
    "mode": "cleavage",
    "source": "khosravani2023",
    "voxel": {
-    "peak": 39.43,
+    "peak": 31.61,
     "at": [
-     118.82,
-     1.85,
-     0.37
+     117.34,
+     -2.58,
+     -0.37
     ],
-    "fromHole": -0.41,
-    "angle": 45.4,
-    "predicted": 844.5,
-    "overMeasured": 0.24,
+    "fromHole": -0.39,
+    "angle": 82.4,
+    "predicted": 1053.4,
+    "overMeasured": 0.299,
     "pitch": 0.7384266251576952
    },
    "banded": {
-    "peak": 22.33,
+    "peak": 18.67,
     "at": [
      121.77,
-     0.37,
-     -0.37
+     1.11,
+     0.37
     ],
-    "fromHole": 1.79,
-    "angle": 4.4,
-    "predicted": 1491.0,
-    "overMeasured": 0.423
+    "fromHole": 1.9,
+    "angle": 13.1,
+    "predicted": 1783.9,
+    "overMeasured": 0.507
    },
    "length": {
-    "peak": 10.67,
+    "peak": 10.63,
     "at": [
-     117.34,
-     4.06,
+     116.61,
+     3.32,
      2.58
     ],
-    "fromHole": 1.08,
-    "angle": 85.2,
-    "predicted": 3120.8,
-    "overMeasured": 0.886,
+    "fromHole": 0.35,
+    "angle": 96.8,
+    "predicted": 3132.2,
+    "overMeasured": 0.89,
     "radius": 4.6
    },
    "tet": {
@@ -804,32 +804,32 @@
    "mode": "bearing",
    "source": "khosravani2023",
    "voxel": {
-    "peak": 52.74,
+    "peak": 38.87,
     "at": [
-     118.88,
+     118.14,
      0.37,
      0.37
     ],
-    "fromHole": -0.09,
-    "angle": 11.1,
-    "predicted": 631.4,
-    "overMeasured": 0.205,
+    "fromHole": -0.8,
+    "angle": 18.0,
+    "predicted": 856.6,
+    "overMeasured": 0.278,
     "pitch": 0.7392256467901298
    },
    "banded": {
-    "peak": 25.91,
+    "peak": 22.01,
     "at": [
-     120.35,
-     1.85,
-     0.37
+     121.09,
+     0.37,
+     -0.37
     ],
-    "fromHole": 1.83,
-    "angle": 28.9,
-    "predicted": 1285.1,
-    "overMeasured": 0.417
+    "fromHole": 2.11,
+    "angle": 5.2,
+    "predicted": 1512.7,
+    "overMeasured": 0.491
    },
    "length": {
-    "peak": 11.09,
+    "peak": 10.73,
     "at": [
      114.44,
      0.37,
@@ -837,8 +837,8 @@
     ],
     "fromHole": 0.59,
     "angle": 171.8,
-    "predicted": 3001.7,
-    "overMeasured": 0.974,
+    "predicted": 3103.1,
+    "overMeasured": 1.007,
     "radius": 4.6
    },
    "tet": {
@@ -861,7 +861,7 @@
    "mode": "bearing",
    "source": "khosravani2023",
    "voxel": {
-    "peak": 37.87,
+    "peak": 37.58,
     "at": [
      117.42,
      1.11,
@@ -869,21 +869,21 @@
     ],
     "fromHole": -0.32,
     "angle": 69.4,
-    "predicted": 879.3,
-    "overMeasured": 0.31,
+    "predicted": 886.1,
+    "overMeasured": 0.313,
     "pitch": 0.7395048963977263
    },
    "banded": {
-    "peak": 21.68,
+    "peak": 21.66,
     "at": [
      120.37,
-     -0.37,
-     -0.37
+     0.37,
+     0.37
     ],
     "fromHole": 1.89,
     "angle": 6.3,
-    "predicted": 1536.3,
-    "overMeasured": 0.542
+    "predicted": 1537.3,
+    "overMeasured": 0.543
    },
    "length": {
     "peak": 11.17,
@@ -894,7 +894,7 @@
     ],
     "fromHole": 1.07,
     "angle": 171.7,
-    "predicted": 2980.0,
+    "predicted": 2980.8,
     "overMeasured": 1.052,
     "radius": 4.6
    },

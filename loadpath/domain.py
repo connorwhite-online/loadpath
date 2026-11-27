@@ -773,7 +773,14 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     # interior node's area and an edge node for half. Equal shares per node
     # put 4x the traction on the corners and 2x on the edges of every
     # loaded face. The share is the count of cells the node touches.
-    tributary = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes).astype(float)
+    # On a check's cut-cell grid a cell is its filled share of material
+    # (mesh.cell_fill): a node on a cell the surface cuts stands for that
+    # much of the face. Counted whole, the nodes just outside a face took a
+    # full share of a pin's push on half the material, and the rim of a
+    # caster fork's axle bore read twice its stress at one pitch.
+    fill = getattr(mesh, "cell_fill", None)
+    tributary = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes,
+                            weights=None if fill is None else np.repeat(np.asarray(fill, float), 8)).astype(float)
     loads, case_nodes, case_wet, imbalance, spreads = [], [], [], [], []
     case_rings = []
     from .insert import applies as _insert_applies, plan as plan_insert, plan_spread
@@ -799,7 +806,8 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             idx = np.nonzero(nodes)[0]
             cn[idx] = True
             pts = xyz[idx]
-            share = tributary[idx] / tributary[idx].sum()
+            share = tributary[idx] / tributary[idx].sum() if tributary[idx].sum() > 0 else \
+                np.full(len(idx), 1.0 / max(len(idx), 1))
             force = ld.force
             if ld.direction is not None:
                 # the uncertain force, spread evenly, one vector per axis

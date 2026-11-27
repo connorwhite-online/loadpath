@@ -1572,6 +1572,8 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
     nu_grid = study.elastic(mat) if nu is None else nu
 
     def members_on(m, fill_el, keep=None):
+        # the loads' shares follow the material each node stands for (domain.boundary_conditions)
+        m.cell_fill = None if fill_el is None else np.asarray(fill_el, float)
         if stock:
             m.stock_fill = None if fill_el is None else np.asarray(fill_el, float)
             m.stock_elastic = nu_grid

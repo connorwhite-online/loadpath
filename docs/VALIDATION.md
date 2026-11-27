@@ -43,7 +43,7 @@ certified strength.
 | Natural frequencies | Analytic | Cantilever f1 within 0.5% of Euler-Bernoulli, f2/f1 = 6.27 (`modal.py`, docs/IMPACT.md). |
 | Thermal conduction and expansion | Analytic | Conduction exact to solver tolerance; bimetal curvature within 2.5% of Timoshenko (`tests/test_thermal.py`). |
 | The delivered part's safety factor | Cross-checked | Every safety-factor search confirms its pick on a tetrahedral (P2) mesh of the delivered STL. On the same tet mesh, CalculiX and loadpath's native P2 solver agree within 0.1% on the governing peak, and to 3-4 digits for layered (anisotropic) studies. The voxel check reads 24-49% higher peak stress than the tet check on the motor mount and bell crank, so voxel-only numbers err safe. The tet mesh (isosurface stuffing) is deterministic: the same part reads the same every run. |
-| Strength at a pinned or bolted hole (a bearing load through a pin or shaft) | Matched published experiment | 16 published tests of printed PLA and ABS plates pulled through a steel pin: the first-failure reading is under the measured break on all 16, 0.20-0.76x on the voxel check and 0.21-0.82x on the tet check, read at the hole's side (where the net-tension specimens broke) or on the face the pin bears on. Before 2026-11-25 the stress at the bore was left out of the reading, and on four specimens that read 1.26-1.42x the measured break: unsafe ([below](#printed-plates-pulled-through-a-pin)). |
+| Strength at a pinned or bolted hole (a bearing load through a pin or shaft) | Matched published experiment | 16 published tests of printed PLA and ABS plates pulled through a steel pin: the first-failure reading is under the measured break on all 16, 0.28-0.76x on the voxel check and 0.21-0.82x on the tet check, read at the hole's side (where the net-tension specimens broke) or on the face the pin bears on. Before 2026-11-25 the stress at the bore was left out of the reading, and on four specimens that read 1.29-1.42x the measured break: unsafe ([below](#printed-plates-pulled-through-a-pin)). |
 | Layered (printed) stiffness and layer bond | Simulation only | Transversely isotropic stiffness and a tension-across-layers check, with factors from datasheets and literature. Interlayer shear is not checked separately. Waiting on the calibration coupons. |
 | Material cards | Measured data (datasheets) | Every value cites its datasheet (`loadpath materials`). Datasheet values describe the manufacturer's test bars, not your printer. |
 | Fatigue and creep of printed plastics | Simulation only | One published design curve for printed PLA (Ezeh and Susmel), scaled by strength for PETG, ABS and ASA; rough values for TPU, resins and metals. Not tested. |
@@ -243,8 +243,8 @@ the safe side. Nothing is fitted to these data. Specimens and sources are in
 
 | Source | Specimens | Material | Voxel check / measured | Tet check / measured | As read before 2026-11-25 / measured |
 | --- | --- | --- | --- | --- | --- |
-| Hertel, Kwon & Sachau 2024, FDM PLA ([doi](https://doi.org/10.3390/ma17225394)) | 140 x 20 x 2 mm strips, 6.35 mm hole for a 6 mm pin at 70, 45, 32.5 and 12.5 mm from the end; lines along the load (0), +-45 and across (90) | measured in the same lab: E 2919 MPa, strength 44 MPa | 0: 0.34-0.39, and 0.54 at 12.5 mm (bearing). +-45: 0.43. 90: 0.71-0.76 | 0: 0.39-0.43, 0.59. +-45: 0.47. 90: 0.78-0.82 | 0: 0.63-0.69, 0.95. +-45: 0.76-0.81. 90: **1.26-1.42** |
-| Khosravani et al. 2023, FDM PLA and ABS ([doi](https://doi.org/10.3390/polym15071660)) | ASTM D5961 double-shear plates, 36 x 5 mm, hole 18 mm from the end, D = 12, 6, 4, 3 mm | loadpath's cards (the paper's coupon values are only plotted) | PLA 0.34-0.48, ABS 0.20-0.31 | PLA 0.34-0.59, ABS 0.21-0.38 | PLA 0.69-0.88, ABS 0.42-0.56 |
+| Hertel, Kwon & Sachau 2024, FDM PLA ([doi](https://doi.org/10.3390/ma17225394)) | 140 x 20 x 2 mm strips, 6.35 mm hole for a 6 mm pin at 70, 45, 32.5 and 12.5 mm from the end; lines along the load (0), +-45 and across (90) | measured in the same lab: E 2919 MPa, strength 44 MPa | 0: 0.35-0.39, and 0.56 at 12.5 mm (bearing). +-45: 0.43. 90: 0.73-0.76 | 0: 0.39-0.43, 0.59. +-45: 0.47. 90: 0.78-0.82 | 0: 0.60-0.70, 0.98. +-45: 0.77-0.81. 90: **1.29-1.42** |
+| Khosravani et al. 2023, FDM PLA and ABS ([doi](https://doi.org/10.3390/polym15071660)) | ASTM D5961 double-shear plates, 36 x 5 mm, hole 18 mm from the end, D = 12, 6, 4, 3 mm | loadpath's cards (the paper's coupon values are only plotted) | PLA 0.46-0.56, ABS 0.28-0.36 | PLA 0.34-0.59, ABS 0.21-0.38 | PLA 0.81-0.91, ABS 0.49-0.58 |
 
 What this shows, and what it does not:
 
@@ -256,14 +256,19 @@ What this shows, and what it does not:
   in net tension, were never judged: the reading came from the edge of the
   band, 2 mm out. On the strips printed with their lines across the load
   (weak between lines, which loadpath's in-plane-isotropic card does not
-  know), that read 1.26-1.42x the measured break. The pin's contact is
+  know), that read 1.29-1.42x the measured break. The pin's contact is
   solved (a rigid pin that only pushes, `insert.py`), so the stress at the
   bore is the part's: the checks now read it whenever the pin carries a
   case's whole load (`BoundaryConditions.case_ring_nodes`; a thrust on a
   shoulder or a moment on the bore keeps the band). The voxel check's peak
   sits at the hole's side, where the strips broke; the tet check's on the
   wide strips is on the face the pin bears on, within 10% of the same load.
-- **It errs safe by 1.2-5x.** On the strips with their lines along the
+  Reading the bore also showed the voxel check's cut-cell grid giving a
+  node just outside a face a whole node's share of a load on half a cell
+  of material: a caster fork's axle-bore rim read 18.9 MPa at one grid
+  pitch against 5-8 at others and 6.1 on tets. Loads are now shared by the
+  material each node stands for (5.2-5.9 MPa on every pitch).
+- **It errs safe by 1.2-4.8x.** On the strips with their lines along the
   load the check reads 0.34-0.43x the break. The strips broke at a
   net-section stress (48.6 MPa) above the plain strength (44 MPa): printed
   PLA barely feels a hole. Ahmed & Susmel (2018) measured printed PLA's
@@ -271,9 +276,9 @@ What this shows, and what it does not:
   value measured on PA 12) and caps the radius at 4/9 of the thinnest wall
   (0.89 mm on a 2 mm strip), so that a thin wall in bending is not read
   through its thickness. Read over 4.6 mm, uncapped, the net-tension breaks
-  come out at 0.91-1.04x (PLA, lines along the load), but a hole 12.5 mm from
-  the end, which broke in bearing, at 1.44x, and the double-shear bearing
-  plates at 1.49-1.65x: unsafe. So the longer length is not adopted. Doing
+  come out at 0.92-1.04x (PLA, lines along the load), but a hole 12.5 mm from
+  the end, which broke in bearing, at 1.46x, and the double-shear bearing
+  plates at 1.49-1.67x: unsafe. So the longer length is not adopted. Doing
   it safely needs a cap that applies across a bending gradient and not
   along an in-plane one, and a bearing reading that knows the crushing
   under a pin is contained.
@@ -281,7 +286,7 @@ What this shows, and what it does not:
   at a bearing stress (load over D x thickness) of 107-189 MPa, two to
   six times the plastic's tensile strength: the fixture's plates clamp the
   hole, and crushing under a pin is contained. The check reads first yield
-  under the pin (0.20-0.48x the break) and does not model crushing.
+  under the pin (0.28-0.56x the break) and does not model crushing.
 - **Limits of the data.** No raster direction in a plate is modelled:
   loadpath's card is the same in every in-plane direction, so the strips'
   0, +-45 and 90 rows are one reading against three measurements. Hertel's
